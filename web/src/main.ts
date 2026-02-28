@@ -27,6 +27,9 @@ interface GraphData {
   edges: GraphEdge[];
 }
 
+const FORCE_ATLAS_MAX_EDGES = 45000;
+const FORCE_ATLAS_ITERATIONS = 180;
+
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app container");
@@ -114,15 +117,13 @@ function renderGraph(
     graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
       size: edge.edgeType === "user-anime" ? 1.6 : 0.7,
       color: edge.edgeType === "user-anime" ? "#f4d35e88" : "#6fffe988",
-      weight: edge.weight,
+      weight: Math.max(Math.abs(edge.weight), 0.01),
+      signedWeight: edge.weight,
       edgeType: edge.edgeType,
     });
   }
 
-  forceAtlas2.assign(graph, {
-    iterations: 300,
-    settings: forceAtlas2.inferSettings(graph),
-  });
+  applyLayout(graph);
 
   if (renderer) {
     renderer.kill();
@@ -160,4 +161,84 @@ function mustElement<T extends Element>(selector: string): T {
     throw new Error(`Missing element ${selector}`);
   }
   return element;
+}
+
+function applyLayout(graph: Graph): void {
+  if (graph.order === 0) {
+    return;
+  }
+
+  try {
+    if (graph.size > FORCE_ATLAS_MAX_EDGES) {
+      assignRingLayout(graph);
+    } else {
+      forceAtlas2.assign(graph, {
+        iterations: FORCE_ATLAS_ITERATIONS,
+        settings: forceAtlas2.inferSettings(graph),
+      });
+    }
+  } catch (error) {
+    console.warn("Graph layout failed; using fallback ring layout.", error);
+    assignRingLayout(graph);
+  }
+
+  sanitizeCoordinates(graph);
+}
+
+function assignRingLayout(graph: Graph): void {
+  const userNodes: string[] = [];
+  const animeNodes: string[] = [];
+
+  graph.forEachNode((node, attributes) => {
+    if (attributes.nodeType === "user") {
+      userNodes.push(node);
+    } else {
+      animeNodes.push(node);
+    }
+  });
+
+  for (let i = 0; i < userNodes.length; i += 1) {
+    const node = userNodes[i];
+    const angle = ((i + 1) / Math.max(userNodes.length, 1)) * Math.PI * 2;
+    graph.mergeNodeAttributes(node, {
+      x: Math.cos(angle) * 1.25,
+      y: Math.sin(angle) * 1.25,
+    });
+  }
+
+  for (let i = 0; i < animeNodes.length; i += 1) {
+    const node = animeNodes[i];
+    const jitter = hashToUnit(node);
+    const angle = (i / Math.max(animeNodes.length, 1)) * Math.PI * 2 + jitter * 0.18;
+    const radius = 0.72 + jitter * 0.28;
+    graph.mergeNodeAttributes(node, {
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+    });
+  }
+}
+
+function sanitizeCoordinates(graph: Graph): void {
+  let index = 0;
+  graph.forEachNode((node, attributes) => {
+    const x = attributes.x as number | undefined;
+    const y = attributes.y as number | undefined;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      const angle = (index / Math.max(graph.order, 1)) * Math.PI * 2;
+      graph.mergeNodeAttributes(node, {
+        x: Math.cos(angle) * 0.8,
+        y: Math.sin(angle) * 0.8,
+      });
+    }
+    index += 1;
+  });
+}
+
+function hashToUnit(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return ((hash >>> 0) % 10000) / 10000;
 }
