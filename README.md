@@ -89,3 +89,17 @@ Install Rust first, then:
 cd desktop
 cargo run
 ```
+
+## 6) Publish Desktop EXE Release
+
+Pushing a version tag (`v*`) triggers a workflow that builds the Windows EXE and attaches:
+
+- `anime_graph_desktop.exe`
+- `anime_graph_desktop.exe.sha256`
+
+Example:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```

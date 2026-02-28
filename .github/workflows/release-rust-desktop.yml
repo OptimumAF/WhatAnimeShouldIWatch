@@ -1,0 +1,43 @@
+name: Release Rust Desktop EXE
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop -> target
+
+      - name: Build desktop app
+        run: cargo build --release --manifest-path desktop/Cargo.toml
+
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 desktop/target/release/anime_graph_desktop.exe).Hash.ToLower()
+          "$hash  anime_graph_desktop.exe" | Out-File -Encoding ascii desktop/target/release/anime_graph_desktop.exe.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/target/release/anime_graph_desktop.exe
+            desktop/target/release/anime_graph_desktop.exe.sha256
+          generate_release_notes: true
