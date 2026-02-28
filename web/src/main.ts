@@ -27,8 +27,17 @@ interface GraphData {
   edges: GraphEdge[];
 }
 
+interface ConnectedItem {
+  nodeId: string;
+  label: string;
+  nodeType: "user" | "anime";
+  edgeType: "user-anime" | "anime-anime";
+  weight: number;
+}
+
 const FORCE_ATLAS_MAX_EDGES = 45000;
 const FORCE_ATLAS_ITERATIONS = 180;
+const INSPECT_MAX_ITEMS = 250;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -55,6 +64,21 @@ app.innerHTML = `
         <input id="toggle-anime-edges" type="checkbox" checked />
         <span>Show anime-to-anime edges</span>
       </label>
+
+      <section class="inspect">
+        <div class="inspect-head">
+          <h2>Inspect Node</h2>
+          <button id="clear-selection" type="button" class="clear-btn">Clear</button>
+        </div>
+        <p id="inspect-empty" class="inspect-empty">
+          Click any node to view connected items sorted by edge weight.
+        </p>
+        <div id="inspect-content" class="inspect-content" hidden>
+          <div id="inspect-meta" class="inspect-meta"></div>
+          <div id="inspect-count" class="inspect-count"></div>
+          <ul id="inspect-list" class="inspect-list"></ul>
+        </div>
+      </section>
     </section>
 
     <section class="graph-shell">
@@ -68,11 +92,24 @@ const graphContainer = mustElement<HTMLDivElement>("#graph");
 const minWeightInput = mustElement<HTMLInputElement>("#min-weight");
 const minWeightValue = mustElement<HTMLOutputElement>("#min-weight-value");
 const toggleAnimeEdges = mustElement<HTMLInputElement>("#toggle-anime-edges");
+const inspectEmptyEl = mustElement<HTMLParagraphElement>("#inspect-empty");
+const inspectContentEl = mustElement<HTMLDivElement>("#inspect-content");
+const inspectMetaEl = mustElement<HTMLDivElement>("#inspect-meta");
+const inspectCountEl = mustElement<HTMLDivElement>("#inspect-count");
+const inspectListEl = mustElement<HTMLUListElement>("#inspect-list");
+const clearSelectionBtn = mustElement<HTMLButtonElement>("#clear-selection");
 
 let renderer: Sigma | null = null;
+let selectedNodeId: string | null = null;
+let currentGraph: Graph | null = null;
 
 const graphData = await fetchGraph();
 renderGraph(graphData, 0, true);
+
+clearSelectionBtn.addEventListener("click", () => {
+  selectedNodeId = null;
+  renderInspectPanel(null);
+});
 
 minWeightInput.addEventListener("input", () => {
   const value = Number.parseFloat(minWeightInput.value);
@@ -124,6 +161,7 @@ function renderGraph(
   }
 
   applyLayout(graph);
+  currentGraph = graph;
 
   if (renderer) {
     renderer.kill();
@@ -135,12 +173,29 @@ function renderGraph(
     allowInvalidContainer: false,
   });
 
+  renderer.on("clickNode", (event) => {
+    selectedNodeId = event.node;
+    renderInspectPanel(event.node);
+  });
+
+  renderer.on("clickStage", () => {
+    selectedNodeId = null;
+    renderInspectPanel(null);
+  });
+
   statsEl.innerHTML = [
     statLine("Generated", new Date(graphDataValue.generatedAt).toLocaleString()),
     statLine("Users", String(graphDataValue.userCount)),
     statLine("Anime", String(graphDataValue.animeCount)),
     statLine("Visible edges", String(graph.size)),
   ].join("");
+
+  if (selectedNodeId && graph.hasNode(selectedNodeId)) {
+    renderInspectPanel(selectedNodeId);
+  } else {
+    selectedNodeId = null;
+    renderInspectPanel(null);
+  }
 }
 
 function statLine(label: string, value: string): string {
@@ -241,4 +296,120 @@ function hashToUnit(value: string): number {
     hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
   }
   return ((hash >>> 0) % 10000) / 10000;
+}
+
+function renderInspectPanel(nodeId: string | null): void {
+  if (!currentGraph || !nodeId || !currentGraph.hasNode(nodeId)) {
+    inspectEmptyEl.hidden = false;
+    inspectContentEl.hidden = true;
+    inspectMetaEl.textContent = "";
+    inspectCountEl.textContent = "";
+    inspectListEl.innerHTML = "";
+    return;
+  }
+
+  const nodeAttrs = currentGraph.getNodeAttributes(nodeId) as Record<
+    string,
+    unknown
+  >;
+  const label = typeof nodeAttrs.label === "string" ? nodeAttrs.label : nodeId;
+  const nodeType =
+    nodeAttrs.nodeType === "user" ? "user" : ("anime" as "user" | "anime");
+
+  const connections = getConnectedItems(currentGraph, nodeId).sort(
+    (left, right) => right.weight - left.weight,
+  );
+
+  inspectEmptyEl.hidden = true;
+  inspectContentEl.hidden = false;
+  inspectMetaEl.innerHTML = `
+    <div class="inspect-title">${escapeHtml(label)}</div>
+    <div class="inspect-sub">${nodeType} • ${escapeHtml(nodeId)}</div>
+  `;
+  inspectCountEl.textContent = `Connected items: ${connections.length} (sorted by weight)`;
+
+  const visible = connections.slice(0, INSPECT_MAX_ITEMS);
+  inspectListEl.innerHTML = visible
+    .map((item) => {
+      const weight = formatWeight(item.weight);
+      return `
+        <li class="inspect-item">
+          <div class="inspect-item-main">
+            <span class="inspect-item-label">${escapeHtml(item.label)}</span>
+            <span class="inspect-item-type">${item.nodeType}</span>
+          </div>
+          <div class="inspect-item-meta">
+            <span>${item.edgeType}</span>
+            <strong>${weight}</strong>
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+}
+
+function getConnectedItems(graph: Graph, nodeId: string): ConnectedItem[] {
+  const items: ConnectedItem[] = [];
+  graph.forEachEdge(
+    nodeId,
+    (
+      _edgeKey,
+      attributes,
+      source,
+      target,
+      sourceAttributes,
+      targetAttributes,
+    ) => {
+      const otherNode = source === nodeId ? target : source;
+      const otherAttributes = (
+        source === nodeId ? targetAttributes : sourceAttributes
+      ) as Record<string, unknown>;
+      const edgeAttributes = attributes as Record<string, unknown>;
+
+      const label =
+        typeof otherAttributes.label === "string"
+          ? otherAttributes.label
+          : otherNode;
+      const nodeType =
+        otherAttributes.nodeType === "user"
+          ? "user"
+          : ("anime" as "user" | "anime");
+      const edgeType =
+        edgeAttributes.edgeType === "anime-anime"
+          ? "anime-anime"
+          : ("user-anime" as "user-anime" | "anime-anime");
+
+      const signedWeight = edgeAttributes.signedWeight;
+      const fallbackWeight = edgeAttributes.weight;
+      const weight =
+        typeof signedWeight === "number"
+          ? signedWeight
+          : typeof fallbackWeight === "number"
+            ? fallbackWeight
+            : 0;
+
+      items.push({
+        nodeId: otherNode,
+        label,
+        nodeType,
+        edgeType,
+        weight,
+      });
+    },
+  );
+  return items;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatWeight(value: number): string {
+  const rounded = value.toFixed(3);
+  return value > 0 ? `+${rounded}` : rounded;
 }
