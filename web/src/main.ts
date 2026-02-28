@@ -66,7 +66,7 @@ app.innerHTML = `
       </label>
 
       <label class="checkbox">
-        <input id="toggle-users" type="checkbox" checked />
+        <input id="toggle-users" type="checkbox" />
         <span>Show user nodes + user-anime edges</span>
       </label>
 
@@ -112,7 +112,7 @@ let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
 
 const graphData = await fetchGraph();
-renderGraph(graphData, 0, true, true);
+renderGraph(graphData, 0, true, false);
 
 clearSelectionBtn.addEventListener("click", () => {
   selectedNodeId = null;
