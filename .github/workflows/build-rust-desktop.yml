@@ -1,0 +1,37 @@
+name: Build Rust Desktop EXE
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/build-rust-desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop -> target
+
+      - name: Build desktop app
+        run: cargo build --release --manifest-path desktop/Cargo.toml
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-graph-desktop-windows
+          path: desktop/target/release/anime_graph_desktop.exe

@@ -1,0 +1,2009 @@
+{
+  "generatedAt": "2026-02-28T18:55:42.273Z",
+  "source": "myanimelist.net/animelist/{username}/load.json",
+  "users": [
+    {
+      "userId": "497e91cf96013a6848daf93c",
+      "ratings": [
+        {
+          "animeId": 1,
+          "title": "Cowboy Bebop",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 5,
+          "title": "Cowboy Bebop: Tengoku no Tobira",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6,
+          "title": "Trigun",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 15,
+          "title": "Eyeshield 21",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 19,
+          "title": "Monster",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 20,
+          "title": "Naruto",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 21,
+          "title": "One Piece",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 22,
+          "title": "Tennis no Oujisama",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 30,
+          "title": "Shinseiki Evangelion",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 31,
+          "title": "Shinseiki Evangelion Movie: Shi to Shinsei",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 32,
+          "title": "Shinseiki Evangelion Movie: Air/Magokoro wo, Kimi ni",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 33,
+          "title": "Kenpuu Denki Berserk",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 43,
+          "title": "Koukaku Kidoutai",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 44,
+          "title": "Rurouni Kenshin: Meiji Kenkaku Romantan - Tsuioku-hen",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 45,
+          "title": "Rurouni Kenshin: Meiji Kenkaku Romantan",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 46,
+          "title": "Rurouni Kenshin: Meiji Kenkaku Romantan - Ishinshishi e no Chinkonka",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 47,
+          "title": "Akira",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 50,
+          "title": "Aa! Megami-sama! (TV)",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 53,
+          "title": "Ai Yori Aoshi",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 57,
+          "title": "Beck",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 59,
+          "title": "Chobits",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 67,
+          "title": "Basilisk: Kouga Ninpou Chou",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 68,
+          "title": "Black Cat",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 71,
+          "title": "Full Metal Panic!",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 72,
+          "title": "Full Metal Panic? Fumoffu",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 73,
+          "title": "Full Metal Panic! The Second Raid",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 90,
+          "title": "Shin Kidou Senki Gundam Wing",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 93,
+          "title": "Kidou Senshi Gundam SEED",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 110,
+          "title": "Chuuka Ichiban!",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 114,
+          "title": "Sakigake!! Cromartie Koukou",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 132,
+          "title": "GetBackers",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 136,
+          "title": "Hunter x Hunter",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 137,
+          "title": "Hunter x Hunter: Original Video Animation",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 138,
+          "title": "Hunter x Hunter: Greed Island",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 139,
+          "title": "Hunter x Hunter: Greed Island Final",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 145,
+          "title": "Kareshi Kanojo no Jijou",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 147,
+          "title": "Kimi ga Nozomu Eien",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 164,
+          "title": "Mononoke Hime",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 165,
+          "title": "RahXephon",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 166,
+          "title": "Samurai 7",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 167,
+          "title": "Scrapped Princess",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 168,
+          "title": "s.CRY.ed",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 170,
+          "title": "Slam Dunk",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 180,
+          "title": "Vandread",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 185,
+          "title": "Initial D First Stage",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 189,
+          "title": "Love Hina",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 190,
+          "title": "Love Hina Again",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 191,
+          "title": "Love Hina Christmas Special: Silent Eve",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 192,
+          "title": "Love Hina Haru Special: Kimi Sakura Chiru Nakare!!",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 199,
+          "title": "Sen to Chihiro no Kamikakushi",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 205,
+          "title": "Samurai Champloo",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 210,
+          "title": "Ranma ½",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 223,
+          "title": "Dragon Ball",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 226,
+          "title": "Elfen Lied",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 227,
+          "title": "FLCL",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 237,
+          "title": "Koukyoushihen Eureka Seven",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 239,
+          "title": "Gankutsuou",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 240,
+          "title": "Genshiken",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 245,
+          "title": "Great Teacher Onizuka",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 246,
+          "title": "Groove Adventure Rave",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 249,
+          "title": "InuYasha",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 257,
+          "title": "Ikkitousen",
+          "rawScore": 2,
+          "normalizedScore": -5.147147147147147
+        },
+        {
+          "animeId": 263,
+          "title": "Hajime no Ippo",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 268,
+          "title": "Golden Boy",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 269,
+          "title": "Bleach",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 297,
+          "title": "Grenadier: Hohoemi no Senshi",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 317,
+          "title": "Final Fantasy VII: Advent Children",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 323,
+          "title": "Mousou Dairinin",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 326,
+          "title": "Petshop of Horrors",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 329,
+          "title": "Planetes",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 340,
+          "title": "Mutsu Enmei Ryuu Gaiden: Shura no Toki",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 355,
+          "title": "Shakugan no Shana",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 356,
+          "title": "Fate/stay night",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 384,
+          "title": "Gantz",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 392,
+          "title": "Yuu☆Yuu☆Hakusho",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 394,
+          "title": "Ai Yori Aoshi: Enishi",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 395,
+          "title": "Gantz 2nd Stage",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 400,
+          "title": "Seihou Bukyou Outlaw Star",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 401,
+          "title": "Rurouni Kenshin: Meiji Kenkaku Romantan - Seisou-hen",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 437,
+          "title": "Perfect Blue",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 467,
+          "title": "Koukaku Kidoutai: Stand Alone Complex",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 523,
+          "title": "Tonari no Totoro",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 527,
+          "title": "Pokemon",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 528,
+          "title": "Pokemon Movie 01: Mewtwo no Gyakushuu",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 572,
+          "title": "Kaze no Tani no Nausicaä",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 578,
+          "title": "Hotaru no Haka",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 601,
+          "title": "Nekojiru-sou",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 634,
+          "title": "Koi Kaze",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 658,
+          "title": "Touhai Densetsu Akagi: Yami ni Maiorita Tensai",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 666,
+          "title": "JoJo no Kimyou na Bouken",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 731,
+          "title": "Interstella5555: The 5tory of The 5ecret 5tar 5ystem",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 770,
+          "title": "Pale Cocoon",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 777,
+          "title": "Hellsing Ultimate",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 779,
+          "title": "Meitantei Conan Movie 01: Tokei Jikake no Matenrou",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 801,
+          "title": "Koukaku Kidoutai: Stand Alone Complex 2nd GIG",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 813,
+          "title": "Dragon Ball Z",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 849,
+          "title": "Suzumiya Haruhi no Yuuutsu",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 856,
+          "title": "Utawarerumono",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 857,
+          "title": "Air Gear",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 875,
+          "title": "Mind Game",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 877,
+          "title": "Nana",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 880,
+          "title": "Aa! Megami-sama! Sorezore no Tsubasa",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 889,
+          "title": "Black Lagoon",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 967,
+          "title": "Hokuto no Ken",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1004,
+          "title": "Kanojo to Kanojo no Neko",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 1015,
+          "title": "Full Metal Panic! The Second Raid: Wari to Hima na Sentaichou no Ichinichi",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 1033,
+          "title": "Sennen Joyuu",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 1118,
+          "title": "Pokemon Movie 03: Kesshoutou no Teiou Entei",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1195,
+          "title": "Zero no Tsukaima",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1210,
+          "title": "NHK ni Youkoso!",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 1250,
+          "title": "Erementar Gerad",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 1292,
+          "title": "Afro Samurai",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1303,
+          "title": "The Animatrix",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 1313,
+          "title": "Digimon Adventure 02",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1361,
+          "title": "Final Fantasy: The Spirits Within",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 1365,
+          "title": "Meitantei Conan Movie 06: Baker Street no Bourei",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 1418,
+          "title": "Lupin III: Episode 0 \"First Contact\"",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 1430,
+          "title": "Lupin III: Cagliostro no Shiro",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 1519,
+          "title": "Black Lagoon: The Second Barrage",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 1535,
+          "title": "Death Note",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 1536,
+          "title": "Busou Renkin",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 1559,
+          "title": "Shijou Saikyou no Deshi Kenichi",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1575,
+          "title": "Code Geass: Hangyaku no Lelouch",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 1606,
+          "title": "Kekkaishi",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1689,
+          "title": "Byousoku 5 Centimeter",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 1691,
+          "title": "Kaze no Stigma",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1709,
+          "title": "Pokemon: Mewtwo! Ware wa Koko ni Ari",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 1731,
+          "title": "Tales of Symphonia The Animation: Sylvarant-hen",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 1735,
+          "title": "Naruto: Shippuuden",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1840,
+          "title": "Zero no Tsukaima: Futatsuki no Kishi",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 1887,
+          "title": "Lucky☆Star",
+          "rawScore": 2,
+          "normalizedScore": -5.147147147147147
+        },
+        {
+          "animeId": 1943,
+          "title": "Paprika",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2001,
+          "title": "Tengen Toppa Gurren Lagann",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 2025,
+          "title": "Darker than Black: Kuro no Keiyakusha",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2154,
+          "title": "Tekkon Kinkreet",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 2236,
+          "title": "Toki wo Kakeru Shoujo",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 2251,
+          "title": "Baccano!",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 2418,
+          "title": "Stranger: Mukou Hadan",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2476,
+          "title": "School Days",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 2581,
+          "title": "Kidou Senshi Gundam 00",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 2593,
+          "title": "Kara no Kyoukai Movie 1: Fukan Fuukei",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2759,
+          "title": "Evangelion Movie 1: Jo",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2787,
+          "title": "Shakugan no Shana II (Second)",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 2904,
+          "title": "Code Geass: Hangyaku no Lelouch R2",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2961,
+          "title": "Digimon Adventure Movie",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2966,
+          "title": "Ookami to Koushinryou",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 2986,
+          "title": "Bamboo Blade",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 3002,
+          "title": "Gyakkyou Burai Kaiji: Ultimate Survivor",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 3167,
+          "title": "Eve no Jikan",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 3588,
+          "title": "Soul Eater",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 3712,
+          "title": "Zero no Tsukaima: Princesses no Rondo",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 3782,
+          "title": "Kara no Kyoukai Movie 2: Satsujin Kousatsu (Zen)",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 3783,
+          "title": "Kara no Kyoukai Movie 3: Tsuukaku Zanryuu",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 3784,
+          "title": "Evangelion Movie 2: Ha",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 3785,
+          "title": "Evangelion Movie 3: Q",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 3901,
+          "title": "Baccano! Specials",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 3927,
+          "title": "Kidou Senshi Gundam 00 Second Season",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 3974,
+          "title": "Tetsuwan Birdy Decode",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 4106,
+          "title": "Trigun: Badlands Rumble",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 4177,
+          "title": "Bounen no Xamdou",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 4280,
+          "title": "Kara no Kyoukai Movie 4: Garan no Dou",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 4282,
+          "title": "Kara no Kyoukai Movie 5: Mujun Rasen",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 4382,
+          "title": "Suzumiya Haruhi no Yuuutsu (2009)",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 4565,
+          "title": "Tengen Toppa Gurren Lagann Movie 2: Lagann-hen",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 4705,
+          "title": "Tengen Toppa Gurren Lagann: Parallel Works",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 4901,
+          "title": "Black Lagoon: Roberta's Blood Trail",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 5040,
+          "title": "One Outs",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 5074,
+          "title": "Tetsuwan Birdy Decode:02",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 5081,
+          "title": "Bakemonogatari",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 5204,
+          "title": "Kara no Kyoukai Movie 6: Boukyaku Rokuon",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 5205,
+          "title": "Kara no Kyoukai Movie 7: Satsujin Kousatsu (Go)",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 5258,
+          "title": "Hajime no Ippo: New Challenger",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 5630,
+          "title": "Higashi no Eden",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 5680,
+          "title": "K-On!",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 5681,
+          "title": "Summer Wars",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 6046,
+          "title": "Tales of Vesperia: The First Strike",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 6115,
+          "title": "Lupin III vs. Meitantei Conan",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6211,
+          "title": "Tokyo Magnitude 8.0",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6213,
+          "title": "Toaru Kagaku no Railgun",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 6288,
+          "title": "Kidou Senshi Gundam 00 Movie: A Wakening of the Trailblazer",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 6347,
+          "title": "Baka to Test to Shoukanjuu",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6372,
+          "title": "Higashi no Eden Movie I: The King of Eden",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 6399,
+          "title": "Higashi no Eden: Falling Down",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 6547,
+          "title": "Angel Beats!",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6548,
+          "title": "Tengen Toppa Gurren Lagann: Kirameki★Yoko Box - Pieces of Sweet Stars",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 6573,
+          "title": "Darker than Black: Ryuusei no Gemini",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 6624,
+          "title": "Kara no Kyoukai Remix: Gate of Seventh Heaven",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6637,
+          "title": "Higashi no Eden Movie II: Paradise Lost",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 6675,
+          "title": "Redline",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6702,
+          "title": "Fairy Tail",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 6746,
+          "title": "Durarara!!",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 6772,
+          "title": "Break Blade Movie 1: Kakusei no Toki",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 6867,
+          "title": "Halo Legends",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 6880,
+          "title": "Deadman Wonderland",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 6922,
+          "title": "Fate/stay night Movie: Unlimited Blade Works",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 6954,
+          "title": "Kara no Kyoukai Movie 8: Shuushou",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 7311,
+          "title": "Suzumiya Haruhi no Shoushitsu",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 7338,
+          "title": "Darker than Black: Kuro no Keiyakusha Gaiden",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 7661,
+          "title": "Giant Killing",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 8074,
+          "title": "Highschool of the Dead",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 8348,
+          "title": "Tengen Toppa Gurren Lagann: Parallel Works 2",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 8514,
+          "title": "Break Blade Movie 2: Ketsubetsu no Michi",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 8516,
+          "title": "Baka to Test to Shoukanjuu Ni!",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 8769,
+          "title": "Ore no Imouto ga Konnani Kawaii Wake ga Nai",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 8795,
+          "title": "Panty & Stocking with Garterbelt",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 9204,
+          "title": "Omae Umasou da na",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 9252,
+          "title": "Break Blade Movie 3: Kyoujin no Ato",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 9253,
+          "title": "Steins;Gate",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 9260,
+          "title": "Kizumonogatari I: Tekketsu-hen",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 9756,
+          "title": "Mahou Shoujo Madoka★Magica",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 9919,
+          "title": "Ao no Exorcist",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 9989,
+          "title": "Ano Hi Mita Hana no Namae wo Bokutachi wa Mada Shiranai.",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 10020,
+          "title": "Ore no Imouto ga Konnani Kawaii Wake ga Nai Specials",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 10087,
+          "title": "Fate/Zero",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 10162,
+          "title": "Usagi Drop",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 10218,
+          "title": "Berserk: Ougon Jidai-hen I - Haou no Tamago",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 10408,
+          "title": "Hotarubi no Mori e",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 10417,
+          "title": "Gyo",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 10620,
+          "title": "Mirai Nikki (TV)",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 10793,
+          "title": "Guilty Crown",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 10863,
+          "title": "Steins;Gate: Oukoubakko no Poriomania",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 11061,
+          "title": "Hunter x Hunter (2011)",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 11433,
+          "title": "Ano Natsu de Matteru",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 11577,
+          "title": "Steins;Gate Movie: Fuka Ryouiki no Déjà vu",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 11597,
+          "title": "Nisemonogatari",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 11741,
+          "title": "Fate/Zero 2nd Season",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 11757,
+          "title": "Sword Art Online",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 11759,
+          "title": "Accel World",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 11771,
+          "title": "Kuroko no Basket",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 11887,
+          "title": "Kokoro Connect",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 11981,
+          "title": "Mahou Shoujo Madoka★Magica Movie 3: Hangyaku no Monogatari",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 12113,
+          "title": "Berserk: Ougon Jidai-hen II - Doldrey Kouryaku",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 12115,
+          "title": "Berserk: Ougon Jidai-hen III - Kourin",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 12355,
+          "title": "Ookami Kodomo no Ame to Yuki",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 12531,
+          "title": "Sakamichi no Apollon",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 13239,
+          "title": "Mass Effect: Paragon Lost",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 13391,
+          "title": "Rakuen Tsuihou",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 13601,
+          "title": "Psycho-Pass",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 13659,
+          "title": "Ore no Imouto ga Konnani Kawaii Wake ga Nai.",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 14075,
+          "title": "Zetsuen no Tempest",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 14345,
+          "title": "Btooom!",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 14353,
+          "title": "Death Billiards",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 14719,
+          "title": "JoJo no Kimyou na Bouken (TV)",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 15039,
+          "title": "Ano Hi Mita Hana no Namae wo Bokutachi wa Mada Shiranai. Movie",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 15689,
+          "title": "Nekomonogatari: Kuro",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 15809,
+          "title": "Hataraku Maou-sama!",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 16067,
+          "title": "Nagi no Asu kara",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 16149,
+          "title": "Kick-Heart",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 16498,
+          "title": "Shingeki no Kyojin",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 16524,
+          "title": "Suisei no Gargantia",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 16592,
+          "title": "Danganronpa: Kibou no Gakuen to Zetsubou no Koukousei The Animation",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 16782,
+          "title": "Kotonoha no Niwa",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 16870,
+          "title": "The Last: Naruto the Movie",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 16894,
+          "title": "Kuroko no Basket 2nd Season",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 17074,
+          "title": "Monogatari Series: Second Season",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 17265,
+          "title": "Log Horizon",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 17819,
+          "title": "Kyoto Animation: Suiei-hen",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 17895,
+          "title": "Golden Time",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 18397,
+          "title": "Shingeki no Kyojin OVA",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 18679,
+          "title": "Kill la Kill",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 18857,
+          "title": "Ore no Imouto ga Konnani Kawaii Wake ga Nai. Specials",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 18897,
+          "title": "Nisekoi",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 19315,
+          "title": "Pupa",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 19647,
+          "title": "Hajime no Ippo: Rising",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 19815,
+          "title": "No Game No Life",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 20021,
+          "title": "Sword Art Online: Extra Edition",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 20057,
+          "title": "Space☆Dandy",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 20159,
+          "title": "Pokemon: The Origin",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 20507,
+          "title": "Noragami",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 20583,
+          "title": "Haikyuu!!",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 20787,
+          "title": "Black Bullet",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 20853,
+          "title": "Hitsugi no Chaika",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 21339,
+          "title": "Psycho-Pass Movie 1",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 21431,
+          "title": "Gokukoku no Brynhildr",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 21603,
+          "title": "Mekakucity Actors",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 21659,
+          "title": "Kill la Kill Specials",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 21881,
+          "title": "Sword Art Online II",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 22135,
+          "title": "Ping Pong the Animation",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 22147,
+          "title": "Amagi Brilliant Park",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 22199,
+          "title": "Akame ga Kill!",
+          "rawScore": 4,
+          "normalizedScore": -3.1471471471471473
+        },
+        {
+          "animeId": 22297,
+          "title": "Fate/stay night: Unlimited Blade Works",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 22319,
+          "title": "Tokyo Ghoul",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 22535,
+          "title": "Kiseijuu: Sei no Kakuritsu",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 22729,
+          "title": "Aldnoah.Zero",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 22839,
+          "title": "Cross Road",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 23273,
+          "title": "Shigatsu wa Kimi no Uso",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 23283,
+          "title": "Zankyou no Terror",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 23289,
+          "title": "Gekkan Shoujo Nozaki-kun",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 24231,
+          "title": "Hitsugi no Chaika: Avenging Battle",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 24439,
+          "title": "Kekkai Sensen",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 25777,
+          "title": "Shingeki no Kyojin Season 2",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 26243,
+          "title": "Owari no Seraph",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 26349,
+          "title": "Danna ga Nani wo Itteiru ka Wakaranai Ken",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 27655,
+          "title": "Aldnoah.Zero Part 2",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 27787,
+          "title": "Nisekoi:",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 27821,
+          "title": "Fate/stay night: Unlimited Blade Works Prologue",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 27899,
+          "title": "Tokyo Ghoul √A",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 28121,
+          "title": "Dungeon ni Deai wo Motomeru no wa Machigatteiru Darou ka",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 28171,
+          "title": "Shokugeki no Souma",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 28223,
+          "title": "Death Parade",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 28497,
+          "title": "Rokka no Yuusha",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 28623,
+          "title": "Koutetsujou no Kabaneri",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 28755,
+          "title": "Boruto: Naruto the Movie",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 28851,
+          "title": "Koe no Katachi",
+          "rawScore": 9,
+          "normalizedScore": 1.8528528528528527
+        },
+        {
+          "animeId": 28891,
+          "title": "Haikyuu!! Second Season",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 28907,
+          "title": "Gate: Jieitai Kanochi nite, Kaku Tatakaeri",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 28927,
+          "title": "Owari no Seraph: Nagoya Kessen-hen",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 28999,
+          "title": "Charlotte",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 29803,
+          "title": "Overlord",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 30240,
+          "title": "Prison School",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 30276,
+          "title": "One Punch Man",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 30503,
+          "title": "Noragami Aragoto",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 30831,
+          "title": "Kono Subarashii Sekai ni Shukufuku wo!",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 30911,
+          "title": "Tales of Zestiria the Cross",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 31043,
+          "title": "Boku dake ga Inai Machi",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 31240,
+          "title": "Re:Zero kara Hajimeru Isekai Seikatsu",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 31339,
+          "title": "Drifters",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 31580,
+          "title": "Ajin",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 31637,
+          "title": "Gate: Jieitai Kanochi nite, Kaku Tatakaeri Part 2",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 31765,
+          "title": "Sword Art Online Movie: Ordinal Scale",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 31798,
+          "title": "Kiznaiver",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 31964,
+          "title": "Boku no Hero Academia",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 32032,
+          "title": "Seikaisuru Kado",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 32071,
+          "title": "Gantz:O",
+          "rawScore": 5,
+          "normalizedScore": -2.1471471471471473
+        },
+        {
+          "animeId": 32086,
+          "title": "Blame! Movie",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        },
+        {
+          "animeId": 32182,
+          "title": "Mob Psycho 100",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 32281,
+          "title": "Kimi no Na wa.",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 32282,
+          "title": "Shokugeki no Souma: Ni no Sara",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 32901,
+          "title": "Eromanga-sensei",
+          "rawScore": 10,
+          "normalizedScore": 2.8528528528528527
+        },
+        {
+          "animeId": 32935,
+          "title": "Haikyuu!! Karasuno Koukou vs. Shiratorizawa Gakuen Koukou",
+          "rawScore": 8,
+          "normalizedScore": 0.8528528528528527
+        },
+        {
+          "animeId": 32937,
+          "title": "Kono Subarashii Sekai ni Shukufuku wo! 2",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 32995,
+          "title": "Yuri!!! on Ice",
+          "rawScore": 7,
+          "normalizedScore": -0.14714714714714727
+        },
+        {
+          "animeId": 33926,
+          "title": "Quanzhi Gaoshou",
+          "rawScore": 6,
+          "normalizedScore": -1.1471471471471473
+        }
+      ]
+    }
+  ]
+}
