@@ -1,4 +1,4 @@
-import Graph from "graphology";
+﻿import Graph from "graphology";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import Sigma from "sigma";
 import "./style.css";
@@ -65,6 +65,11 @@ app.innerHTML = `
         <span>Show anime-to-anime edges</span>
       </label>
 
+      <label class="checkbox">
+        <input id="toggle-users" type="checkbox" checked />
+        <span>Show user nodes + user-anime edges</span>
+      </label>
+
       <section class="inspect">
         <div class="inspect-head">
           <h2>Inspect Node</h2>
@@ -76,6 +81,7 @@ app.innerHTML = `
         <div id="inspect-content" class="inspect-content" hidden>
           <div id="inspect-meta" class="inspect-meta"></div>
           <div id="inspect-count" class="inspect-count"></div>
+          <div id="inspect-values" class="inspect-values"></div>
           <ul id="inspect-list" class="inspect-list"></ul>
         </div>
       </section>
@@ -92,10 +98,12 @@ const graphContainer = mustElement<HTMLDivElement>("#graph");
 const minWeightInput = mustElement<HTMLInputElement>("#min-weight");
 const minWeightValue = mustElement<HTMLOutputElement>("#min-weight-value");
 const toggleAnimeEdges = mustElement<HTMLInputElement>("#toggle-anime-edges");
+const toggleUsers = mustElement<HTMLInputElement>("#toggle-users");
 const inspectEmptyEl = mustElement<HTMLParagraphElement>("#inspect-empty");
 const inspectContentEl = mustElement<HTMLDivElement>("#inspect-content");
 const inspectMetaEl = mustElement<HTMLDivElement>("#inspect-meta");
 const inspectCountEl = mustElement<HTMLDivElement>("#inspect-count");
+const inspectValuesEl = mustElement<HTMLDivElement>("#inspect-values");
 const inspectListEl = mustElement<HTMLUListElement>("#inspect-list");
 const clearSelectionBtn = mustElement<HTMLButtonElement>("#clear-selection");
 
@@ -104,7 +112,7 @@ let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
 
 const graphData = await fetchGraph();
-renderGraph(graphData, 0, true);
+renderGraph(graphData, 0, true, true);
 
 clearSelectionBtn.addEventListener("click", () => {
   selectedNodeId = null;
@@ -112,24 +120,41 @@ clearSelectionBtn.addEventListener("click", () => {
 });
 
 minWeightInput.addEventListener("input", () => {
-  const value = Number.parseFloat(minWeightInput.value);
-  minWeightValue.textContent = value.toFixed(2);
-  renderGraph(graphData, value, toggleAnimeEdges.checked);
+  rerenderGraph();
 });
 
 toggleAnimeEdges.addEventListener("change", () => {
-  const value = Number.parseFloat(minWeightInput.value);
-  renderGraph(graphData, value, toggleAnimeEdges.checked);
+  rerenderGraph();
 });
+
+toggleUsers.addEventListener("change", () => {
+  rerenderGraph();
+});
+
+function rerenderGraph(): void {
+  const minWeight = Number.parseFloat(minWeightInput.value);
+  minWeightValue.textContent = minWeight.toFixed(2);
+  renderGraph(
+    graphData,
+    minWeight,
+    toggleAnimeEdges.checked,
+    toggleUsers.checked,
+  );
+}
 
 function renderGraph(
   graphDataValue: GraphData,
   minAbsoluteWeight: number,
   showAnimeAnimeEdges: boolean,
+  showUsers: boolean,
 ): void {
   const graph = new Graph({ multi: true, type: "undirected" });
 
   for (const node of graphDataValue.nodes) {
+    if (!showUsers && node.nodeType === "user") {
+      continue;
+    }
+
     const isUser = node.nodeType === "user";
     graph.addNode(node.id, {
       label: node.label,
@@ -142,12 +167,20 @@ function renderGraph(
   }
 
   for (const edge of graphDataValue.edges) {
+    if (!showUsers && edge.edgeType === "user-anime") {
+      continue;
+    }
+
     const edgePassesTypeFilter =
       showAnimeAnimeEdges || edge.edgeType !== "anime-anime";
     const edgePassesWeightFilter =
       Math.abs(edge.weight) >= minAbsoluteWeight || edge.edgeType === "user-anime";
 
     if (!edgePassesTypeFilter || !edgePassesWeightFilter) {
+      continue;
+    }
+
+    if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) {
       continue;
     }
 
@@ -183,10 +216,14 @@ function renderGraph(
     renderInspectPanel(null);
   });
 
+  const visibleUsers = countNodesByType(graph, "user");
+  const visibleAnime = graph.order - visibleUsers;
+
   statsEl.innerHTML = [
     statLine("Generated", new Date(graphDataValue.generatedAt).toLocaleString()),
-    statLine("Users", String(graphDataValue.userCount)),
-    statLine("Anime", String(graphDataValue.animeCount)),
+    statLine("Visible users", `${visibleUsers} / ${graphDataValue.userCount}`),
+    statLine("Visible anime", `${visibleAnime} / ${graphDataValue.animeCount}`),
+    statLine("Visible nodes", String(graph.order)),
     statLine("Visible edges", String(graph.size)),
   ].join("");
 
@@ -304,17 +341,14 @@ function renderInspectPanel(nodeId: string | null): void {
     inspectContentEl.hidden = true;
     inspectMetaEl.textContent = "";
     inspectCountEl.textContent = "";
+    inspectValuesEl.innerHTML = "";
     inspectListEl.innerHTML = "";
     return;
   }
 
-  const nodeAttrs = currentGraph.getNodeAttributes(nodeId) as Record<
-    string,
-    unknown
-  >;
+  const nodeAttrs = currentGraph.getNodeAttributes(nodeId) as Record<string, unknown>;
   const label = typeof nodeAttrs.label === "string" ? nodeAttrs.label : nodeId;
-  const nodeType =
-    nodeAttrs.nodeType === "user" ? "user" : ("anime" as "user" | "anime");
+  const nodeType = nodeAttrs.nodeType === "user" ? "user" : ("anime" as "user" | "anime");
 
   const connections = getConnectedItems(currentGraph, nodeId).sort(
     (left, right) => right.weight - left.weight,
@@ -324,12 +358,37 @@ function renderInspectPanel(nodeId: string | null): void {
   inspectContentEl.hidden = false;
   inspectMetaEl.innerHTML = `
     <div class="inspect-title">${escapeHtml(label)}</div>
-    <div class="inspect-sub">${nodeType} • ${escapeHtml(nodeId)}</div>
+    <div class="inspect-sub">${nodeType} | ${escapeHtml(nodeId)}</div>
   `;
-  inspectCountEl.textContent = `Connected items: ${connections.length} (sorted by weight)`;
+
+  const connectionCount = connections.length;
+  const userConnections = connections.filter((item) => item.nodeType === "user").length;
+  const animeConnections = connectionCount - userConnections;
+  const positiveConnections = connections.filter((item) => item.weight > 0).length;
+  const negativeConnections = connections.filter((item) => item.weight < 0).length;
+  const sumWeight = connections.reduce((sum, item) => sum + item.weight, 0);
+  const avgWeight = connectionCount > 0 ? sumWeight / connectionCount : 0;
+  const strongestWeight = connectionCount > 0 ? connections[0].weight : 0;
+  const weakestWeight = connectionCount > 0 ? connections[connectionCount - 1].weight : 0;
+
+  inspectCountEl.textContent = `Connected items: ${connectionCount} (sorted by weight desc)`;
+  inspectValuesEl.innerHTML = [
+    valueRow("Connected users", String(userConnections)),
+    valueRow("Connected anime", String(animeConnections)),
+    valueRow("Positive edges", String(positiveConnections)),
+    valueRow("Negative edges", String(negativeConnections)),
+    valueRow("Average weight", formatWeight(avgWeight)),
+    valueRow("Strongest edge", formatWeight(strongestWeight)),
+    valueRow("Weakest edge", formatWeight(weakestWeight)),
+  ].join("");
 
   const visible = connections.slice(0, INSPECT_MAX_ITEMS);
-  inspectListEl.innerHTML = visible
+  const truncationNotice =
+    visible.length < connectionCount
+      ? `<li class="inspect-trunc">Showing top ${visible.length} by weight</li>`
+      : "";
+
+  const listHtml = visible
     .map((item) => {
       const weight = formatWeight(item.weight);
       return `
@@ -346,10 +405,13 @@ function renderInspectPanel(nodeId: string | null): void {
       `;
     })
     .join("");
+
+  inspectListEl.innerHTML = truncationNotice + listHtml;
 }
 
 function getConnectedItems(graph: Graph, nodeId: string): ConnectedItem[] {
   const items: ConnectedItem[] = [];
+
   graph.forEachEdge(
     nodeId,
     (
@@ -397,6 +459,7 @@ function getConnectedItems(graph: Graph, nodeId: string): ConnectedItem[] {
       });
     },
   );
+
   return items;
 }
 
@@ -410,6 +473,21 @@ function escapeHtml(value: string): string {
 }
 
 function formatWeight(value: number): string {
-  const rounded = value.toFixed(3);
-  return value > 0 ? `+${rounded}` : rounded;
+  const normalized = Math.abs(value) < 0.0005 ? 0 : value;
+  const rounded = normalized.toFixed(3);
+  return normalized > 0 ? `+${rounded}` : rounded;
+}
+
+function valueRow(label: string, value: string): string {
+  return `<div class="inspect-value-row"><span>${label}</span><strong>${value}</strong></div>`;
+}
+
+function countNodesByType(graph: Graph, type: "user" | "anime"): number {
+  let count = 0;
+  graph.forEachNode((_node, attributes) => {
+    if (attributes.nodeType === type) {
+      count += 1;
+    }
+  });
+  return count;
 }
