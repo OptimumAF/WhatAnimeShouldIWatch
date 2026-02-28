@@ -112,7 +112,10 @@ let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
 
 const graphData = await fetchGraph();
-renderGraph(graphData, 0, true, false);
+const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
+minWeightInput.value = defaultMinWeight.toFixed(2);
+minWeightValue.textContent = defaultMinWeight.toFixed(2);
+renderGraph(graphData, defaultMinWeight, true, false);
 
 clearSelectionBtn.addEventListener("click", () => {
   selectedNodeId = null;
@@ -490,4 +493,43 @@ function countNodesByType(graph: Graph, type: "user" | "anime"): number {
     }
   });
   return count;
+}
+
+function getDefaultMinAnimeAnimeWeight(
+  graphDataValue: GraphData,
+  input: HTMLInputElement,
+): number {
+  let sumAbsWeight = 0;
+  let count = 0;
+
+  for (const edge of graphDataValue.edges) {
+    if (edge.edgeType !== "anime-anime") {
+      continue;
+    }
+    if (!Number.isFinite(edge.weight)) {
+      continue;
+    }
+    sumAbsWeight += Math.abs(edge.weight);
+    count += 1;
+  }
+
+  const min = Number.parseFloat(input.min || "0");
+  const max = Number.parseFloat(input.max || "4");
+  const step = Number.parseFloat(input.step || "0");
+
+  if (count === 0) {
+    return min;
+  }
+
+  let value = sumAbsWeight / count;
+  if (Number.isNaN(value) || !Number.isFinite(value)) {
+    value = min;
+  }
+
+  value = Math.min(Math.max(value, min), max);
+  if (step > 0 && Number.isFinite(step)) {
+    value = Math.round(value / step) * step;
+  }
+
+  return Number(value.toFixed(2));
 }
