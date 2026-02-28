@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "collect": "tsx src/collect.ts",
+    "expand:network": "tsx src/expand-network.ts",
     "build:graph": "tsx src/build-graph.ts",
     "sync:web": "tsx src/sync-web.ts",
     "typecheck": "tsc --noEmit"

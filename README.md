@@ -44,6 +44,28 @@ Notes:
 - If you change salt, remove `data/anime.sqlite` first (or use a new DB path), otherwise the same user may be imported as a new anonymized user ID.
 - Only rated entries (`score > 0`) are imported.
 
+### Grow the Network Automatically
+
+This crawls outward from seed users and discovers more users through shared anime activity:
+
+```bash
+npm run expand:network -- "Gigguk,TheAnimeMan" "your-private-salt" 150 "data/anime.sqlite"
+```
+
+Positional arguments:
+
+- `1:` seed usernames (comma-separated)
+- `2:` anonymization salt
+- `3:` target total user count in DB
+- `4:` SQLite path
+
+Useful env/config flags:
+
+- `--discovery-anime-per-user` (default `8`)
+- `--updates-pages-per-anime` (default `1`)
+- `--fallback-users-pages` (default `2`)
+- `--min-scored-anime` (default `30`)
+
 ## 2) Build Dataset + Graph JSON
 
 ```bash
