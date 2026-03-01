@@ -6,7 +6,7 @@ import "./style.css";
 type NodeType = "user" | "anime";
 type EdgeType = "user-anime" | "anime-anime";
 type AppView = "recommendations" | "network";
-type RecommendationMode = "graph" | "model";
+type RecommendationMode = "graph" | "model" | "hybrid";
 
 interface GraphNode {
   id: string;
@@ -129,12 +129,16 @@ const MAX_RECOMMENDATIONS = 40;
 const MIN_WATCH_WEIGHT = 0.2;
 const MAX_WATCH_WEIGHT = 3;
 const WATCH_WEIGHT_STEP = 0.1;
+const MIN_MODEL_BLEND_WEIGHT = 0;
+const MAX_MODEL_BLEND_WEIGHT = 1;
+const MODEL_BLEND_WEIGHT_STEP = 0.05;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
 
 interface StoredRecommendationState {
-  version: 1;
+  version: number;
   mode: RecommendationMode;
   selected: { nodeId: string; weight: number }[];
+  modelBlendWeight?: number;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -167,7 +171,13 @@ app.innerHTML = `
               <select id="rec-method">
                 <option value="graph" selected>Graph (anime-to-anime edges)</option>
                 <option value="model">ML Model (matrix factorization)</option>
+                <option value="hybrid">Hybrid (blend graph + ML)</option>
               </select>
+            </label>
+            <label id="rec-blend-control" class="rec-blend-control" for="rec-blend" hidden>
+              <span>Model blend weight</span>
+              <input id="rec-blend" type="range" min="${MIN_MODEL_BLEND_WEIGHT}" max="${MAX_MODEL_BLEND_WEIGHT}" step="${MODEL_BLEND_WEIGHT_STEP}" value="0.50" />
+              <output id="rec-blend-value">50% model / 50% graph</output>
             </label>
             <p id="rec-engine-status" class="rec-engine-status">Using graph recommendations.</p>
 
@@ -253,6 +263,9 @@ const addAnimeForm = mustElement<HTMLFormElement>("#add-anime-form");
 const animeInput = mustElement<HTMLInputElement>("#anime-input");
 const animeOptions = mustElement<HTMLDataListElement>("#anime-options");
 const recMethodSelect = mustElement<HTMLSelectElement>("#rec-method");
+const recBlendControl = mustElement<HTMLLabelElement>("#rec-blend-control");
+const recBlendInput = mustElement<HTMLInputElement>("#rec-blend");
+const recBlendValueEl = mustElement<HTMLOutputElement>("#rec-blend-value");
 const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status");
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
@@ -279,6 +292,7 @@ let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
 let activeView: AppView = "recommendations";
 let recommendationMode: RecommendationMode = "graph";
+let modelBlendWeight = 0.5;
 let recommendationRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
 
@@ -293,7 +307,11 @@ for (const entry of persistedState.selected) {
   selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
 }
 recommendationMode = persistedState.mode;
+modelBlendWeight = clampModelBlendWeight(persistedState.modelBlendWeight ?? 0.5);
 recMethodSelect.value = recommendationMode;
+recBlendInput.value = modelBlendWeight.toFixed(2);
+renderModelBlendValue();
+setBlendControlVisibility();
 
 populateAnimeOptions(recommendationIndex.animeList, animeOptions);
 renderSelectedAnime();
@@ -384,9 +402,20 @@ clearWatchedBtn.addEventListener("click", () => {
 });
 
 recMethodSelect.addEventListener("change", () => {
-  recommendationMode = recMethodSelect.value === "model" ? "model" : "graph";
+  recommendationMode = parseRecommendationMode(recMethodSelect.value);
+  setBlendControlVisibility();
   persistRecommendationState();
   void updateRecommendations();
+});
+
+recBlendInput.addEventListener("input", () => {
+  modelBlendWeight = clampModelBlendWeight(Number.parseFloat(recBlendInput.value));
+  recBlendInput.value = modelBlendWeight.toFixed(2);
+  renderModelBlendValue();
+  persistRecommendationState();
+  if (recommendationMode === "hybrid") {
+    void updateRecommendations();
+  }
 });
 
 clearSelectionBtn.addEventListener("click", () => {
@@ -526,7 +555,9 @@ async function updateRecommendations(): Promise<void> {
     recEngineStatusEl.textContent =
       recommendationMode === "graph"
         ? "Using graph recommendations."
-        : "Using ML model recommendations.";
+        : recommendationMode === "model"
+          ? "Using ML model recommendations."
+          : `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model).`;
     recResultsEl.innerHTML = "";
     renderSelectedAnime();
     return;
@@ -541,7 +572,7 @@ async function updateRecommendations(): Promise<void> {
       selectedAnimeWeights,
       recommendationIndex,
     );
-  } else {
+  } else if (recommendationMode === "model") {
     recEngineStatusEl.textContent = "Loading ML model recommendations...";
     const modelIndex = await ensureModelRecommendationIndex();
     if (runId !== recommendationRunId) {
@@ -562,6 +593,38 @@ async function updateRecommendations(): Promise<void> {
       recommendationIndex,
       modelIndex,
     );
+  } else {
+    recEngineStatusEl.textContent = "Loading hybrid recommendations...";
+    const modelIndex = await ensureModelRecommendationIndex();
+    if (runId !== recommendationRunId) {
+      return;
+    }
+    if (!modelIndex) {
+      recEngineStatusEl.textContent =
+        "ML model data not found for hybrid mode (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
+      recSummaryEl.textContent =
+        "Hybrid mode needs model data. Export model data or switch to graph-only mode.";
+      recResultsEl.innerHTML = "";
+      return;
+    }
+    const graphRecommendations = buildGraphRecommendations(
+      selectedAnimeNodeIds,
+      selectedAnimeWeights,
+      recommendationIndex,
+    );
+    const modelRecommendations = buildModelRecommendations(
+      selectedAnimeNodeIds,
+      selectedAnimeWeights,
+      recommendationIndex,
+      modelIndex,
+    );
+    recommendations = combineHybridRecommendations(
+      graphRecommendations,
+      modelRecommendations,
+      modelBlendWeight,
+    );
+    recEngineStatusEl.textContent =
+      `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph).`;
   }
 
   if (recommendations.length === 0) {
@@ -572,7 +635,11 @@ async function updateRecommendations(): Promise<void> {
   }
 
   const methodLabel =
-    recommendationMode === "graph" ? "graph edge ranking" : "ML model ranking";
+    recommendationMode === "graph"
+      ? "graph edge ranking"
+      : recommendationMode === "model"
+        ? "ML model ranking"
+        : "hybrid graph+ML ranking";
   recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, recommendations.length)} recommendations from ${recommendations.length} candidates (${methodLabel}).`;
 
   recResultsEl.innerHTML = recommendations
@@ -815,6 +882,135 @@ function buildModelRecommendations(
     }
     return right.strongest - left.strongest;
   });
+}
+
+function combineHybridRecommendations(
+  graphRecommendations: RecommendationResult[],
+  modelRecommendations: RecommendationResult[],
+  modelWeight: number,
+): RecommendationResult[] {
+  const clampedModelWeight = clampModelBlendWeight(modelWeight);
+  const graphWeight = 1 - clampedModelWeight;
+
+  const graphScale = createScoreScale(graphRecommendations);
+  const modelScale = createScoreScale(modelRecommendations);
+
+  const byAnime = new Map<
+    number,
+    {
+      anime: AnimeInfo;
+      score: number;
+      strongest: number;
+      supportCount: number;
+      contributions: RecommendationContribution[];
+    }
+  >();
+
+  for (const item of graphRecommendations) {
+    const normalized = graphScale(item.score);
+    const weighted = normalized * graphWeight;
+    if (weighted <= 0) {
+      continue;
+    }
+    byAnime.set(item.anime.animeId, {
+      anime: item.anime,
+      score: weighted,
+      strongest: item.strongest * graphWeight,
+      supportCount: item.supportCount,
+      contributions: scaleContributions(item.contributions, graphWeight),
+    });
+  }
+
+  for (const item of modelRecommendations) {
+    const normalized = modelScale(item.score);
+    const weighted = normalized * clampedModelWeight;
+    if (weighted <= 0) {
+      continue;
+    }
+    const current = byAnime.get(item.anime.animeId);
+    if (!current) {
+      byAnime.set(item.anime.animeId, {
+        anime: item.anime,
+        score: weighted,
+        strongest: item.strongest * clampedModelWeight,
+        supportCount: item.supportCount,
+        contributions: scaleContributions(item.contributions, clampedModelWeight),
+      });
+      continue;
+    }
+
+    current.score += weighted;
+    current.strongest = Math.max(
+      current.strongest,
+      item.strongest * clampedModelWeight,
+    );
+    current.supportCount += item.supportCount;
+    current.contributions = [...current.contributions]
+      .concat(scaleContributions(item.contributions, clampedModelWeight))
+      .sort((left, right) => right.weightedScore - left.weightedScore)
+      .slice(0, 10);
+  }
+
+  return [...byAnime.values()]
+    .map((value) => ({
+      anime: value.anime,
+      score: value.score,
+      strongest: value.strongest,
+      supportCount: value.supportCount,
+      contributions: value.contributions,
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      if (right.supportCount !== left.supportCount) {
+        return right.supportCount - left.supportCount;
+      }
+      return right.strongest - left.strongest;
+    });
+}
+
+function createScoreScale(
+  recommendations: RecommendationResult[],
+): (score: number) => number {
+  if (recommendations.length === 0) {
+    return () => 0;
+  }
+  let min = recommendations[0].score;
+  let max = recommendations[0].score;
+  for (const item of recommendations) {
+    if (item.score < min) {
+      min = item.score;
+    }
+    if (item.score > max) {
+      max = item.score;
+    }
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    return (score: number) => (Number.isFinite(score) ? 1 : 0);
+  }
+
+  const denominator = max - min;
+  return (score: number) => {
+    if (!Number.isFinite(score)) {
+      return 0;
+    }
+    const normalized = (score - min) / denominator;
+    return Math.min(Math.max(normalized, 0), 1);
+  };
+}
+
+function scaleContributions(
+  contributions: RecommendationContribution[],
+  factor: number,
+): RecommendationContribution[] {
+  return contributions.map((item) => ({
+    watched: item.watched,
+    edgeWeight: item.edgeWeight,
+    weightFactor: item.weightFactor,
+    weightedScore: item.weightedScore * factor,
+  }));
 }
 
 function resolveAnimeInput(
@@ -1545,6 +1741,16 @@ function formatRecommendationWhy(result: RecommendationResult): string {
   return `Why: ${summary}${truncated}`;
 }
 
+function parseRecommendationMode(value: string): RecommendationMode {
+  if (value === "model") {
+    return "model";
+  }
+  if (value === "hybrid") {
+    return "hybrid";
+  }
+  return "graph";
+}
+
 function clampWatchWeight(value: number): number {
   if (!Number.isFinite(value)) {
     return 1;
@@ -1552,20 +1758,41 @@ function clampWatchWeight(value: number): number {
   return Math.min(Math.max(value, MIN_WATCH_WEIGHT), MAX_WATCH_WEIGHT);
 }
 
+function clampModelBlendWeight(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0.5;
+  }
+  return Math.min(Math.max(value, MIN_MODEL_BLEND_WEIGHT), MAX_MODEL_BLEND_WEIGHT);
+}
+
+function renderModelBlendValue(): void {
+  const modelPercent = Math.round(modelBlendWeight * 100);
+  const graphPercent = 100 - modelPercent;
+  recBlendValueEl.textContent = `${modelPercent}% model / ${graphPercent}% graph`;
+}
+
+function setBlendControlVisibility(): void {
+  recBlendControl.hidden = recommendationMode !== "hybrid";
+}
+
 function loadRecommendationState(index: RecommendationIndex): {
   mode: RecommendationMode;
   selected: { nodeId: string; weight: number }[];
+  modelBlendWeight: number;
 } {
   try {
     const raw = window.localStorage.getItem(RECOMMENDATION_STATE_STORAGE_KEY);
     if (!raw) {
-      return { mode: "graph", selected: [] };
+      return { mode: "graph", selected: [], modelBlendWeight: 0.5 };
     }
     const parsed = JSON.parse(raw) as StoredRecommendationState;
-    if (!parsed || parsed.version !== 1) {
-      return { mode: "graph", selected: [] };
+    if (!parsed || (parsed.version !== 1 && parsed.version !== 2)) {
+      return { mode: "graph", selected: [], modelBlendWeight: 0.5 };
     }
-    const mode: RecommendationMode = parsed.mode === "model" ? "model" : "graph";
+    const mode = parseRecommendationMode(parsed.mode);
+    const modelBlendWeight = clampModelBlendWeight(
+      Number(parsed.modelBlendWeight ?? 0.5),
+    );
     const selected = Array.isArray(parsed.selected)
       ? parsed.selected
           .filter(
@@ -1579,10 +1806,10 @@ function loadRecommendationState(index: RecommendationIndex): {
             weight: clampWatchWeight(Number(entry.weight)),
           }))
       : [];
-    return { mode, selected };
+    return { mode, selected, modelBlendWeight };
   } catch (error) {
     console.warn("Unable to load saved recommendation state.", error);
-    return { mode: "graph", selected: [] };
+    return { mode: "graph", selected: [], modelBlendWeight: 0.5 };
   }
 }
 
@@ -1595,9 +1822,10 @@ function persistRecommendationState(): void {
         weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
       }));
     const payload: StoredRecommendationState = {
-      version: 1,
+      version: 2,
       mode: recommendationMode,
       selected,
+      modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
     };
     window.localStorage.setItem(
       RECOMMENDATION_STATE_STORAGE_KEY,

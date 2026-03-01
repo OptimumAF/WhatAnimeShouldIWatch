@@ -135,6 +135,23 @@ body {
   padding: 0.5rem 0.65rem;
 }
 
+.rec-blend-control {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.rec-blend-control span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.rec-blend-control output {
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--accent-soft);
+  font-size: 0.77rem;
+}
+
 .rec-engine-status {
   margin: 0.5rem 0 0;
   color: #9ec5e5;
