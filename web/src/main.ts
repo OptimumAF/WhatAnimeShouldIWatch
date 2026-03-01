@@ -7,6 +7,7 @@ type NodeType = "user" | "anime";
 type EdgeType = "user-anime" | "anime-anime";
 type AppView = "recommendations" | "network";
 type RecommendationMode = "graph" | "model" | "hybrid";
+type UsernameImportProvider = "anilist" | "mal";
 
 interface GraphNode {
   id: string;
@@ -90,6 +91,17 @@ interface RecommendationIndex {
   adjacency: Map<string, { otherNodeId: string; weight: number }[]>;
 }
 
+interface ImportedWatchedEntry {
+  anime: AnimeInfo;
+  weight: number;
+}
+
+interface UsernameImportResult {
+  entries: ImportedWatchedEntry[];
+  ratedCount: number;
+  unmappedCount: number;
+}
+
 interface ModelRecommendationAnime {
   animeId: number;
   title: string;
@@ -132,7 +144,11 @@ const WATCH_WEIGHT_STEP = 0.1;
 const MIN_MODEL_BLEND_WEIGHT = 0;
 const MAX_MODEL_BLEND_WEIGHT = 1;
 const MODEL_BLEND_WEIGHT_STEP = 0.05;
+const USERNAME_IMPORT_MAX_RETRIES = 3;
+const USERNAME_IMPORT_PAGE_SIZE = 300;
+const USERNAME_IMPORT_PAGE_DELAY_MS = 350;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
+const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
 
 interface StoredRecommendationState {
   version: number;
@@ -141,6 +157,12 @@ interface StoredRecommendationState {
   modelBlendWeight?: number;
   includeCandidates?: string[];
   excludeCandidates?: string[];
+}
+
+interface RecommendationProfileRecord {
+  name: string;
+  updatedAt: string;
+  state: StoredRecommendationState;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -204,6 +226,33 @@ app.innerHTML = `
                 <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
                 <button type="submit">Import Watched Entries</button>
               </form>
+            </section>
+
+            <section class="username-import">
+              <h3>Import From Username</h3>
+              <p class="muted">Load rated anime from a public AniList or MAL profile.</p>
+              <form id="username-import-form" class="username-import-form">
+                <select id="username-import-provider" aria-label="Import provider">
+                  <option value="anilist" selected>AniList</option>
+                  <option value="mal">MyAnimeList (MAL)</option>
+                </select>
+                <input id="username-import-input" type="text" autocomplete="off" placeholder="Enter username" />
+                <button id="username-import-submit" type="submit">Import User List</button>
+              </form>
+            </section>
+
+            <section class="profiles">
+              <h3>Saved Profiles</h3>
+              <p class="muted">Save and reload named recommendation setups.</p>
+              <form id="profile-save-form" class="profile-save-form">
+                <input id="profile-name-input" type="text" autocomplete="off" placeholder="Profile name" />
+                <button id="profile-save-submit" type="submit">Save Profile</button>
+              </form>
+              <div class="profile-load-row">
+                <select id="profile-select" aria-label="Saved profile"></select>
+                <button id="profile-load-btn" type="button">Load</button>
+                <button id="profile-delete-btn" type="button" class="ghost-btn">Delete</button>
+              </div>
             </section>
 
             <div class="selected-head">
@@ -313,6 +362,15 @@ const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
 const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
 const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
+const usernameImportForm = mustElement<HTMLFormElement>("#username-import-form");
+const usernameImportProvider = mustElement<HTMLSelectElement>("#username-import-provider");
+const usernameImportInput = mustElement<HTMLInputElement>("#username-import-input");
+const usernameImportSubmit = mustElement<HTMLButtonElement>("#username-import-submit");
+const profileSaveForm = mustElement<HTMLFormElement>("#profile-save-form");
+const profileNameInput = mustElement<HTMLInputElement>("#profile-name-input");
+const profileSelect = mustElement<HTMLSelectElement>("#profile-select");
+const profileLoadBtn = mustElement<HTMLButtonElement>("#profile-load-btn");
+const profileDeleteBtn = mustElement<HTMLButtonElement>("#profile-delete-btn");
 const addIncludeForm = mustElement<HTMLFormElement>("#add-include-form");
 const includeInput = mustElement<HTMLInputElement>("#include-input");
 const includeAnimeEl = mustElement<HTMLDivElement>("#include-anime");
@@ -358,6 +416,7 @@ const selectedAnimeWeights = new Map<string, number>();
 const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
 const persistedState = loadRecommendationState(recommendationIndex);
+const savedProfiles = loadRecommendationProfiles();
 
 for (const entry of persistedState.selected) {
   selectedAnimeNodeIds.push(entry.nodeId);
@@ -381,6 +440,7 @@ populateNetworkNodeOptions(graphData.nodes, networkNodeOptions);
 renderSelectedAnime();
 renderIncludeCandidates();
 renderExcludeCandidates();
+renderProfileOptions(savedProfiles);
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
@@ -409,6 +469,24 @@ addAnimeForm.addEventListener("submit", (event) => {
 bulkImportForm.addEventListener("submit", (event) => {
   event.preventDefault();
   importWatchedFromBulkInput();
+});
+
+usernameImportForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void importWatchedFromUsername();
+});
+
+profileSaveForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveCurrentProfile();
+});
+
+profileLoadBtn.addEventListener("click", () => {
+  loadSelectedProfile();
+});
+
+profileDeleteBtn.addEventListener("click", () => {
+  deleteSelectedProfile();
 });
 
 addIncludeForm.addEventListener("submit", (event) => {
@@ -712,6 +790,341 @@ function importWatchedFromBulkInput(): void {
   recMessageEl.textContent =
     `Import complete. Added: ${added}, Updated: ${updated}, Skipped: ${skipped}.` +
     unresolvedNote;
+}
+
+async function importWatchedFromUsername(): Promise<void> {
+  const provider = parseUsernameImportProvider(usernameImportProvider.value);
+  const username = usernameImportInput.value.trim();
+  if (!username) {
+    recMessageEl.textContent = "Enter a username first.";
+    return;
+  }
+
+  setUsernameImportLoading(true, provider);
+  recMessageEl.textContent = `Importing rated anime from ${providerLabel(provider)} user "${username}"...`;
+
+  try {
+    const result =
+      provider === "anilist"
+        ? await fetchAniListUsernameImport(username, recommendationIndex)
+        : await fetchMalUsernameImport(username, recommendationIndex);
+
+    const summary = upsertImportedWatchedEntries(result.entries);
+    persistRecommendationState();
+    renderSelectedAnime();
+    void updateRecommendations();
+
+    recMessageEl.textContent =
+      `Imported ${providerLabel(provider)} user "${username}". ` +
+      `Rated: ${result.ratedCount}, matched in graph: ${result.entries.length}, ` +
+      `added: ${summary.added}, updated: ${summary.updated}, skipped: ${summary.skipped}, ` +
+      `unmapped: ${result.unmappedCount}.`;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unable to import this username.";
+    recMessageEl.textContent = `Username import failed: ${message}`;
+  } finally {
+    setUsernameImportLoading(false, provider);
+  }
+}
+
+function parseUsernameImportProvider(raw: string): UsernameImportProvider {
+  if (raw === "mal") {
+    return "mal";
+  }
+  return "anilist";
+}
+
+function providerLabel(provider: UsernameImportProvider): string {
+  return provider === "mal" ? "MAL" : "AniList";
+}
+
+function setUsernameImportLoading(
+  loading: boolean,
+  provider: UsernameImportProvider,
+): void {
+  usernameImportProvider.disabled = loading;
+  usernameImportInput.disabled = loading;
+  usernameImportSubmit.disabled = loading;
+  usernameImportSubmit.textContent = loading
+    ? `Importing ${providerLabel(provider)}...`
+    : "Import User List";
+}
+
+async function fetchAniListUsernameImport(
+  username: string,
+  index: RecommendationIndex,
+): Promise<UsernameImportResult> {
+  const query = `
+    query ($userName: String) {
+      MediaListCollection(userName: $userName, type: ANIME) {
+        lists {
+          entries {
+            score(format: POINT_10_DECIMAL)
+            media {
+              idMal
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const payload = await fetchJsonWithRetries<{
+    data?: {
+      MediaListCollection?: {
+        lists?: Array<{
+          entries?: Array<{
+            score?: number;
+            media?: {
+              idMal?: number | null;
+            } | null;
+          }>;
+        }>;
+      } | null;
+    };
+    errors?: Array<{ message?: string }>;
+  }>("https://graphql.anilist.co", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      query,
+      variables: { userName: username },
+    }),
+  });
+
+  if (payload.errors && payload.errors.length > 0) {
+    const message = payload.errors[0]?.message ?? "AniList API returned an error.";
+    throw new Error(message);
+  }
+
+  const lists = payload.data?.MediaListCollection?.lists ?? [];
+  if (lists.length === 0) {
+    throw new Error(
+      "No AniList anime list found for that user (private, empty, or not found).",
+    );
+  }
+
+  let ratedCount = 0;
+  let unmappedCount = 0;
+  const byNodeId = new Map<string, ImportedWatchedEntry>();
+
+  for (const list of lists) {
+    const entries = list.entries ?? [];
+    for (const entry of entries) {
+      const score = Number(entry.score ?? 0);
+      const malId = Number(entry.media?.idMal ?? 0);
+      if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(malId) || malId <= 0) {
+        continue;
+      }
+
+      ratedCount += 1;
+      const anime = index.animeByAnimeId.get(Math.trunc(malId));
+      if (!anime) {
+        unmappedCount += 1;
+        continue;
+      }
+
+      const weight = normalizeImportedScoreToWeight(score);
+      byNodeId.set(anime.nodeId, { anime, weight });
+    }
+  }
+
+  return {
+    entries: [...byNodeId.values()],
+    ratedCount,
+    unmappedCount,
+  };
+}
+
+async function fetchMalUsernameImport(
+  username: string,
+  index: RecommendationIndex,
+): Promise<UsernameImportResult> {
+  const allEntries: Array<{ anime_id?: number; score?: number }> = [];
+  let offset = 0;
+
+  while (true) {
+    const page = await fetchMalUsernamePage(username, offset);
+    if (!Array.isArray(page) || page.length === 0) {
+      break;
+    }
+
+    allEntries.push(...page);
+    if (page.length < USERNAME_IMPORT_PAGE_SIZE) {
+      break;
+    }
+
+    offset += page.length;
+    await sleep(USERNAME_IMPORT_PAGE_DELAY_MS);
+  }
+
+  if (allEntries.length === 0) {
+    throw new Error("No rated MAL entries found for that user (private, empty, or not found).");
+  }
+
+  let ratedCount = 0;
+  let unmappedCount = 0;
+  const byNodeId = new Map<string, ImportedWatchedEntry>();
+
+  for (const entry of allEntries) {
+    const score = Number(entry.score ?? 0);
+    const animeId = Number(entry.anime_id ?? 0);
+    if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(animeId) || animeId <= 0) {
+      continue;
+    }
+
+    ratedCount += 1;
+    const anime = index.animeByAnimeId.get(Math.trunc(animeId));
+    if (!anime) {
+      unmappedCount += 1;
+      continue;
+    }
+
+    const weight = normalizeImportedScoreToWeight(score);
+    byNodeId.set(anime.nodeId, { anime, weight });
+  }
+
+  return {
+    entries: [...byNodeId.values()],
+    ratedCount,
+    unmappedCount,
+  };
+}
+
+async function fetchMalUsernamePage(
+  username: string,
+  offset: number,
+): Promise<Array<{ anime_id?: number; score?: number }>> {
+  const malUrl = new URL(
+    `https://myanimelist.net/animelist/${encodeURIComponent(username)}/load.json`,
+  );
+  malUrl.searchParams.set("status", "7");
+  malUrl.searchParams.set("offset", String(offset));
+
+  try {
+    return await fetchJsonWithRetries<Array<{ anime_id?: number; score?: number }>>(
+      malUrl.toString(),
+      {
+        headers: {
+          Accept: "application/json",
+        },
+      },
+      USERNAME_IMPORT_MAX_RETRIES,
+    );
+  } catch {
+    const jinaUrl = `https://r.jina.ai/http://${malUrl.host}${malUrl.pathname}${malUrl.search}`;
+    const text = await fetchTextWithRetries(jinaUrl);
+    const parsed = parseJinaMarkdownJson<Array<{ anime_id?: number; score?: number }>>(text);
+    if (!Array.isArray(parsed)) {
+      throw new Error(
+        "Unable to read MAL list data. The profile may be private or blocked by CORS/rate limits.",
+      );
+    }
+    return parsed;
+  }
+}
+
+function parseJinaMarkdownJson<T>(content: string): T | null {
+  const marker = "Markdown Content:";
+  const markerIndex = content.indexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+  const jsonText = content.slice(markerIndex + marker.length).trim();
+  if (!jsonText) {
+    return null;
+  }
+  try {
+    return JSON.parse(jsonText) as T;
+  } catch {
+    return null;
+  }
+}
+
+function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
+  added: number;
+  updated: number;
+  skipped: number;
+} {
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const entry of entries) {
+    const existingIndex = selectedAnimeNodeIds.indexOf(entry.anime.nodeId);
+    if (existingIndex < 0) {
+      selectedAnimeNodeIds.push(entry.anime.nodeId);
+      selectedAnimeWeights.set(entry.anime.nodeId, entry.weight);
+      added += 1;
+      continue;
+    }
+
+    const current = clampWatchWeight(selectedAnimeWeights.get(entry.anime.nodeId) ?? 1);
+    if (Math.abs(current - entry.weight) < 0.0001) {
+      skipped += 1;
+      continue;
+    }
+
+    selectedAnimeWeights.set(entry.anime.nodeId, entry.weight);
+    updated += 1;
+  }
+
+  return { added, updated, skipped };
+}
+
+async function fetchJsonWithRetries<T>(
+  url: string,
+  init?: RequestInit,
+  maxRetries = USERNAME_IMPORT_MAX_RETRIES,
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const response = await fetch(url, init);
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+
+    if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
+      throw new Error(`Request failed (${response.status}) for ${url}`);
+    }
+
+    await sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(Math.random() * 200));
+  }
+
+  throw new Error("Request retries exhausted.");
+}
+
+async function fetchTextWithRetries(
+  url: string,
+  maxRetries = USERNAME_IMPORT_MAX_RETRIES,
+): Promise<string> {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const response = await fetch(url, {
+      headers: { Accept: "text/plain" },
+    });
+    if (response.ok) {
+      return await response.text();
+    }
+
+    if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
+      throw new Error(`Request failed (${response.status}) for ${url}`);
+    }
+
+    await sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(Math.random() * 200));
+  }
+
+  throw new Error("Request retries exhausted.");
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function parseBulkWatchedLine(
@@ -2344,63 +2757,72 @@ function loadRecommendationState(index: RecommendationIndex): {
   includeCandidates: string[];
   excludeCandidates: string[];
 } {
+  const emptyState = {
+    mode: "graph" as RecommendationMode,
+    selected: [],
+    modelBlendWeight: 0.5,
+    includeCandidates: [],
+    excludeCandidates: [],
+  };
+
   try {
     const raw = window.localStorage.getItem(RECOMMENDATION_STATE_STORAGE_KEY);
     if (!raw) {
-      return {
-        mode: "graph",
-        selected: [],
-        modelBlendWeight: 0.5,
-        includeCandidates: [],
-        excludeCandidates: [],
-      };
+      return emptyState;
     }
     const parsed = JSON.parse(raw) as StoredRecommendationState;
-    if (!parsed || (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3)) {
-      return {
-        mode: "graph",
-        selected: [],
-        modelBlendWeight: 0.5,
-        includeCandidates: [],
-        excludeCandidates: [],
-      };
-    }
-    const mode = parseRecommendationMode(parsed.mode);
-    const modelBlendWeight = clampModelBlendWeight(
-      Number(parsed.modelBlendWeight ?? 0.5),
-    );
-    const selected = Array.isArray(parsed.selected)
-      ? parsed.selected
-          .filter(
-            (entry) =>
-              entry &&
-              typeof entry.nodeId === "string" &&
-              index.animeByNodeId.has(entry.nodeId),
-          )
-          .map((entry) => ({
-            nodeId: entry.nodeId,
-            weight: clampWatchWeight(Number(entry.weight)),
-          }))
-      : [];
-
-    const includeCandidates = Array.isArray(parsed.includeCandidates)
-      ? parsed.includeCandidates
-          .filter((entry) => typeof entry === "string" && index.animeByNodeId.has(entry))
-      : [];
-    const excludeCandidates = Array.isArray(parsed.excludeCandidates)
-      ? parsed.excludeCandidates
-          .filter((entry) => typeof entry === "string" && index.animeByNodeId.has(entry))
-      : [];
-
-    return {
-      mode,
-      selected,
-      modelBlendWeight,
-      includeCandidates,
-      excludeCandidates,
-    };
+    return sanitizeRecommendationState(parsed, index);
   } catch (error) {
     console.warn("Unable to load saved recommendation state.", error);
+    return emptyState;
+  }
+}
+
+function persistRecommendationState(): void {
+  try {
+    const payload = buildCurrentRecommendationState();
+    window.localStorage.setItem(
+      RECOMMENDATION_STATE_STORAGE_KEY,
+      JSON.stringify(payload),
+    );
+  } catch (error) {
+    console.warn("Unable to persist recommendation state.", error);
+  }
+}
+
+function buildCurrentRecommendationState(): StoredRecommendationState {
+  const selected = selectedAnimeNodeIds
+    .filter((nodeId) => recommendationIndex.animeByNodeId.has(nodeId))
+    .map((nodeId) => ({
+      nodeId,
+      weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
+    }));
+
+  return {
+    version: 3,
+    mode: recommendationMode,
+    selected,
+    modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
+    includeCandidates: includeCandidateNodeIds.filter((nodeId) =>
+      recommendationIndex.animeByNodeId.has(nodeId),
+    ),
+    excludeCandidates: excludeCandidateNodeIds.filter((nodeId) =>
+      recommendationIndex.animeByNodeId.has(nodeId),
+    ),
+  };
+}
+
+function sanitizeRecommendationState(
+  parsed: StoredRecommendationState | null | undefined,
+  index: RecommendationIndex,
+): {
+  mode: RecommendationMode;
+  selected: { nodeId: string; weight: number }[];
+  modelBlendWeight: number;
+  includeCandidates: string[];
+  excludeCandidates: string[];
+} {
+  if (!parsed || (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3)) {
     return {
       mode: "graph",
       selected: [],
@@ -2409,35 +2831,223 @@ function loadRecommendationState(index: RecommendationIndex): {
       excludeCandidates: [],
     };
   }
+
+  const mode = parseRecommendationMode(parsed.mode);
+  const modelBlendWeight = clampModelBlendWeight(
+    Number(parsed.modelBlendWeight ?? 0.5),
+  );
+  const selected = Array.isArray(parsed.selected)
+    ? parsed.selected
+        .filter(
+          (entry) =>
+            entry &&
+            typeof entry.nodeId === "string" &&
+            index.animeByNodeId.has(entry.nodeId),
+        )
+        .map((entry) => ({
+          nodeId: entry.nodeId,
+          weight: clampWatchWeight(Number(entry.weight)),
+        }))
+    : [];
+
+  const includeCandidates = Array.isArray(parsed.includeCandidates)
+    ? parsed.includeCandidates.filter(
+        (entry) => typeof entry === "string" && index.animeByNodeId.has(entry),
+      )
+    : [];
+  const excludeCandidates = Array.isArray(parsed.excludeCandidates)
+    ? parsed.excludeCandidates.filter(
+        (entry) => typeof entry === "string" && index.animeByNodeId.has(entry),
+      )
+    : [];
+
+  return {
+    mode,
+    selected,
+    modelBlendWeight,
+    includeCandidates,
+    excludeCandidates,
+  };
 }
 
-function persistRecommendationState(): void {
+function loadRecommendationProfiles(): Map<string, RecommendationProfileRecord> {
+  const profiles = new Map<string, RecommendationProfileRecord>();
   try {
-    const selected = selectedAnimeNodeIds
-      .filter((nodeId) => recommendationIndex.animeByNodeId.has(nodeId))
-      .map((nodeId) => ({
-        nodeId,
-        weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
+    const raw = window.localStorage.getItem(RECOMMENDATION_PROFILES_STORAGE_KEY);
+    if (!raw) {
+      return profiles;
+    }
+    const parsed = JSON.parse(raw) as RecommendationProfileRecord[];
+    if (!Array.isArray(parsed)) {
+      return profiles;
+    }
+
+    for (const record of parsed) {
+      if (!record || typeof record.name !== "string" || !record.state) {
+        continue;
+      }
+      const name = record.name.trim();
+      if (!name) {
+        continue;
+      }
+      const sanitized = sanitizeRecommendationState(
+        record.state,
+        recommendationIndex,
+      );
+      profiles.set(name, {
+        name,
+        updatedAt:
+          typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
+        state: {
+          version: 3,
+          mode: sanitized.mode,
+          selected: sanitized.selected,
+          modelBlendWeight: sanitized.modelBlendWeight,
+          includeCandidates: sanitized.includeCandidates,
+          excludeCandidates: sanitized.excludeCandidates,
+        },
+      });
+    }
+  } catch (error) {
+    console.warn("Unable to load saved profiles.", error);
+  }
+  return profiles;
+}
+
+function persistRecommendationProfiles(
+  profiles: Map<string, RecommendationProfileRecord>,
+): void {
+  try {
+    const payload = [...profiles.values()]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((profile) => ({
+        name: profile.name,
+        updatedAt: profile.updatedAt,
+        state: profile.state,
       }));
-    const payload: StoredRecommendationState = {
-      version: 3,
-      mode: recommendationMode,
-      selected,
-      modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
-      includeCandidates: includeCandidateNodeIds.filter((nodeId) =>
-        recommendationIndex.animeByNodeId.has(nodeId),
-      ),
-      excludeCandidates: excludeCandidateNodeIds.filter((nodeId) =>
-        recommendationIndex.animeByNodeId.has(nodeId),
-      ),
-    };
     window.localStorage.setItem(
-      RECOMMENDATION_STATE_STORAGE_KEY,
+      RECOMMENDATION_PROFILES_STORAGE_KEY,
       JSON.stringify(payload),
     );
   } catch (error) {
-    console.warn("Unable to persist recommendation state.", error);
+    console.warn("Unable to persist saved profiles.", error);
   }
+}
+
+function renderProfileOptions(profiles: Map<string, RecommendationProfileRecord>): void {
+  const names = [...profiles.keys()].sort((left, right) => left.localeCompare(right));
+  if (names.length === 0) {
+    profileSelect.innerHTML = `<option value="">No saved profiles</option>`;
+    profileSelect.disabled = true;
+    profileLoadBtn.disabled = true;
+    profileDeleteBtn.disabled = true;
+    return;
+  }
+
+  profileSelect.innerHTML = names
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join("");
+  profileSelect.disabled = false;
+  profileLoadBtn.disabled = false;
+  profileDeleteBtn.disabled = false;
+}
+
+function saveCurrentProfile(): void {
+  const profileName = profileNameInput.value.trim();
+  if (!profileName) {
+    recMessageEl.textContent = "Enter a profile name first.";
+    return;
+  }
+
+  const state = buildCurrentRecommendationState();
+  const now = new Date().toISOString();
+  savedProfiles.set(profileName, {
+    name: profileName,
+    updatedAt: now,
+    state,
+  });
+  persistRecommendationProfiles(savedProfiles);
+  renderProfileOptions(savedProfiles);
+  profileSelect.value = profileName;
+  profileNameInput.value = "";
+  recMessageEl.textContent = `Saved profile "${profileName}".`;
+}
+
+function loadSelectedProfile(): void {
+  const name = profileSelect.value.trim();
+  if (!name) {
+    recMessageEl.textContent = "Select a saved profile first.";
+    return;
+  }
+  const profile = savedProfiles.get(name);
+  if (!profile) {
+    recMessageEl.textContent = `Saved profile "${name}" was not found.`;
+    return;
+  }
+
+  const sanitized = sanitizeRecommendationState(profile.state, recommendationIndex);
+  applyRecommendationState(sanitized);
+  persistRecommendationState();
+  renderSelectedAnime();
+  renderIncludeCandidates();
+  renderExcludeCandidates();
+  void updateRecommendations();
+  recMessageEl.textContent = `Loaded profile "${name}".`;
+}
+
+function deleteSelectedProfile(): void {
+  const name = profileSelect.value.trim();
+  if (!name) {
+    recMessageEl.textContent = "Select a saved profile first.";
+    return;
+  }
+  if (!savedProfiles.has(name)) {
+    recMessageEl.textContent = `Saved profile "${name}" was not found.`;
+    return;
+  }
+
+  savedProfiles.delete(name);
+  persistRecommendationProfiles(savedProfiles);
+  renderProfileOptions(savedProfiles);
+  recMessageEl.textContent = `Deleted profile "${name}".`;
+}
+
+function applyRecommendationState(state: {
+  mode: RecommendationMode;
+  selected: { nodeId: string; weight: number }[];
+  modelBlendWeight: number;
+  includeCandidates: string[];
+  excludeCandidates: string[];
+}): void {
+  selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
+  selectedAnimeWeights.clear();
+  includeCandidateNodeIds.splice(0, includeCandidateNodeIds.length);
+  excludeCandidateNodeIds.splice(0, excludeCandidateNodeIds.length);
+
+  for (const entry of state.selected) {
+    if (!recommendationIndex.animeByNodeId.has(entry.nodeId)) {
+      continue;
+    }
+    selectedAnimeNodeIds.push(entry.nodeId);
+    selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
+  }
+  for (const nodeId of state.includeCandidates) {
+    if (recommendationIndex.animeByNodeId.has(nodeId)) {
+      includeCandidateNodeIds.push(nodeId);
+    }
+  }
+  for (const nodeId of state.excludeCandidates) {
+    if (recommendationIndex.animeByNodeId.has(nodeId)) {
+      excludeCandidateNodeIds.push(nodeId);
+    }
+  }
+
+  recommendationMode = state.mode;
+  modelBlendWeight = clampModelBlendWeight(state.modelBlendWeight);
+  recMethodSelect.value = recommendationMode;
+  recBlendInput.value = modelBlendWeight.toFixed(2);
+  renderModelBlendValue();
+  setBlendControlVisibility();
 }
 
 function valueRow(label: string, value: string): string {
