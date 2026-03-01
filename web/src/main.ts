@@ -3,17 +3,21 @@ import forceAtlas2 from "graphology-layout-forceatlas2";
 import Sigma from "sigma";
 import "./style.css";
 
+type NodeType = "user" | "anime";
+type EdgeType = "user-anime" | "anime-anime";
+type AppView = "recommendations" | "network";
+
 interface GraphNode {
   id: string;
   label: string;
-  nodeType: "user" | "anime";
+  nodeType: NodeType;
 }
 
 interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  edgeType: "user-anime" | "anime-anime";
+  edgeType: EdgeType;
   weight: number;
 }
 
@@ -30,14 +34,35 @@ interface GraphData {
 interface ConnectedItem {
   nodeId: string;
   label: string;
-  nodeType: "user" | "anime";
-  edgeType: "user-anime" | "anime-anime";
+  nodeType: NodeType;
+  edgeType: EdgeType;
   weight: number;
+}
+
+interface AnimeInfo {
+  nodeId: string;
+  animeId: number;
+  label: string;
+}
+
+interface RecommendationResult {
+  anime: AnimeInfo;
+  score: number;
+  strongest: number;
+  supportCount: number;
+}
+
+interface RecommendationIndex {
+  animeList: AnimeInfo[];
+  animeByNodeId: Map<string, AnimeInfo>;
+  titleLookup: Map<string, AnimeInfo[]>;
+  adjacency: Map<string, { otherNodeId: string; weight: number }[]>;
 }
 
 const FORCE_ATLAS_MAX_EDGES = 45000;
 const FORCE_ATLAS_ITERATIONS = 180;
 const INSPECT_MAX_ITEMS = 250;
+const MAX_RECOMMENDATIONS = 40;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -45,53 +70,111 @@ if (!app) {
 }
 
 app.innerHTML = `
-  <main class="layout">
-    <section class="panel">
-      <h1>What Anime Should I Watch</h1>
-      <p class="subhead">
-        Graph built from anonymized user ratings. User nodes connect to rated anime using normalized scores.
-      </p>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>What Anime Should I Watch</h1>
+        <p>Recommendation-first anime discovery powered by the rating network.</p>
+      </div>
+      <nav class="topnav" aria-label="Primary">
+        <button id="nav-recommendations" class="nav-btn" type="button">Recommendations</button>
+        <button id="nav-network" class="nav-btn" type="button">Network Explorer</button>
+      </nav>
+    </header>
 
-      <div class="stats" id="stats"></div>
+    <main>
+      <section id="view-recommendations" class="view">
+        <div class="recommend-layout">
+          <section class="card">
+            <h2>Find Your Next Anime</h2>
+            <p class="muted">Add anime you just watched, then get the best next picks from anime-to-anime edge strength.</p>
 
-      <label class="control">
-        <span>Min absolute edge weight</span>
-        <input id="min-weight" type="range" min="0" max="4" value="0" step="0.05" />
-        <output id="min-weight-value">0.00</output>
-      </label>
+            <form id="add-anime-form" class="add-form">
+              <input id="anime-input" type="text" list="anime-options" autocomplete="off" placeholder="Type an anime title" />
+              <button type="submit">Add</button>
+            </form>
+            <datalist id="anime-options"></datalist>
 
-      <label class="checkbox">
-        <input id="toggle-anime-edges" type="checkbox" checked />
-        <span>Show anime-to-anime edges</span>
-      </label>
+            <p id="rec-message" class="rec-message"></p>
 
-      <label class="checkbox">
-        <input id="toggle-users" type="checkbox" />
-        <span>Show user nodes + user-anime edges</span>
-      </label>
+            <div class="selected-head">
+              <h3>Watched List</h3>
+              <button id="clear-watched" type="button" class="ghost-btn">Clear All</button>
+            </div>
+            <div id="selected-anime" class="selected-anime"></div>
+          </section>
 
-      <section class="inspect">
-        <div class="inspect-head">
-          <h2>Inspect Node</h2>
-          <button id="clear-selection" type="button" class="clear-btn">Clear</button>
-        </div>
-        <p id="inspect-empty" class="inspect-empty">
-          Click any node to view connected items sorted by edge weight.
-        </p>
-        <div id="inspect-content" class="inspect-content" hidden>
-          <div id="inspect-meta" class="inspect-meta"></div>
-          <div id="inspect-count" class="inspect-count"></div>
-          <div id="inspect-values" class="inspect-values"></div>
-          <ul id="inspect-list" class="inspect-list"></ul>
+          <section class="card">
+            <h2>Top Recommendations</h2>
+            <p id="rec-summary" class="muted">Add at least one anime to start.</p>
+            <ol id="rec-results" class="rec-results"></ol>
+          </section>
         </div>
       </section>
-    </section>
 
-    <section class="graph-shell">
-      <div id="graph"></div>
-    </section>
-  </main>
+      <section id="view-network" class="view" hidden>
+        <div class="network-layout">
+          <aside class="panel">
+            <h2>Network Explorer</h2>
+            <p class="muted">Interact with the graph, inspect node connections, and filter visible edges.</p>
+
+            <div class="stats" id="stats"></div>
+
+            <label class="control">
+              <span>Min absolute edge weight</span>
+              <input id="min-weight" type="range" min="0" max="4" value="0" step="0.05" />
+              <output id="min-weight-value">0.00</output>
+            </label>
+
+            <label class="checkbox">
+              <input id="toggle-anime-edges" type="checkbox" checked />
+              <span>Show anime-to-anime edges</span>
+            </label>
+
+            <label class="checkbox">
+              <input id="toggle-users" type="checkbox" />
+              <span>Show user nodes + user-anime edges</span>
+            </label>
+
+            <section class="inspect">
+              <div class="inspect-head">
+                <h3>Inspect Node</h3>
+                <button id="clear-selection" type="button" class="ghost-btn">Clear</button>
+              </div>
+              <p id="inspect-empty" class="inspect-empty">
+                Click a node to see connected items sorted by weight.
+              </p>
+              <div id="inspect-content" class="inspect-content" hidden>
+                <div id="inspect-meta" class="inspect-meta"></div>
+                <div id="inspect-count" class="inspect-count"></div>
+                <div id="inspect-values" class="inspect-values"></div>
+                <ul id="inspect-list" class="inspect-list"></ul>
+              </div>
+            </section>
+          </aside>
+
+          <section class="graph-shell">
+            <div id="graph"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
 `;
+
+const navRecommendationsBtn = mustElement<HTMLButtonElement>("#nav-recommendations");
+const navNetworkBtn = mustElement<HTMLButtonElement>("#nav-network");
+const viewRecommendations = mustElement<HTMLElement>("#view-recommendations");
+const viewNetwork = mustElement<HTMLElement>("#view-network");
+
+const addAnimeForm = mustElement<HTMLFormElement>("#add-anime-form");
+const animeInput = mustElement<HTMLInputElement>("#anime-input");
+const animeOptions = mustElement<HTMLDataListElement>("#anime-options");
+const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
+const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
+const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
+const recSummaryEl = mustElement<HTMLParagraphElement>("#rec-summary");
+const recResultsEl = mustElement<HTMLOListElement>("#rec-results");
 
 const statsEl = mustElement<HTMLDivElement>("#stats");
 const graphContainer = mustElement<HTMLDivElement>("#graph");
@@ -110,12 +193,67 @@ const clearSelectionBtn = mustElement<HTMLButtonElement>("#clear-selection");
 let renderer: Sigma | null = null;
 let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
+let activeView: AppView = "recommendations";
 
 const graphData = await fetchGraph();
+const recommendationIndex = buildRecommendationIndex(graphData);
+const selectedAnimeNodeIds: string[] = [];
+
+populateAnimeOptions(recommendationIndex.animeList, animeOptions);
+
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
 minWeightValue.textContent = defaultMinWeight.toFixed(2);
-renderGraph(graphData, defaultMinWeight, true, false);
+
+setActiveView(viewFromHash(), true);
+updateRecommendations();
+
+window.addEventListener("hashchange", () => {
+  setActiveView(viewFromHash(), true);
+});
+
+navRecommendationsBtn.addEventListener("click", () => {
+  setActiveView("recommendations", false);
+});
+
+navNetworkBtn.addEventListener("click", () => {
+  setActiveView("network", false);
+});
+
+addAnimeForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addAnimeFromInput();
+});
+
+animeInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    addAnimeFromInput();
+  }
+});
+
+selectedAnimeEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const button = target.closest<HTMLButtonElement>("button[data-node-id]");
+  if (!button) {
+    return;
+  }
+  const nodeId = button.dataset.nodeId;
+  if (!nodeId) {
+    return;
+  }
+  removeSelectedAnime(nodeId);
+});
+
+clearWatchedBtn.addEventListener("click", () => {
+  selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
+  recMessageEl.textContent = "";
+  renderSelectedAnime();
+  updateRecommendations();
+});
 
 clearSelectionBtn.addEventListener("click", () => {
   selectedNodeId = null;
@@ -123,16 +261,318 @@ clearSelectionBtn.addEventListener("click", () => {
 });
 
 minWeightInput.addEventListener("input", () => {
-  rerenderGraph();
+  minWeightValue.textContent = Number.parseFloat(minWeightInput.value).toFixed(2);
+  if (activeView === "network") {
+    rerenderGraph();
+  }
 });
 
 toggleAnimeEdges.addEventListener("change", () => {
-  rerenderGraph();
+  if (activeView === "network") {
+    rerenderGraph();
+  }
 });
 
 toggleUsers.addEventListener("change", () => {
-  rerenderGraph();
+  if (activeView === "network") {
+    rerenderGraph();
+  }
 });
+
+function setActiveView(view: AppView, fromHash: boolean): void {
+  activeView = view;
+  viewRecommendations.hidden = view !== "recommendations";
+  viewNetwork.hidden = view !== "network";
+
+  navRecommendationsBtn.classList.toggle("active", view === "recommendations");
+  navNetworkBtn.classList.toggle("active", view === "network");
+
+  if (!fromHash) {
+    const nextHash = view === "network" ? "network" : "recommendations";
+    if (window.location.hash !== `#${nextHash}`) {
+      window.location.hash = nextHash;
+    }
+  }
+
+  if (view === "network") {
+    window.requestAnimationFrame(() => {
+      rerenderGraph();
+    });
+  }
+}
+
+function viewFromHash(): AppView {
+  return window.location.hash.toLowerCase() === "#network"
+    ? "network"
+    : "recommendations";
+}
+
+function addAnimeFromInput(): void {
+  const raw = animeInput.value.trim();
+  if (!raw) {
+    recMessageEl.textContent = "Enter an anime title first.";
+    return;
+  }
+
+  const anime = resolveAnimeInput(raw, recommendationIndex);
+  if (!anime) {
+    recMessageEl.textContent = `No anime match found for "${raw}".`;
+    return;
+  }
+
+  if (selectedAnimeNodeIds.includes(anime.nodeId)) {
+    recMessageEl.textContent = `${anime.label} is already in your watched list.`;
+    animeInput.value = "";
+    return;
+  }
+
+  selectedAnimeNodeIds.push(anime.nodeId);
+  animeInput.value = "";
+  recMessageEl.textContent = `Added: ${anime.label}`;
+  renderSelectedAnime();
+  updateRecommendations();
+}
+
+function removeSelectedAnime(nodeId: string): void {
+  const index = selectedAnimeNodeIds.indexOf(nodeId);
+  if (index < 0) {
+    return;
+  }
+  selectedAnimeNodeIds.splice(index, 1);
+  recMessageEl.textContent = "";
+  renderSelectedAnime();
+  updateRecommendations();
+}
+
+function renderSelectedAnime(): void {
+  if (selectedAnimeNodeIds.length === 0) {
+    selectedAnimeEl.innerHTML = `<p class="muted">No anime added yet.</p>`;
+    return;
+  }
+
+  const html = selectedAnimeNodeIds
+    .map((nodeId) => recommendationIndex.animeByNodeId.get(nodeId))
+    .filter((anime): anime is AnimeInfo => Boolean(anime))
+    .map(
+      (anime) => `
+      <div class="chip">
+        <span>${escapeHtml(anime.label)}</span>
+        <button type="button" data-node-id="${anime.nodeId}" aria-label="Remove ${escapeHtml(anime.label)}">x</button>
+      </div>
+    `,
+    )
+    .join("");
+
+  selectedAnimeEl.innerHTML = html;
+}
+
+function updateRecommendations(): void {
+  if (selectedAnimeNodeIds.length === 0) {
+    recSummaryEl.textContent = "Add at least one anime to start.";
+    recResultsEl.innerHTML = "";
+    renderSelectedAnime();
+    return;
+  }
+
+  const recommendations = buildRecommendations(selectedAnimeNodeIds, recommendationIndex);
+
+  if (recommendations.length === 0) {
+    recSummaryEl.textContent =
+      "No positive recommendations found from the current watched list. Try adding more anime.";
+    recResultsEl.innerHTML = "";
+    return;
+  }
+
+  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, recommendations.length)} recommendations from ${recommendations.length} candidates.`;
+
+  recResultsEl.innerHTML = recommendations
+    .slice(0, MAX_RECOMMENDATIONS)
+    .map(
+      (item) => `
+      <li class="rec-item">
+        <div>
+          <div class="rec-title">${escapeHtml(item.anime.label)}</div>
+          <div class="rec-meta">Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}</div>
+        </div>
+        <div class="rec-score">${formatWeight(item.score)}</div>
+      </li>
+    `,
+    )
+    .join("");
+}
+
+function buildRecommendations(
+  selectedNodeIds: string[],
+  index: RecommendationIndex,
+): RecommendationResult[] {
+  const selected = new Set(selectedNodeIds);
+  const scored = new Map<
+    string,
+    { score: number; strongest: number; supportCount: number }
+  >();
+
+  for (const selectedNodeId of selectedNodeIds) {
+    const neighbors = index.adjacency.get(selectedNodeId) ?? [];
+    for (const neighbor of neighbors) {
+      if (selected.has(neighbor.otherNodeId)) {
+        continue;
+      }
+      if (neighbor.weight <= 0) {
+        continue;
+      }
+
+      const current = scored.get(neighbor.otherNodeId);
+      if (!current) {
+        scored.set(neighbor.otherNodeId, {
+          score: neighbor.weight,
+          strongest: neighbor.weight,
+          supportCount: 1,
+        });
+        continue;
+      }
+
+      current.score += neighbor.weight;
+      current.strongest = Math.max(current.strongest, neighbor.weight);
+      current.supportCount += 1;
+    }
+  }
+
+  return [...scored.entries()]
+    .map(([nodeId, aggregate]) => {
+      const anime = index.animeByNodeId.get(nodeId);
+      if (!anime) {
+        return null;
+      }
+      return {
+        anime,
+        score: aggregate.score,
+        strongest: aggregate.strongest,
+        supportCount: aggregate.supportCount,
+      } satisfies RecommendationResult;
+    })
+    .filter((value): value is RecommendationResult => value !== null)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      if (right.supportCount !== left.supportCount) {
+        return right.supportCount - left.supportCount;
+      }
+      return right.strongest - left.strongest;
+    });
+}
+
+function resolveAnimeInput(
+  raw: string,
+  index: RecommendationIndex,
+): AnimeInfo | null {
+  const normalized = normalizeTitle(raw);
+  if (!normalized) {
+    return null;
+  }
+
+  const exact = index.titleLookup.get(normalized);
+  if (exact && exact.length > 0) {
+    return exact[0];
+  }
+
+  if (/^anime:\d+$/i.test(raw)) {
+    const byNodeId = index.animeByNodeId.get(raw.toLowerCase());
+    if (byNodeId) {
+      return byNodeId;
+    }
+  }
+
+  if (/^\d+$/.test(raw)) {
+    const byAnimeId = index.animeList.find((item) => item.animeId === Number.parseInt(raw, 10));
+    if (byAnimeId) {
+      return byAnimeId;
+    }
+  }
+
+  return index.animeList.find((item) => normalizeTitle(item.label).includes(normalized)) ?? null;
+}
+
+function populateAnimeOptions(animeList: AnimeInfo[], datalist: HTMLDataListElement): void {
+  const sorted = [...animeList].sort((left, right) => left.label.localeCompare(right.label));
+  datalist.innerHTML = sorted
+    .map((anime) => `<option value="${escapeHtml(anime.label)}"></option>`)
+    .join("");
+}
+
+function buildRecommendationIndex(graphDataValue: GraphData): RecommendationIndex {
+  const animeList: AnimeInfo[] = [];
+  const animeByNodeId = new Map<string, AnimeInfo>();
+  const titleLookup = new Map<string, AnimeInfo[]>();
+  const adjacency = new Map<string, { otherNodeId: string; weight: number }[]>();
+
+  for (const node of graphDataValue.nodes) {
+    if (node.nodeType !== "anime") {
+      continue;
+    }
+
+    const animeId = parseAnimeId(node.id);
+    const anime: AnimeInfo = {
+      nodeId: node.id,
+      animeId,
+      label: node.label,
+    };
+
+    animeList.push(anime);
+    animeByNodeId.set(node.id, anime);
+
+    const normalizedTitle = normalizeTitle(node.label);
+    const existing = titleLookup.get(normalizedTitle);
+    if (!existing) {
+      titleLookup.set(normalizedTitle, [anime]);
+    } else {
+      existing.push(anime);
+    }
+  }
+
+  for (const edge of graphDataValue.edges) {
+    if (edge.edgeType !== "anime-anime") {
+      continue;
+    }
+    if (!animeByNodeId.has(edge.source) || !animeByNodeId.has(edge.target)) {
+      continue;
+    }
+
+    pushAdjacency(adjacency, edge.source, edge.target, edge.weight);
+    pushAdjacency(adjacency, edge.target, edge.source, edge.weight);
+  }
+
+  return {
+    animeList,
+    animeByNodeId,
+    titleLookup,
+    adjacency,
+  };
+}
+
+function pushAdjacency(
+  adjacency: Map<string, { otherNodeId: string; weight: number }[]>,
+  source: string,
+  target: string,
+  weight: number,
+): void {
+  const list = adjacency.get(source);
+  if (!list) {
+    adjacency.set(source, [{ otherNodeId: target, weight }]);
+    return;
+  }
+  list.push({ otherNodeId: target, weight });
+}
+
+function parseAnimeId(nodeId: string): number {
+  const value = nodeId.startsWith("anime:") ? nodeId.slice("anime:".length) : nodeId;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? -1 : parsed;
+}
+
+function normalizeTitle(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
 
 function rerenderGraph(): void {
   const minWeight = Number.parseFloat(minWeightInput.value);
@@ -162,7 +602,7 @@ function renderGraph(
     graph.addNode(node.id, {
       label: node.label,
       nodeType: node.nodeType,
-      size: isUser ? 5.5 : 3,
+      size: isUser ? 5.2 : 2.8,
       color: isUser ? "#ff8a00" : "#0f8b8d",
       x: Math.random(),
       y: Math.random(),
@@ -188,7 +628,7 @@ function renderGraph(
     }
 
     graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
-      size: edge.edgeType === "user-anime" ? 1.6 : 0.7,
+      size: edge.edgeType === "user-anime" ? 1.4 : 0.7,
       color: edge.edgeType === "user-anime" ? "#f4d35e88" : "#6fffe988",
       weight: Math.max(Math.abs(edge.weight), 0.01),
       signedWeight: edge.weight,
@@ -351,7 +791,7 @@ function renderInspectPanel(nodeId: string | null): void {
 
   const nodeAttrs = currentGraph.getNodeAttributes(nodeId) as Record<string, unknown>;
   const label = typeof nodeAttrs.label === "string" ? nodeAttrs.label : nodeId;
-  const nodeType = nodeAttrs.nodeType === "user" ? "user" : ("anime" as "user" | "anime");
+  const nodeType = nodeAttrs.nodeType === "user" ? "user" : ("anime" as NodeType);
 
   const connections = getConnectedItems(currentGraph, nodeId).sort(
     (left, right) => right.weight - left.weight,
@@ -438,11 +878,11 @@ function getConnectedItems(graph: Graph, nodeId: string): ConnectedItem[] {
       const nodeType =
         otherAttributes.nodeType === "user"
           ? "user"
-          : ("anime" as "user" | "anime");
+          : ("anime" as NodeType);
       const edgeType =
         edgeAttributes.edgeType === "anime-anime"
           ? "anime-anime"
-          : ("user-anime" as "user-anime" | "anime-anime");
+          : ("user-anime" as EdgeType);
 
       const signedWeight = edgeAttributes.signedWeight;
       const fallbackWeight = edgeAttributes.weight;
@@ -485,7 +925,7 @@ function valueRow(label: string, value: string): string {
   return `<div class="inspect-value-row"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
-function countNodesByType(graph: Graph, type: "user" | "anime"): number {
+function countNodesByType(graph: Graph, type: NodeType): number {
   let count = 0;
   graph.forEachNode((_node, attributes) => {
     if (attributes.nodeType === type) {
