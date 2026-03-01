@@ -129,6 +129,13 @@ const MAX_RECOMMENDATIONS = 40;
 const MIN_WATCH_WEIGHT = 0.2;
 const MAX_WATCH_WEIGHT = 3;
 const WATCH_WEIGHT_STEP = 0.1;
+const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
+
+interface StoredRecommendationState {
+  version: 1;
+  mode: RecommendationMode;
+  selected: { nodeId: string; weight: number }[];
+}
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -279,8 +286,17 @@ const graphData = await fetchGraph();
 const recommendationIndex = buildRecommendationIndex(graphData);
 const selectedAnimeNodeIds: string[] = [];
 const selectedAnimeWeights = new Map<string, number>();
+const persistedState = loadRecommendationState(recommendationIndex);
+
+for (const entry of persistedState.selected) {
+  selectedAnimeNodeIds.push(entry.nodeId);
+  selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
+}
+recommendationMode = persistedState.mode;
+recMethodSelect.value = recommendationMode;
 
 populateAnimeOptions(recommendationIndex.animeList, animeOptions);
+renderSelectedAnime();
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
@@ -346,6 +362,7 @@ selectedAnimeEl.addEventListener("input", (event) => {
   const parsed = Number.parseFloat(target.value);
   const clamped = clampWatchWeight(parsed);
   selectedAnimeWeights.set(nodeId, clamped);
+  persistRecommendationState();
   target.value = clamped.toFixed(1);
 
   const chip = target.closest(".chip-weighted");
@@ -360,6 +377,7 @@ selectedAnimeEl.addEventListener("input", (event) => {
 clearWatchedBtn.addEventListener("click", () => {
   selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
   selectedAnimeWeights.clear();
+  persistRecommendationState();
   recMessageEl.textContent = "";
   renderSelectedAnime();
   void updateRecommendations();
@@ -367,6 +385,7 @@ clearWatchedBtn.addEventListener("click", () => {
 
 recMethodSelect.addEventListener("change", () => {
   recommendationMode = recMethodSelect.value === "model" ? "model" : "graph";
+  persistRecommendationState();
   void updateRecommendations();
 });
 
@@ -443,6 +462,7 @@ function addAnimeFromInput(): void {
 
   selectedAnimeNodeIds.push(anime.nodeId);
   selectedAnimeWeights.set(anime.nodeId, 1);
+  persistRecommendationState();
   animeInput.value = "";
   recMessageEl.textContent = `Added: ${anime.label}`;
   renderSelectedAnime();
@@ -456,6 +476,7 @@ function removeSelectedAnime(nodeId: string): void {
   }
   selectedAnimeNodeIds.splice(index, 1);
   selectedAnimeWeights.delete(nodeId);
+  persistRecommendationState();
   recMessageEl.textContent = "";
   renderSelectedAnime();
   void updateRecommendations();
@@ -1529,6 +1550,62 @@ function clampWatchWeight(value: number): number {
     return 1;
   }
   return Math.min(Math.max(value, MIN_WATCH_WEIGHT), MAX_WATCH_WEIGHT);
+}
+
+function loadRecommendationState(index: RecommendationIndex): {
+  mode: RecommendationMode;
+  selected: { nodeId: string; weight: number }[];
+} {
+  try {
+    const raw = window.localStorage.getItem(RECOMMENDATION_STATE_STORAGE_KEY);
+    if (!raw) {
+      return { mode: "graph", selected: [] };
+    }
+    const parsed = JSON.parse(raw) as StoredRecommendationState;
+    if (!parsed || parsed.version !== 1) {
+      return { mode: "graph", selected: [] };
+    }
+    const mode: RecommendationMode = parsed.mode === "model" ? "model" : "graph";
+    const selected = Array.isArray(parsed.selected)
+      ? parsed.selected
+          .filter(
+            (entry) =>
+              entry &&
+              typeof entry.nodeId === "string" &&
+              index.animeByNodeId.has(entry.nodeId),
+          )
+          .map((entry) => ({
+            nodeId: entry.nodeId,
+            weight: clampWatchWeight(Number(entry.weight)),
+          }))
+      : [];
+    return { mode, selected };
+  } catch (error) {
+    console.warn("Unable to load saved recommendation state.", error);
+    return { mode: "graph", selected: [] };
+  }
+}
+
+function persistRecommendationState(): void {
+  try {
+    const selected = selectedAnimeNodeIds
+      .filter((nodeId) => recommendationIndex.animeByNodeId.has(nodeId))
+      .map((nodeId) => ({
+        nodeId,
+        weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
+      }));
+    const payload: StoredRecommendationState = {
+      version: 1,
+      mode: recommendationMode,
+      selected,
+    };
+    window.localStorage.setItem(
+      RECOMMENDATION_STATE_STORAGE_KEY,
+      JSON.stringify(payload),
+    );
+  } catch (error) {
+    console.warn("Unable to persist recommendation state.", error);
+  }
 }
 
 function valueRow(label: string, value: string): string {
