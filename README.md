@@ -89,6 +89,7 @@ Note:
 - JSON exports are minified by default to reduce disk size.
 - Use `--pretty-json` if you need human-readable formatting.
 - Use `--compact-only` to write only compact files.
+- A safety guard now limits unique anime-anime edges during build to prevent memory blowups on very large datasets. Default cap: `2,000,000` (set `--max-anime-anime-edges 0` for unlimited).
 
 Graph rules implemented:
 

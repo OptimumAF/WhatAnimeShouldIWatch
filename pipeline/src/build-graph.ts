@@ -18,6 +18,7 @@ interface BuildGraphOptions {
   outDatasetCompact?: string;
   outGraphCompact?: string;
   maxRatingsPerUser?: string;
+  maxAnimeAnimeEdges?: string;
   prettyJson?: boolean;
   compact?: boolean;
   compactOnly?: boolean;
@@ -49,6 +50,10 @@ const program = new Command()
   .option(
     "--max-ratings-per-user <count>",
     "Optional per-user cap for graph generation only (0 = unlimited)",
+  )
+  .option(
+    "--max-anime-anime-edges <count>",
+    "Maximum number of unique anime-anime edges to keep (0 = unlimited)",
   )
   .option(
     "--pretty-json",
@@ -112,6 +117,17 @@ if (Number.isNaN(maxRatingsPerUser) || maxRatingsPerUser < 0) {
     }`,
   );
 }
+const maxAnimeAnimeEdges = Number.parseInt(
+  options.maxAnimeAnimeEdges ??
+    process.env.GRAPH_MAX_ANIME_ANIME_EDGES ??
+    "2000000",
+  10,
+);
+if (Number.isNaN(maxAnimeAnimeEdges) || maxAnimeAnimeEdges < 0) {
+  throw new Error(
+    `Invalid max anime-anime edge value: ${options.maxAnimeAnimeEdges}`,
+  );
+}
 const prettyJson =
   options.prettyJson === true || isTruthy(process.env.GRAPH_PRETTY_JSON);
 const writeCompact =
@@ -132,7 +148,12 @@ try {
     }
   }
 
-  const graph = createGraph(dataset, maxRatingsPerUser);
+  const graphResult = createGraph(
+    dataset,
+    maxRatingsPerUser,
+    maxAnimeAnimeEdges,
+  );
+  const graph = graphResult.graph;
   if (writeLegacy) {
     fs.mkdirSync(path.dirname(outDatasetPath), { recursive: true });
     fs.writeFileSync(
@@ -166,6 +187,11 @@ try {
   process.stdout.write(
     `Graph stats: ${graph.userCount} users, ${graph.animeCount} anime, ${graph.edgeCount} edges\n`,
   );
+  if (graphResult.skippedNewAnimeAnimePairs > 0) {
+    process.stdout.write(
+      `Anime-anime edge guard hit: skipped ${graphResult.skippedNewAnimeAnimePairs} new pair keys after reaching cap=${graphResult.maxAnimeAnimeEdges}\n`,
+    );
+  }
 } finally {
   db.close();
 }
@@ -182,10 +208,16 @@ function createGraph(
     }[];
   },
   maxRatingsPerUser: number,
-): GraphData {
+  maxAnimeAnimeEdges: number,
+): {
+  graph: GraphData;
+  skippedNewAnimeAnimePairs: number;
+  maxAnimeAnimeEdges: number;
+} {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
   const animePairEdgeWeights = new Map<string, number>();
+  let skippedNewAnimeAnimePairs = 0;
 
   for (const user of dataset.users) {
     const userNodeId = `user:${user.userId}`;
@@ -228,6 +260,14 @@ function createGraph(
         const key = `${low}:${high}`;
         const userPairScore = (left.normalizedScore + right.normalizedScore) / 2;
         const current = animePairEdgeWeights.get(key);
+        if (
+          current === undefined &&
+          maxAnimeAnimeEdges > 0 &&
+          animePairEdgeWeights.size >= maxAnimeAnimeEdges
+        ) {
+          skippedNewAnimeAnimePairs += 1;
+          continue;
+        }
         const next =
           current === undefined ? userPairScore : (current + userPairScore) / 2;
         animePairEdgeWeights.set(key, next);
@@ -251,13 +291,17 @@ function createGraph(
   const animeCount = nodeList.length - userCount;
 
   return {
-    generatedAt: new Date().toISOString(),
-    nodeCount: nodeList.length,
-    edgeCount: edges.length,
-    userCount,
-    animeCount,
-    nodes: nodeList,
-    edges,
+    graph: {
+      generatedAt: new Date().toISOString(),
+      nodeCount: nodeList.length,
+      edgeCount: edges.length,
+      userCount,
+      animeCount,
+      nodes: nodeList,
+      edges,
+    },
+    skippedNewAnimeAnimePairs,
+    maxAnimeAnimeEdges,
   };
 }
 
