@@ -10,6 +10,7 @@ interface BuildGraphOptions {
   outDataset?: string;
   outGraph?: string;
   maxRatingsPerUser?: string;
+  prettyJson?: boolean;
 }
 
 const repoRoot = getRepoRoot(import.meta.url);
@@ -30,6 +31,10 @@ const program = new Command()
   .option(
     "--max-ratings-per-user <count>",
     "Optional per-user cap for graph generation only (0 = unlimited)",
+  )
+  .option(
+    "--pretty-json",
+    "Write pretty-printed JSON instead of minified output",
   );
 
 program.parse(process.argv);
@@ -69,6 +74,8 @@ if (Number.isNaN(maxRatingsPerUser) || maxRatingsPerUser < 0) {
     }`,
   );
 }
+const prettyJson =
+  options.prettyJson === true || isTruthy(process.env.GRAPH_PRETTY_JSON);
 
 const db = openDatabase(dbPath);
 try {
@@ -84,11 +91,11 @@ try {
   }
 
   fs.mkdirSync(path.dirname(outDatasetPath), { recursive: true });
-  fs.writeFileSync(outDatasetPath, JSON.stringify(dataset, null, 2));
+  fs.writeFileSync(outDatasetPath, JSON.stringify(dataset, null, prettyJson ? 2 : 0));
 
   const graph = createGraph(dataset, maxRatingsPerUser);
   fs.mkdirSync(path.dirname(outGraphPath), { recursive: true });
-  fs.writeFileSync(outGraphPath, JSON.stringify(graph, null, 2));
+  fs.writeFileSync(outGraphPath, JSON.stringify(graph, null, prettyJson ? 2 : 0));
 
   process.stdout.write(`Dataset written: ${outDatasetPath}\n`);
   process.stdout.write(`Graph written: ${outGraphPath}\n`);
@@ -192,4 +199,11 @@ function createGraph(
 
 function roundWeight(value: number): number {
   return Number(value.toFixed(4));
+}
+
+function isTruthy(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  return /^(1|true|yes|on)$/i.test(value.trim());
 }

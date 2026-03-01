@@ -496,7 +496,7 @@ async function updateRecommendations(): Promise<void> {
     }
     if (!modelIndex) {
       recEngineStatusEl.textContent =
-        "ML model data not found (expected ./data/model-mf-web.json).";
+        "ML model data not found (expected ./data/model-mf-web.json.gz or .json).";
       recSummaryEl.textContent =
         "Model recommendations are unavailable until model data is exported to the web data folder.";
       recResultsEl.innerHTML = "";
@@ -988,11 +988,15 @@ function statLine(label: string, value: string): string {
 }
 
 async function fetchGraph(): Promise<GraphData> {
-  const response = await fetch("./data/graph.json");
-  if (!response.ok) {
-    throw new Error(`Unable to load graph.json (${response.status})`);
+  const data = await fetchJsonWithGzipFallback<GraphData>({
+    path: "./data/graph.json",
+    required: true,
+    label: "graph.json",
+  });
+  if (!data) {
+    throw new Error("Unable to load required graph data.");
   }
-  return (await response.json()) as GraphData;
+  return data;
 }
 
 async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
@@ -1003,15 +1007,14 @@ async function ensureModelRecommendationIndex(): Promise<ModelRecommendationInde
 }
 
 async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
-  const response = await fetch("./data/model-mf-web.json");
-  if (!response.ok) {
-    if (response.status !== 404) {
-      console.warn(`Unable to load model-mf-web.json (${response.status})`);
-    }
+  const raw = await fetchJsonWithGzipFallback<ModelRecommendationData>({
+    path: "./data/model-mf-web.json",
+    required: false,
+    label: "model-mf-web.json",
+  });
+  if (!raw) {
     return null;
   }
-
-  const raw = (await response.json()) as ModelRecommendationData;
   const animeByAnimeId = new Map<number, ModelRecommendationAnime>();
   for (const anime of raw.anime) {
     if (!Number.isFinite(anime.animeId) || !Number.isFinite(anime.bias)) {
@@ -1036,6 +1039,61 @@ async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex
     globalMean: Number.isFinite(raw.globalMean) ? raw.globalMean : 0,
     animeByAnimeId,
   };
+}
+
+async function fetchJsonWithGzipFallback<T>({
+  path,
+  required,
+  label,
+}: {
+  path: string;
+  required: boolean;
+  label: string;
+}): Promise<T | null> {
+  const gzPath = `${path}.gz`;
+  let gzStatus: number | null = null;
+
+  try {
+    const gzResponse = await fetch(gzPath);
+    gzStatus = gzResponse.status;
+    if (gzResponse.ok) {
+      try {
+        return await parseGzipJsonResponse<T>(gzResponse, label);
+      } catch (error) {
+        console.warn(`Failed to parse ${label}.gz; falling back to JSON`, error);
+      }
+    } else if (gzResponse.status !== 404) {
+      console.warn(`Unable to load ${label}.gz (${gzResponse.status})`);
+    }
+  } catch (error) {
+    console.warn(`Fetch failed for ${label}.gz`, error);
+  }
+
+  const response = await fetch(path);
+  if (!response.ok) {
+    if (!required && response.status === 404 && (gzStatus === 404 || gzStatus === null)) {
+      return null;
+    }
+    throw new Error(`Unable to load ${label} (${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
+async function parseGzipJsonResponse<T>(
+  response: Response,
+  label: string,
+): Promise<T> {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error(
+      `This browser does not support DecompressionStream for ${label}.gz`,
+    );
+  }
+  if (!response.body) {
+    throw new Error(`Missing response body for ${label}.gz`);
+  }
+  const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
+  const text = await new Response(stream).text();
+  return JSON.parse(text) as T;
 }
 
 function mustElement<T extends Element>(selector: string): T {

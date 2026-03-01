@@ -77,6 +77,10 @@ Outputs:
 - `data/anonymized-ratings.json`
 - `data/graph.json`
 
+Note:
+- JSON exports are minified by default to reduce disk size.
+- Use `--pretty-json` if you need human-readable formatting.
+
 Graph rules implemented:
 
 - User node and anime node for each entity.
@@ -93,6 +97,9 @@ npm run sync:web
 npm run dev:web
 ```
 
+`sync:web` now writes compressed files (`*.json.gz`) to `web/public/data` by default.
+The web app loads gzip first, then falls back to plain JSON.
+
 Optional ML recommendation engine for the web app:
 
 ```bash
@@ -100,6 +107,10 @@ npm run ml:train
 npm run ml:export:web
 npm run sync:web
 ```
+
+Optional `sync:web` flags:
+- `SYNC_WEB_INCLUDE_DATASET=1` to also copy `anonymized-ratings.json` for web.
+- `SYNC_WEB_KEEP_JSON=1` to keep plain `.json` next to `.json.gz`.
 
 ## 4) Build Static Site for GitHub Pages
 

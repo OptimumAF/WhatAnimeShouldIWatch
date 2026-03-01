@@ -53,6 +53,8 @@ Then sync web data:
 npm run sync:web
 ```
 
+By default this creates `web/public/data/model-mf-web.json.gz` (compressed).
+
 ## Recommend
 
 Use watched anime IDs with optional weights:
