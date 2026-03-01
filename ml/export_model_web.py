@@ -20,8 +20,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--out",
-        default="data/model-mf-web.json",
+        default="data/model-mf-web.compact.json",
         help="Output JSON path for the web app",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["compact", "legacy"],
+        default="compact",
+        help="Output schema format. 'compact' is significantly smaller.",
     )
     parser.add_argument(
         "--round",
@@ -58,25 +64,43 @@ def main() -> None:
         )
 
     round_digits = max(0, args.round_digits)
-    anime = []
-    for idx in range(q.shape[0]):
-        anime.append(
-            {
-                "animeId": int(anime_ids[idx]),
-                "title": str(anime_titles[idx]),
-                "bias": quantize(float(bi[idx]), round_digits),
-                "embedding": [quantize(float(v), round_digits) for v in q[idx].tolist()],
-            }
-        )
-
-    payload = {
-        "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "sourceModel": str(model_path),
-        "globalMean": quantize(global_mean, round_digits),
-        "factors": int(q.shape[1]),
-        "animeCount": int(q.shape[0]),
-        "anime": anime,
-    }
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if args.format == "legacy":
+        anime = []
+        for idx in range(q.shape[0]):
+            anime.append(
+                {
+                    "animeId": int(anime_ids[idx]),
+                    "title": str(anime_titles[idx]),
+                    "bias": quantize(float(bi[idx]), round_digits),
+                    "embedding": [
+                        quantize(float(v), round_digits) for v in q[idx].tolist()
+                    ],
+                }
+            )
+        payload = {
+            "generatedAt": generated_at,
+            "sourceModel": str(model_path),
+            "globalMean": quantize(global_mean, round_digits),
+            "factors": int(q.shape[1]),
+            "animeCount": int(q.shape[0]),
+            "anime": anime,
+        }
+    else:
+        payload = {
+            "format": "model-mf-compact-v1",
+            "generatedAt": generated_at,
+            "sourceModel": str(model_path),
+            "globalMean": quantize(global_mean, round_digits),
+            "factors": int(q.shape[1]),
+            "animeCount": int(q.shape[0]),
+            "animeIds": [int(x) for x in anime_ids.tolist()],
+            "titles": [str(x) for x in anime_titles],
+            "biases": [quantize(float(x), round_digits) for x in bi.tolist()],
+            "embeddings": [
+                [quantize(float(v), round_digits) for v in row.tolist()] for row in q
+            ],
+        }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")

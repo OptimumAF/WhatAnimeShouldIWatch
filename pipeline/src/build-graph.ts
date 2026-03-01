@@ -3,14 +3,24 @@ import path from "node:path";
 import { Command } from "commander";
 import { loadDatasetFromDb, openDatabase } from "./db.js";
 import { getRepoRoot } from "./paths.js";
-import type { GraphData, GraphEdge, GraphNode } from "./types.js";
+import type {
+  CompactAnonymizedDataset,
+  CompactGraphData,
+  GraphData,
+  GraphEdge,
+  GraphNode,
+} from "./types.js";
 
 interface BuildGraphOptions {
   db?: string;
   outDataset?: string;
   outGraph?: string;
+  outDatasetCompact?: string;
+  outGraphCompact?: string;
   maxRatingsPerUser?: string;
   prettyJson?: boolean;
+  compact?: boolean;
+  compactOnly?: boolean;
 }
 
 const repoRoot = getRepoRoot(import.meta.url);
@@ -29,12 +39,28 @@ const program = new Command()
   )
   .option("--out-graph <path>", "Output path for generated graph JSON")
   .option(
+    "--out-dataset-compact <path>",
+    "Output path for compact anonymized user ratings JSON",
+  )
+  .option(
+    "--out-graph-compact <path>",
+    "Output path for compact graph JSON",
+  )
+  .option(
     "--max-ratings-per-user <count>",
     "Optional per-user cap for graph generation only (0 = unlimited)",
   )
   .option(
     "--pretty-json",
     "Write pretty-printed JSON instead of minified output",
+  )
+  .option(
+    "--compact-only",
+    "Skip legacy JSON outputs and write compact outputs only",
+  )
+  .option(
+    "--no-compact",
+    "Disable compact output generation",
   );
 
 program.parse(process.argv);
@@ -60,6 +86,18 @@ const outGraphPath = path.resolve(
     argOutGraph ??
     "data/graph.json",
 );
+const outDatasetCompactPath = path.resolve(
+  repoRoot,
+  options.outDatasetCompact ??
+    process.env.GRAPH_DATASET_COMPACT_OUT ??
+    "data/anonymized-ratings.compact.json",
+);
+const outGraphCompactPath = path.resolve(
+  repoRoot,
+  options.outGraphCompact ??
+    process.env.GRAPH_COMPACT_OUT ??
+    "data/graph.compact.json",
+);
 const maxRatingsPerUser = Number.parseInt(
   options.maxRatingsPerUser ??
     process.env.GRAPH_MAX_RATINGS_PER_USER ??
@@ -76,6 +114,10 @@ if (Number.isNaN(maxRatingsPerUser) || maxRatingsPerUser < 0) {
 }
 const prettyJson =
   options.prettyJson === true || isTruthy(process.env.GRAPH_PRETTY_JSON);
+const writeCompact =
+  options.compact !== false && !isTruthy(process.env.GRAPH_DISABLE_COMPACT);
+const writeLegacy =
+  options.compactOnly !== true && !isTruthy(process.env.GRAPH_COMPACT_ONLY);
 
 const db = openDatabase(dbPath);
 try {
@@ -90,15 +132,37 @@ try {
     }
   }
 
-  fs.mkdirSync(path.dirname(outDatasetPath), { recursive: true });
-  fs.writeFileSync(outDatasetPath, JSON.stringify(dataset, null, prettyJson ? 2 : 0));
-
   const graph = createGraph(dataset, maxRatingsPerUser);
-  fs.mkdirSync(path.dirname(outGraphPath), { recursive: true });
-  fs.writeFileSync(outGraphPath, JSON.stringify(graph, null, prettyJson ? 2 : 0));
+  if (writeLegacy) {
+    fs.mkdirSync(path.dirname(outDatasetPath), { recursive: true });
+    fs.writeFileSync(
+      outDatasetPath,
+      JSON.stringify(dataset, null, prettyJson ? 2 : 0),
+    );
+    fs.mkdirSync(path.dirname(outGraphPath), { recursive: true });
+    fs.writeFileSync(outGraphPath, JSON.stringify(graph, null, prettyJson ? 2 : 0));
+    process.stdout.write(`Dataset written: ${outDatasetPath}\n`);
+    process.stdout.write(`Graph written: ${outGraphPath}\n`);
+  }
 
-  process.stdout.write(`Dataset written: ${outDatasetPath}\n`);
-  process.stdout.write(`Graph written: ${outGraphPath}\n`);
+  if (writeCompact) {
+    const compactDataset = createCompactDataset(dataset);
+    const compactGraph = createCompactGraph(graph);
+
+    fs.mkdirSync(path.dirname(outDatasetCompactPath), { recursive: true });
+    fs.writeFileSync(
+      outDatasetCompactPath,
+      JSON.stringify(compactDataset, null, prettyJson ? 2 : 0),
+    );
+    fs.mkdirSync(path.dirname(outGraphCompactPath), { recursive: true });
+    fs.writeFileSync(
+      outGraphCompactPath,
+      JSON.stringify(compactGraph, null, prettyJson ? 2 : 0),
+    );
+    process.stdout.write(`Compact dataset written: ${outDatasetCompactPath}\n`);
+    process.stdout.write(`Compact graph written: ${outGraphCompactPath}\n`);
+  }
+
   process.stdout.write(
     `Graph stats: ${graph.userCount} users, ${graph.animeCount} anime, ${graph.edgeCount} edges\n`,
   );
@@ -206,4 +270,117 @@ function isTruthy(value: string | undefined): boolean {
     return false;
   }
   return /^(1|true|yes|on)$/i.test(value.trim());
+}
+
+function createCompactDataset(dataset: {
+  generatedAt: string;
+  source: string;
+  users: {
+    userId: string;
+    ratings: {
+      animeId: number;
+      title: string;
+      rawScore: number;
+      normalizedScore: number;
+    }[];
+  }[];
+}): CompactAnonymizedDataset {
+  const anime: [number, string][] = [];
+  const animeIdToIndex = new Map<number, number>();
+  const users: [string, [number, number, number][]][] = [];
+
+  for (const user of dataset.users) {
+    const compactRatings: [number, number, number][] = [];
+    for (const rating of user.ratings) {
+      let animeIndex = animeIdToIndex.get(rating.animeId);
+      if (animeIndex === undefined) {
+        animeIndex = anime.length;
+        animeIdToIndex.set(rating.animeId, animeIndex);
+        anime.push([rating.animeId, rating.title]);
+      }
+      compactRatings.push([
+        animeIndex,
+        rating.rawScore,
+        roundWeight(rating.normalizedScore),
+      ]);
+    }
+    users.push([user.userId, compactRatings]);
+  }
+
+  return {
+    format: "ratings-compact-v1",
+    generatedAt: dataset.generatedAt,
+    source: dataset.source,
+    anime,
+    users,
+  };
+}
+
+function createCompactGraph(graph: GraphData): CompactGraphData {
+  const userIds: string[] = [];
+  const anime: [number, string][] = [];
+  const userNodeIdToIndex = new Map<string, number>();
+  const animeNodeIdToIndex = new Map<string, number>();
+
+  for (const node of graph.nodes) {
+    if (node.nodeType === "user") {
+      const userId = node.id.startsWith("user:")
+        ? node.id.slice("user:".length)
+        : node.id;
+      const userIndex = userIds.length;
+      userIds.push(userId);
+      userNodeIdToIndex.set(node.id, userIndex);
+      continue;
+    }
+
+    const animeIdValue = node.id.startsWith("anime:")
+      ? node.id.slice("anime:".length)
+      : node.id;
+    const animeId = Number.parseInt(animeIdValue, 10);
+    if (!Number.isFinite(animeId)) {
+      continue;
+    }
+    const animeIndex = anime.length;
+    anime.push([animeId, node.label]);
+    animeNodeIdToIndex.set(node.id, animeIndex);
+  }
+
+  const ua: [number, number, number][] = [];
+  const aa: [number, number, number][] = [];
+
+  for (const edge of graph.edges) {
+    if (edge.edgeType === "user-anime") {
+      const sourceUser = userNodeIdToIndex.get(edge.source);
+      const targetAnime = animeNodeIdToIndex.get(edge.target);
+      const sourceAnime = animeNodeIdToIndex.get(edge.source);
+      const targetUser = userNodeIdToIndex.get(edge.target);
+
+      if (sourceUser !== undefined && targetAnime !== undefined) {
+        ua.push([sourceUser, targetAnime, edge.weight]);
+      } else if (targetUser !== undefined && sourceAnime !== undefined) {
+        ua.push([targetUser, sourceAnime, edge.weight]);
+      }
+      continue;
+    }
+
+    const left = animeNodeIdToIndex.get(edge.source);
+    const right = animeNodeIdToIndex.get(edge.target);
+    if (left === undefined || right === undefined) {
+      continue;
+    }
+    aa.push([left, right, edge.weight]);
+  }
+
+  return {
+    format: "graph-compact-v1",
+    generatedAt: graph.generatedAt,
+    userIds,
+    anime,
+    ua,
+    aa,
+    userCount: userIds.length,
+    animeCount: anime.length,
+    nodeCount: userIds.length + anime.length,
+    edgeCount: ua.length + aa.length,
+  };
 }

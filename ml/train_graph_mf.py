@@ -36,13 +36,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ratings",
-        default="data/anonymized-ratings.json",
-        help="Path to anonymized-ratings.json",
+        default="data/anonymized-ratings.compact.json",
+        help="Path to ratings dataset JSON (compact or legacy)",
     )
     parser.add_argument(
         "--graph",
-        default="data/graph.json",
-        help="Path to graph.json",
+        default="data/graph.compact.json",
+        help="Path to graph JSON (compact or legacy)",
     )
     parser.add_argument(
         "--out-dir",
@@ -104,6 +104,12 @@ def _as_int_maybe(value: object) -> int | None:
 
 def load_dataset(ratings_path: Path) -> Dataset:
     raw = json.loads(ratings_path.read_text(encoding="utf-8"))
+    if raw.get("format") == "ratings-compact-v1":
+        return load_dataset_compact(raw)
+    return load_dataset_legacy(raw)
+
+
+def load_dataset_legacy(raw: Dict[str, object]) -> Dataset:
     users_raw = raw.get("users", [])
 
     user_ids: List[str] = []
@@ -133,6 +139,53 @@ def load_dataset(ratings_path: Path) -> Dataset:
                 anime_ids.append(anime_id)
                 anime_titles.append(str(rating.get("title", f"Anime {anime_id}")))
             anime_idx = anime_to_idx[anime_id]
+            interactions.append((user_idx, anime_idx, float(score)))
+
+    return Dataset(
+        user_ids=user_ids,
+        anime_ids=anime_ids,
+        anime_titles=anime_titles,
+        interactions=interactions,
+    )
+
+
+def load_dataset_compact(raw: Dict[str, object]) -> Dataset:
+    anime_raw = raw.get("anime", [])
+    users_raw = raw.get("users", [])
+
+    anime_ids: List[int] = []
+    anime_titles: List[str] = []
+    for anime_entry in anime_raw if isinstance(anime_raw, list) else []:
+        if not isinstance(anime_entry, list) or len(anime_entry) < 2:
+            continue
+        anime_id = _as_int_maybe(anime_entry[0])
+        if anime_id is None:
+            continue
+        anime_ids.append(anime_id)
+        anime_titles.append(str(anime_entry[1]))
+
+    user_ids: List[str] = []
+    interactions: List[Tuple[int, int, float]] = []
+    for user_entry in users_raw if isinstance(users_raw, list) else []:
+        if not isinstance(user_entry, list) or len(user_entry) < 2:
+            continue
+        user_id = str(user_entry[0]).strip()
+        ratings = user_entry[1]
+        if not user_id or not isinstance(ratings, list):
+            continue
+        user_idx = len(user_ids)
+        user_ids.append(user_id)
+        for rating in ratings:
+            if not isinstance(rating, list) or len(rating) < 3:
+                continue
+            anime_idx = _as_int_maybe(rating[0])
+            score = rating[2]
+            if anime_idx is None:
+                continue
+            if anime_idx < 0 or anime_idx >= len(anime_ids):
+                continue
+            if not isinstance(score, (int, float)) or math.isnan(float(score)):
+                continue
             interactions.append((user_idx, anime_idx, float(score)))
 
     return Dataset(
@@ -210,6 +263,16 @@ def load_anime_graph_edges(
     min_abs_weight: float,
 ) -> np.ndarray:
     raw = json.loads(graph_path.read_text(encoding="utf-8"))
+    if raw.get("format") == "graph-compact-v1":
+        return load_anime_graph_edges_compact(raw, anime_id_to_idx, min_abs_weight)
+    return load_anime_graph_edges_legacy(raw, anime_id_to_idx, min_abs_weight)
+
+
+def load_anime_graph_edges_legacy(
+    raw: Dict[str, object],
+    anime_id_to_idx: Dict[int, int],
+    min_abs_weight: float,
+) -> np.ndarray:
     edges_raw = raw.get("edges", [])
 
     # Deduplicate undirected pairs and average by absolute edge weight.
@@ -240,6 +303,69 @@ def load_anime_graph_edges(
             continue
 
         a, b = (src_idx, dst_idx) if src_idx < dst_idx else (dst_idx, src_idx)
+        pair_weights.setdefault((a, b), []).append(w)
+
+    pairs: List[Tuple[int, int, float]] = []
+    for (a, b), ws in pair_weights.items():
+        pairs.append((a, b, float(np.mean(np.array(ws, dtype=np.float32)))))
+    if not pairs:
+        return np.zeros((0, 3), dtype=np.float32)
+    return np.array(pairs, dtype=np.float32)
+
+
+def load_anime_graph_edges_compact(
+    raw: Dict[str, object],
+    anime_id_to_idx: Dict[int, int],
+    min_abs_weight: float,
+) -> np.ndarray:
+    anime_raw = raw.get("anime", [])
+    aa_raw = raw.get("aa", [])
+    if not isinstance(anime_raw, list) or not isinstance(aa_raw, list):
+        return np.zeros((0, 3), dtype=np.float32)
+
+    compact_anime_to_dataset_idx: List[int | None] = []
+    for anime_entry in anime_raw:
+        if not isinstance(anime_entry, list) or len(anime_entry) < 1:
+            compact_anime_to_dataset_idx.append(None)
+            continue
+        anime_id = _as_int_maybe(anime_entry[0])
+        if anime_id is None:
+            compact_anime_to_dataset_idx.append(None)
+            continue
+        compact_anime_to_dataset_idx.append(anime_id_to_idx.get(anime_id))
+
+    pair_weights: Dict[Tuple[int, int], List[float]] = {}
+    for edge in aa_raw:
+        if not isinstance(edge, list) or len(edge) < 3:
+            continue
+        left_idx = _as_int_maybe(edge[0])
+        right_idx = _as_int_maybe(edge[1])
+        weight = edge[2]
+        if left_idx is None or right_idx is None:
+            continue
+        if left_idx < 0 or right_idx < 0:
+            continue
+        if left_idx >= len(compact_anime_to_dataset_idx) or right_idx >= len(
+            compact_anime_to_dataset_idx
+        ):
+            continue
+        if left_idx == right_idx:
+            continue
+        if not isinstance(weight, (int, float)) or math.isnan(float(weight)):
+            continue
+        w = abs(float(weight))
+        if w < min_abs_weight:
+            continue
+
+        dataset_left = compact_anime_to_dataset_idx[left_idx]
+        dataset_right = compact_anime_to_dataset_idx[right_idx]
+        if dataset_left is None or dataset_right is None:
+            continue
+        a, b = (
+            (dataset_left, dataset_right)
+            if dataset_left < dataset_right
+            else (dataset_right, dataset_left)
+        )
         pair_weights.setdefault((a, b), []).append(w)
 
     pairs: List[Tuple[int, int, float]] = []
@@ -476,8 +602,14 @@ def save_model(
 
 def main() -> None:
     args = parse_args()
-    ratings_path = Path(args.ratings)
-    graph_path = Path(args.graph)
+    ratings_path = resolve_with_fallback(
+        Path(args.ratings),
+        [Path("data/anonymized-ratings.json")],
+    )
+    graph_path = resolve_with_fallback(
+        Path(args.graph),
+        [Path("data/graph.json")],
+    )
     out_dir = Path(args.out_dir)
 
     if not ratings_path.exists():
@@ -550,6 +682,15 @@ def main() -> None:
         args=args,
         graph_edge_count=int(graph_edges.shape[0]),
     )
+
+def resolve_with_fallback(path: Path, fallbacks: Sequence[Path]) -> Path:
+    if path.exists():
+        return path
+    for fallback in fallbacks:
+        if fallback.exists():
+            print(f"Primary file not found ({path}); using fallback {fallback}")
+            return fallback
+    return path
 
 
 if __name__ == "__main__":

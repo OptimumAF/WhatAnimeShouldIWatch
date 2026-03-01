@@ -13,39 +13,61 @@ const gzipLevel = parsePositiveInt(process.env.SYNC_WEB_GZIP_LEVEL, 9);
 
 fs.mkdirSync(targetDir, { recursive: true });
 
-syncRequiredFile("graph.json");
+syncRequiredWithFallback(["graph.compact.json", "graph.json"]);
 
 if (includeDataset) {
-  syncRequiredFile("anonymized-ratings.json");
+  syncRequiredWithFallback([
+    "anonymized-ratings.compact.json",
+    "anonymized-ratings.json",
+  ]);
 } else {
+  removeSyncedOutputs("anonymized-ratings.compact.json");
   removeSyncedOutputs("anonymized-ratings.json");
   process.stdout.write(
-    "Skipped anonymized-ratings.json (set SYNC_WEB_INCLUDE_DATASET=1 to include it)\n",
+    "Skipped anonymized ratings dataset (set SYNC_WEB_INCLUDE_DATASET=1 to include it)\n",
   );
 }
 
-syncOptionalFile("model-mf-web.json");
+syncOptionalWithFallback(["model-mf-web.compact.json", "model-mf-web.json"]);
 
-function syncRequiredFile(filename: string): void {
-  const sourcePath = path.join(sourceDir, filename);
-  if (!fs.existsSync(sourcePath)) {
+function syncRequiredWithFallback(candidates: string[]): void {
+  const selected = candidates.find((filename) =>
+    fs.existsSync(path.join(sourceDir, filename)),
+  );
+  if (!selected) {
     throw new Error(
-      `Missing source file: ${sourcePath}. Run "npm run build:graph --workspace pipeline --" first.`,
+      `Missing source file. Checked: ${candidates
+        .map((filename) => path.join(sourceDir, filename))
+        .join(", ")}. Run "npm run build:graph --workspace pipeline --" first.`,
     );
   }
-  syncFileOutputs(filename, sourcePath);
+  for (const filename of candidates) {
+    if (filename !== selected) {
+      removeSyncedOutputs(filename);
+    }
+  }
+  syncFileOutputs(selected, path.join(sourceDir, selected));
 }
 
-function syncOptionalFile(filename: string): void {
-  const sourcePath = path.join(sourceDir, filename);
-  if (!fs.existsSync(sourcePath)) {
-    removeSyncedOutputs(filename);
+function syncOptionalWithFallback(candidates: string[]): void {
+  const selected = candidates.find((filename) =>
+    fs.existsSync(path.join(sourceDir, filename)),
+  );
+  if (!selected) {
+    for (const filename of candidates) {
+      removeSyncedOutputs(filename);
+    }
     process.stdout.write(
-      `Skipped optional ${filename}; file not found at ${sourcePath}\n`,
+      `Skipped optional data; none found (${candidates.join(", ")})\n`,
     );
     return;
   }
-  syncFileOutputs(filename, sourcePath);
+  for (const filename of candidates) {
+    if (filename !== selected) {
+      removeSyncedOutputs(filename);
+    }
+  }
+  syncFileOutputs(selected, path.join(sourceDir, selected));
 }
 
 function syncFileOutputs(filename: string, sourcePath: string): void {

@@ -72,14 +72,23 @@ Useful env/config flags:
 npm run build:graph -- "data/anime.sqlite" "data/anonymized-ratings.json" "data/graph.json" 0
 ```
 
+Compact-only shortcut:
+
+```bash
+npm run build:graph:compact
+```
+
 Outputs:
 
-- `data/anonymized-ratings.json`
-- `data/graph.json`
+- `data/anonymized-ratings.compact.json` (compact)
+- `data/graph.compact.json` (compact)
+- `data/anonymized-ratings.json` (legacy, unless `--compact-only`)
+- `data/graph.json` (legacy, unless `--compact-only`)
 
 Note:
 - JSON exports are minified by default to reduce disk size.
 - Use `--pretty-json` if you need human-readable formatting.
+- Use `--compact-only` to write only compact files.
 
 Graph rules implemented:
 
@@ -109,7 +118,7 @@ npm run sync:web
 ```
 
 Optional `sync:web` flags:
-- `SYNC_WEB_INCLUDE_DATASET=1` to also copy `anonymized-ratings.json` for web.
+- `SYNC_WEB_INCLUDE_DATASET=1` to also copy anonymized ratings for web (`*.compact.json` preferred).
 - `SYNC_WEB_KEEP_JSON=1` to keep plain `.json` next to `.json.gz`.
 
 ## 4) Build Static Site for GitHub Pages

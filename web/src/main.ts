@@ -32,6 +32,27 @@ interface GraphData {
   edges: GraphEdge[];
 }
 
+type CompactAnimeEntry = [animeId: number, title: string];
+type CompactUserAnimeEdge = [userIndex: number, animeIndex: number, weight: number];
+type CompactAnimeAnimeEdge = [
+  leftAnimeIndex: number,
+  rightAnimeIndex: number,
+  weight: number,
+];
+
+interface CompactGraphData {
+  format: "graph-compact-v1";
+  generatedAt: string;
+  userIds: string[];
+  anime: CompactAnimeEntry[];
+  ua: CompactUserAnimeEdge[];
+  aa: CompactAnimeAnimeEdge[];
+  userCount: number;
+  animeCount: number;
+  nodeCount: number;
+  edgeCount: number;
+}
+
 interface ConnectedItem {
   nodeId: string;
   label: string;
@@ -81,6 +102,17 @@ interface ModelRecommendationData {
   globalMean: number;
   factors: number;
   anime: ModelRecommendationAnime[];
+}
+
+interface CompactModelRecommendationData {
+  format: "model-mf-compact-v1";
+  generatedAt: string;
+  globalMean: number;
+  factors: number;
+  animeIds: number[];
+  titles: string[];
+  biases: number[];
+  embeddings: number[][];
 }
 
 interface ModelRecommendationIndex {
@@ -496,7 +528,7 @@ async function updateRecommendations(): Promise<void> {
     }
     if (!modelIndex) {
       recEngineStatusEl.textContent =
-        "ML model data not found (expected ./data/model-mf-web.json.gz or .json).";
+        "ML model data not found (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
       recSummaryEl.textContent =
         "Model recommendations are unavailable until model data is exported to the web data folder.";
       recResultsEl.innerHTML = "";
@@ -988,15 +1020,24 @@ function statLine(label: string, value: string): string {
 }
 
 async function fetchGraph(): Promise<GraphData> {
-  const data = await fetchJsonWithGzipFallback<GraphData>({
+  const compactData = await fetchJsonWithGzipFallback<CompactGraphData>({
+    path: "./data/graph.compact.json",
+    required: false,
+    label: "graph.compact.json",
+  });
+  if (compactData && isCompactGraphData(compactData)) {
+    return expandCompactGraphData(compactData);
+  }
+
+  const legacyData = await fetchJsonWithGzipFallback<GraphData>({
     path: "./data/graph.json",
     required: true,
     label: "graph.json",
   });
-  if (!data) {
+  if (!legacyData) {
     throw new Error("Unable to load required graph data.");
   }
-  return data;
+  return legacyData;
 }
 
 async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
@@ -1007,26 +1048,72 @@ async function ensureModelRecommendationIndex(): Promise<ModelRecommendationInde
 }
 
 async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
-  const raw = await fetchJsonWithGzipFallback<ModelRecommendationData>({
-    path: "./data/model-mf-web.json",
+  const rawCompact = await fetchJsonWithGzipFallback<CompactModelRecommendationData>({
+    path: "./data/model-mf-web.compact.json",
     required: false,
-    label: "model-mf-web.json",
+    label: "model-mf-web.compact.json",
   });
-  if (!raw) {
-    return null;
-  }
+  const rawLegacy = rawCompact
+    ? null
+    : await fetchJsonWithGzipFallback<ModelRecommendationData>({
+        path: "./data/model-mf-web.json",
+        required: false,
+        label: "model-mf-web.json",
+      });
+
   const animeByAnimeId = new Map<number, ModelRecommendationAnime>();
-  for (const anime of raw.anime) {
-    if (!Number.isFinite(anime.animeId) || !Number.isFinite(anime.bias)) {
-      continue;
+  let generatedAt = "";
+  let factors = 0;
+  let globalMean = 0;
+
+  if (rawCompact && isCompactModelRecommendationData(rawCompact)) {
+    generatedAt = rawCompact.generatedAt;
+    factors = rawCompact.factors;
+    globalMean = Number.isFinite(rawCompact.globalMean) ? rawCompact.globalMean : 0;
+
+    const count = Math.min(
+      rawCompact.animeIds.length,
+      rawCompact.titles.length,
+      rawCompact.biases.length,
+      rawCompact.embeddings.length,
+    );
+    for (let index = 0; index < count; index += 1) {
+      const animeId = rawCompact.animeIds[index];
+      const title = rawCompact.titles[index];
+      const bias = rawCompact.biases[index];
+      const embedding = rawCompact.embeddings[index];
+      if (!Number.isFinite(animeId) || !Number.isFinite(bias)) {
+        continue;
+      }
+      if (!Array.isArray(embedding) || embedding.length === 0) {
+        continue;
+      }
+      if (!embedding.every((value) => Number.isFinite(value))) {
+        continue;
+      }
+      animeByAnimeId.set(animeId, {
+        animeId,
+        title: String(title),
+        bias,
+        embedding,
+      });
     }
-    if (!Array.isArray(anime.embedding) || anime.embedding.length === 0) {
-      continue;
+  } else if (rawLegacy) {
+    generatedAt = rawLegacy.generatedAt;
+    factors = rawLegacy.factors;
+    globalMean = Number.isFinite(rawLegacy.globalMean) ? rawLegacy.globalMean : 0;
+    for (const anime of rawLegacy.anime) {
+      if (!Number.isFinite(anime.animeId) || !Number.isFinite(anime.bias)) {
+        continue;
+      }
+      if (!Array.isArray(anime.embedding) || anime.embedding.length === 0) {
+        continue;
+      }
+      if (!anime.embedding.every((value) => Number.isFinite(value))) {
+        continue;
+      }
+      animeByAnimeId.set(anime.animeId, anime);
     }
-    if (!anime.embedding.every((value) => Number.isFinite(value))) {
-      continue;
-    }
-    animeByAnimeId.set(anime.animeId, anime);
   }
 
   if (animeByAnimeId.size === 0) {
@@ -1034,11 +1121,100 @@ async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex
   }
 
   return {
-    generatedAt: raw.generatedAt,
-    factors: raw.factors,
-    globalMean: Number.isFinite(raw.globalMean) ? raw.globalMean : 0,
+    generatedAt,
+    factors,
+    globalMean,
     animeByAnimeId,
   };
+}
+
+function isCompactGraphData(value: unknown): value is CompactGraphData {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const maybe = value as Record<string, unknown>;
+  return maybe.format === "graph-compact-v1";
+}
+
+function expandCompactGraphData(compact: CompactGraphData): GraphData {
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
+
+  const userNodeIds: string[] = [];
+  for (let i = 0; i < compact.userIds.length; i += 1) {
+    const userId = compact.userIds[i];
+    const nodeId = `user:${userId}`;
+    userNodeIds.push(nodeId);
+    nodes.push({
+      id: nodeId,
+      label: `User ${String(userId).slice(0, 8)}`,
+      nodeType: "user",
+    });
+  }
+
+  const animeNodeIds: string[] = [];
+  for (let i = 0; i < compact.anime.length; i += 1) {
+    const animeEntry = compact.anime[i];
+    const animeId = animeEntry[0];
+    const title = animeEntry[1];
+    const nodeId = `anime:${animeId}`;
+    animeNodeIds.push(nodeId);
+    nodes.push({
+      id: nodeId,
+      label: String(title),
+      nodeType: "anime",
+    });
+  }
+
+  for (const [userIndex, animeIndex, weight] of compact.ua) {
+    const source = userNodeIds[userIndex];
+    const target = animeNodeIds[animeIndex];
+    if (!source || !target || !Number.isFinite(weight)) {
+      continue;
+    }
+    edges.push({
+      id: `ua:${compact.userIds[userIndex]}:${compact.anime[animeIndex][0]}`,
+      source,
+      target,
+      edgeType: "user-anime",
+      weight,
+    });
+  }
+
+  for (const [leftAnimeIndex, rightAnimeIndex, weight] of compact.aa) {
+    const source = animeNodeIds[leftAnimeIndex];
+    const target = animeNodeIds[rightAnimeIndex];
+    if (!source || !target || !Number.isFinite(weight)) {
+      continue;
+    }
+    edges.push({
+      id: `aa:${compact.anime[leftAnimeIndex][0]}:${compact.anime[rightAnimeIndex][0]}`,
+      source,
+      target,
+      edgeType: "anime-anime",
+      weight,
+    });
+  }
+
+  return {
+    generatedAt: compact.generatedAt,
+    userCount: compact.userCount,
+    animeCount: compact.animeCount,
+    nodeCount: nodes.length,
+    edgeCount: edges.length,
+    nodes,
+    edges,
+  };
+}
+
+function isCompactModelRecommendationData(
+  value: unknown,
+): value is CompactModelRecommendationData {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const maybe = value as Record<string, unknown>;
+  return maybe.format === "model-mf-compact-v1";
 }
 
 async function fetchJsonWithGzipFallback<T>({

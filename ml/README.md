@@ -2,8 +2,8 @@
 
 This folder trains a recommendation model from:
 
-- `data/anonymized-ratings.json` (user-anime normalized ratings)
-- `data/graph.json` (anime-anime similarity edges)
+- `data/anonymized-ratings.compact.json` (preferred) or `data/anonymized-ratings.json`
+- `data/graph.compact.json` (preferred) or `data/graph.json`
 
 The model is matrix factorization with an extra graph regularization term on anime embeddings.
 
@@ -39,12 +39,13 @@ Artifacts are written to `models/graph_mf/`:
 
 The web app can switch between graph and ML recommendations when this file exists:
 
-- `data/model-mf-web.json`
+- `data/model-mf-web.compact.json` (preferred)
+- `data/model-mf-web.json` (legacy)
 
 Export it from a trained model:
 
 ```bash
-python ml/export_model_web.py --model models/graph_mf/model.npz --out data/model-mf-web.json
+python ml/export_model_web.py --model models/graph_mf/model.npz --out data/model-mf-web.compact.json
 ```
 
 Then sync web data:
@@ -53,7 +54,7 @@ Then sync web data:
 npm run sync:web
 ```
 
-By default this creates `web/public/data/model-mf-web.json.gz` (compressed).
+By default this creates `web/public/data/model-mf-web.compact.json.gz` (compressed).
 
 ## Recommend
 

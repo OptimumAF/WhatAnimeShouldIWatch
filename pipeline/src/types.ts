@@ -22,6 +22,22 @@ export interface AnonymizedDataset {
   users: AnonymizedUserRatings[];
 }
 
+export type CompactAnimeEntry = [animeId: number, title: string];
+export type CompactRatingEntry = [
+  animeIndex: number,
+  rawScore: number,
+  normalizedScore: number,
+];
+export type CompactUserRatings = [userId: string, ratings: CompactRatingEntry[]];
+
+export interface CompactAnonymizedDataset {
+  format: "ratings-compact-v1";
+  generatedAt: string;
+  source: string;
+  anime: CompactAnimeEntry[];
+  users: CompactUserRatings[];
+}
+
 export interface GraphNode {
   id: string;
   label: string;
@@ -44,4 +60,28 @@ export interface GraphData {
   animeCount: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+}
+
+export type CompactUserAnimeEdge = [
+  userIndex: number,
+  animeIndex: number,
+  weight: number,
+];
+export type CompactAnimeAnimeEdge = [
+  leftAnimeIndex: number,
+  rightAnimeIndex: number,
+  weight: number,
+];
+
+export interface CompactGraphData {
+  format: "graph-compact-v1";
+  generatedAt: string;
+  userIds: string[];
+  anime: CompactAnimeEntry[];
+  ua: CompactUserAnimeEdge[];
+  aa: CompactAnimeAnimeEdge[];
+  userCount: number;
+  animeCount: number;
+  nodeCount: number;
+  edgeCount: number;
 }

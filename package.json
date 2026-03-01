@@ -10,6 +10,7 @@
     "collect": "npm run collect --workspace pipeline --",
     "expand:network": "npm run expand:network --workspace pipeline --",
     "build:graph": "npm run build:graph --workspace pipeline --",
+    "build:graph:compact": "npm run build:graph --workspace pipeline -- --compact-only",
     "sync:web": "npm run sync:web --workspace pipeline",
     "dev:web": "npm run dev --workspace web",
     "build:web": "npm run build --workspace web",
