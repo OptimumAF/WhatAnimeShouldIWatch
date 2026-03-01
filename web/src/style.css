@@ -154,23 +154,58 @@ body {
 
 .selected-anime {
   margin-top: 0.55rem;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 0.45rem;
 }
 
 .chip {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 0.45rem;
-  padding: 0.3rem 0.48rem;
-  border-radius: 999px;
+  padding: 0.5rem 0.6rem;
+  border-radius: 12px;
   border: 1px solid #ffffff2a;
   background: #0b141f;
   font-size: 0.84rem;
 }
 
+.chip-weighted {
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 0.35rem;
+}
+
+.chip-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-weight-control {
+  grid-column: 1;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.chip-weight-control input {
+  width: 100%;
+}
+
+.chip-weight-value {
+  min-width: 2.7rem;
+  text-align: right;
+  color: var(--accent-soft);
+  font-family: "IBM Plex Mono", monospace;
+}
+
 .chip button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -205,6 +240,13 @@ body {
   margin-top: 0.15rem;
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+.rec-why {
+  margin-top: 0.25rem;
+  color: #9ec5e5;
+  font-size: 0.73rem;
+  line-height: 1.35;
 }
 
 .rec-score {

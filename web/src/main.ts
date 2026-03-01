@@ -50,6 +50,14 @@ interface RecommendationResult {
   score: number;
   strongest: number;
   supportCount: number;
+  contributions: RecommendationContribution[];
+}
+
+interface RecommendationContribution {
+  watched: AnimeInfo;
+  edgeWeight: number;
+  weightFactor: number;
+  weightedScore: number;
 }
 
 interface RecommendationIndex {
@@ -63,6 +71,9 @@ const FORCE_ATLAS_MAX_EDGES = 45000;
 const FORCE_ATLAS_ITERATIONS = 180;
 const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
+const MIN_WATCH_WEIGHT = 0.2;
+const MAX_WATCH_WEIGHT = 3;
+const WATCH_WEIGHT_STEP = 0.1;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -198,6 +209,7 @@ let activeView: AppView = "recommendations";
 const graphData = await fetchGraph();
 const recommendationIndex = buildRecommendationIndex(graphData);
 const selectedAnimeNodeIds: string[] = [];
+const selectedAnimeWeights = new Map<string, number>();
 
 populateAnimeOptions(recommendationIndex.animeList, animeOptions);
 
@@ -248,8 +260,37 @@ selectedAnimeEl.addEventListener("click", (event) => {
   removeSelectedAnime(nodeId);
 });
 
+selectedAnimeEl.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) {
+    return;
+  }
+  if (target.dataset.weightNodeId === undefined) {
+    return;
+  }
+
+  const nodeId = target.dataset.weightNodeId;
+  if (!nodeId) {
+    return;
+  }
+
+  const parsed = Number.parseFloat(target.value);
+  const clamped = clampWatchWeight(parsed);
+  selectedAnimeWeights.set(nodeId, clamped);
+  target.value = clamped.toFixed(1);
+
+  const chip = target.closest(".chip-weighted");
+  const valueEl = chip?.querySelector<HTMLOutputElement>(".chip-weight-value");
+  if (valueEl) {
+    valueEl.textContent = `${clamped.toFixed(1)}x`;
+  }
+
+  updateRecommendations();
+});
+
 clearWatchedBtn.addEventListener("click", () => {
   selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
+  selectedAnimeWeights.clear();
   recMessageEl.textContent = "";
   renderSelectedAnime();
   updateRecommendations();
@@ -327,6 +368,7 @@ function addAnimeFromInput(): void {
   }
 
   selectedAnimeNodeIds.push(anime.nodeId);
+  selectedAnimeWeights.set(anime.nodeId, 1);
   animeInput.value = "";
   recMessageEl.textContent = `Added: ${anime.label}`;
   renderSelectedAnime();
@@ -339,6 +381,7 @@ function removeSelectedAnime(nodeId: string): void {
     return;
   }
   selectedAnimeNodeIds.splice(index, 1);
+  selectedAnimeWeights.delete(nodeId);
   recMessageEl.textContent = "";
   renderSelectedAnime();
   updateRecommendations();
@@ -353,14 +396,28 @@ function renderSelectedAnime(): void {
   const html = selectedAnimeNodeIds
     .map((nodeId) => recommendationIndex.animeByNodeId.get(nodeId))
     .filter((anime): anime is AnimeInfo => Boolean(anime))
-    .map(
-      (anime) => `
-      <div class="chip">
-        <span>${escapeHtml(anime.label)}</span>
+    .map((anime) => {
+      const weight = clampWatchWeight(selectedAnimeWeights.get(anime.nodeId) ?? 1);
+      return `
+      <div class="chip chip-weighted">
+        <span class="chip-title">${escapeHtml(anime.label)}</span>
+        <label class="chip-weight-control">
+          <span>Weight</span>
+          <input
+            type="range"
+            min="${MIN_WATCH_WEIGHT}"
+            max="${MAX_WATCH_WEIGHT}"
+            step="${WATCH_WEIGHT_STEP}"
+            value="${weight.toFixed(1)}"
+            data-weight-node-id="${anime.nodeId}"
+            aria-label="Weight for ${escapeHtml(anime.label)}"
+          />
+          <output class="chip-weight-value">${weight.toFixed(1)}x</output>
+        </label>
         <button type="button" data-node-id="${anime.nodeId}" aria-label="Remove ${escapeHtml(anime.label)}">x</button>
       </div>
-    `,
-    )
+    `;
+    })
     .join("");
 
   selectedAnimeEl.innerHTML = html;
@@ -374,7 +431,11 @@ function updateRecommendations(): void {
     return;
   }
 
-  const recommendations = buildRecommendations(selectedAnimeNodeIds, recommendationIndex);
+  const recommendations = buildRecommendations(
+    selectedAnimeNodeIds,
+    selectedAnimeWeights,
+    recommendationIndex,
+  );
 
   if (recommendations.length === 0) {
     recSummaryEl.textContent =
@@ -393,6 +454,7 @@ function updateRecommendations(): void {
         <div>
           <div class="rec-title">${escapeHtml(item.anime.label)}</div>
           <div class="rec-meta">Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}</div>
+          <div class="rec-why">${escapeHtml(formatRecommendationWhy(item))}</div>
         </div>
         <div class="rec-score">${formatWeight(item.score)}</div>
       </li>
@@ -403,15 +465,25 @@ function updateRecommendations(): void {
 
 function buildRecommendations(
   selectedNodeIds: string[],
+  selectedWeights: Map<string, number>,
   index: RecommendationIndex,
 ): RecommendationResult[] {
   const selected = new Set(selectedNodeIds);
   const scored = new Map<
     string,
-    { score: number; strongest: number; supportCount: number }
+    {
+      score: number;
+      strongest: number;
+      supportCount: number;
+      sourceMap: Map<
+        string,
+        { edgeWeight: number; weightFactor: number; weightedScore: number }
+      >;
+    }
   >();
 
   for (const selectedNodeId of selectedNodeIds) {
+    const weightFactor = clampWatchWeight(selectedWeights.get(selectedNodeId) ?? 1);
     const neighbors = index.adjacency.get(selectedNodeId) ?? [];
     for (const neighbor of neighbors) {
       if (selected.has(neighbor.otherNodeId)) {
@@ -421,19 +493,36 @@ function buildRecommendations(
         continue;
       }
 
+      const weightedScore = neighbor.weight * weightFactor;
+
       const current = scored.get(neighbor.otherNodeId);
       if (!current) {
         scored.set(neighbor.otherNodeId, {
-          score: neighbor.weight,
-          strongest: neighbor.weight,
+          score: weightedScore,
+          strongest: weightedScore,
           supportCount: 1,
+          sourceMap: new Map([
+            [
+              selectedNodeId,
+              {
+                edgeWeight: neighbor.weight,
+                weightFactor,
+                weightedScore,
+              },
+            ],
+          ]),
         });
         continue;
       }
 
-      current.score += neighbor.weight;
-      current.strongest = Math.max(current.strongest, neighbor.weight);
+      current.score += weightedScore;
+      current.strongest = Math.max(current.strongest, weightedScore);
       current.supportCount += 1;
+      current.sourceMap.set(selectedNodeId, {
+        edgeWeight: neighbor.weight,
+        weightFactor,
+        weightedScore,
+      });
     }
   }
 
@@ -443,11 +532,28 @@ function buildRecommendations(
       if (!anime) {
         return null;
       }
+      const contributions = [...aggregate.sourceMap.entries()]
+        .map(([watchedNodeId, source]) => {
+          const watched = index.animeByNodeId.get(watchedNodeId);
+          if (!watched) {
+            return null;
+          }
+          return {
+            watched,
+            edgeWeight: source.edgeWeight,
+            weightFactor: source.weightFactor,
+            weightedScore: source.weightedScore,
+          } satisfies RecommendationContribution;
+        })
+        .filter((value): value is RecommendationContribution => value !== null)
+        .sort((left, right) => right.weightedScore - left.weightedScore);
+
       return {
         anime,
         score: aggregate.score,
         strongest: aggregate.strongest,
         supportCount: aggregate.supportCount,
+        contributions,
       } satisfies RecommendationResult;
     })
     .filter((value): value is RecommendationResult => value !== null)
@@ -919,6 +1025,34 @@ function formatWeight(value: number): string {
   const normalized = Math.abs(value) < 0.0005 ? 0 : value;
   const rounded = normalized.toFixed(3);
   return normalized > 0 ? `+${rounded}` : rounded;
+}
+
+function formatRecommendationWhy(result: RecommendationResult): string {
+  if (result.contributions.length === 0) {
+    return "Why: no direct positive contributing anime found.";
+  }
+
+  const top = result.contributions.slice(0, 3);
+  const summary = top
+    .map(
+      (item) =>
+        `${item.watched.label} (${formatWeight(item.weightedScore)} from ${formatWeight(item.edgeWeight)} x ${item.weightFactor.toFixed(1)})`,
+    )
+    .join(" | ");
+
+  const truncated =
+    result.contributions.length > top.length
+      ? ` | +${result.contributions.length - top.length} more`
+      : "";
+
+  return `Why: ${summary}${truncated}`;
+}
+
+function clampWatchWeight(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.min(Math.max(value, MIN_WATCH_WEIGHT), MAX_WATCH_WEIGHT);
 }
 
 function valueRow(label: string, value: string): string {
