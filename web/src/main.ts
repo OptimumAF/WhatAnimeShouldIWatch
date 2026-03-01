@@ -197,6 +197,15 @@ app.innerHTML = `
             </div>
             <div id="selected-anime" class="selected-anime"></div>
 
+            <section class="bulk-import">
+              <h3>Bulk Import</h3>
+              <p class="muted">One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>.</p>
+              <form id="bulk-import-form" class="bulk-import-form">
+                <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
+                <button type="submit">Import Watched Entries</button>
+              </form>
+            </section>
+
             <div class="selected-head">
               <h3>Include Candidates</h3>
               <button id="clear-include" type="button" class="ghost-btn">Clear</button>
@@ -302,6 +311,8 @@ const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status"
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
+const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
+const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
 const addIncludeForm = mustElement<HTMLFormElement>("#add-include-form");
 const includeInput = mustElement<HTMLInputElement>("#include-input");
 const includeAnimeEl = mustElement<HTMLDivElement>("#include-anime");
@@ -393,6 +404,11 @@ navNetworkBtn.addEventListener("click", () => {
 addAnimeForm.addEventListener("submit", (event) => {
   event.preventDefault();
   addAnimeFromInput();
+});
+
+bulkImportForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  importWatchedFromBulkInput();
 });
 
 addIncludeForm.addEventListener("submit", (event) => {
@@ -627,6 +643,122 @@ function addAnimeFromInput(): void {
   recMessageEl.textContent = `Added: ${anime.label}`;
   renderSelectedAnime();
   void updateRecommendations();
+}
+
+function importWatchedFromBulkInput(): void {
+  const raw = bulkImportInput.value.trim();
+  if (!raw) {
+    recMessageEl.textContent = "Paste at least one line to import.";
+    return;
+  }
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length === 0) {
+    recMessageEl.textContent = "Paste at least one line to import.";
+    return;
+  }
+
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  let unresolved = 0;
+  const unresolvedLines: string[] = [];
+
+  for (const line of lines) {
+    const parsed = parseBulkWatchedLine(line, recommendationIndex);
+    if (!parsed) {
+      unresolved += 1;
+      if (unresolvedLines.length < 3) {
+        unresolvedLines.push(line);
+      }
+      continue;
+    }
+
+    const { anime, weight } = parsed;
+    const existingIndex = selectedAnimeNodeIds.indexOf(anime.nodeId);
+    if (existingIndex < 0) {
+      selectedAnimeNodeIds.push(anime.nodeId);
+      selectedAnimeWeights.set(anime.nodeId, weight ?? 1);
+      added += 1;
+      continue;
+    }
+
+    if (weight === undefined) {
+      skipped += 1;
+      continue;
+    }
+
+    selectedAnimeWeights.set(anime.nodeId, weight);
+    updated += 1;
+  }
+
+  if (added === 0 && updated === 0 && skipped === 0 && unresolved === 0) {
+    recMessageEl.textContent = "No entries were imported.";
+    return;
+  }
+
+  persistRecommendationState();
+  renderSelectedAnime();
+  void updateRecommendations();
+
+  const unresolvedNote =
+    unresolved > 0
+      ? ` Unresolved: ${unresolved}${unresolvedLines.length > 0 ? ` (${unresolvedLines.join("; ")})` : ""}.`
+      : "";
+  recMessageEl.textContent =
+    `Import complete. Added: ${added}, Updated: ${updated}, Skipped: ${skipped}.` +
+    unresolvedNote;
+}
+
+function parseBulkWatchedLine(
+  line: string,
+  index: RecommendationIndex,
+): { anime: AnimeInfo; weight?: number } | null {
+  const parts = line
+    .split(/[,\t|]/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const animeToken = parts[0];
+  const anime = resolveAnimeInput(animeToken, index);
+  if (!anime) {
+    return null;
+  }
+
+  const scoreToken = parts[1];
+  if (!scoreToken) {
+    return { anime };
+  }
+
+  const scoreValue = Number.parseFloat(scoreToken);
+  if (!Number.isFinite(scoreValue)) {
+    return { anime };
+  }
+
+  return {
+    anime,
+    weight: normalizeImportedScoreToWeight(scoreValue),
+  };
+}
+
+function normalizeImportedScoreToWeight(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+
+  if (value <= MAX_WATCH_WEIGHT) {
+    return clampWatchWeight(value);
+  }
+
+  const mapped = 1 + (value - 5) / 5;
+  return clampWatchWeight(mapped);
 }
 
 function removeSelectedAnime(nodeId: string): void {
@@ -895,7 +1027,7 @@ async function updateRecommendations(): Promise<void> {
         <div>
           <div class="rec-title">${escapeHtml(item.anime.label)}</div>
           <div class="rec-meta">Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}</div>
-          <div class="rec-why">${escapeHtml(formatRecommendationWhy(item))}</div>
+          <div class="rec-why">${formatRecommendationWhyHtml(item)}</div>
         </div>
         <div class="rec-score">${formatWeight(item.score)}</div>
       </li>
@@ -930,13 +1062,20 @@ function buildGraphRecommendations(
       if (selected.has(neighbor.otherNodeId)) {
         continue;
       }
-      if (neighbor.weight <= 0) {
-        continue;
-      }
-
       const weightedScore = neighbor.weight * weightFactor;
 
       const current = scored.get(neighbor.otherNodeId);
+      if (neighbor.weight <= 0) {
+        if (current) {
+          current.sourceMap.set(selectedNodeId, {
+            edgeWeight: neighbor.weight,
+            weightFactor,
+            weightedScore,
+          });
+        }
+        continue;
+      }
+
       if (!current) {
         scored.set(neighbor.otherNodeId, {
           score: weightedScore,
@@ -2124,25 +2263,44 @@ function formatWeight(value: number): string {
   return normalized > 0 ? `+${rounded}` : rounded;
 }
 
-function formatRecommendationWhy(result: RecommendationResult): string {
+function formatRecommendationWhyHtml(result: RecommendationResult): string {
   if (result.contributions.length === 0) {
-    return "Why: no direct positive contributing anime found.";
+    return `<div class="rec-why-line">Why: no direct contributing anime found.</div>`;
   }
 
-  const top = result.contributions.slice(0, 3);
-  const summary = top
-    .map(
-      (item) =>
-        `${item.watched.label} (${formatWeight(item.weightedScore)} from ${formatWeight(item.edgeWeight)} x ${item.weightFactor.toFixed(1)})`,
-    )
-    .join(" | ");
+  const positives = result.contributions
+    .filter((item) => item.weightedScore > 0)
+    .sort((left, right) => right.weightedScore - left.weightedScore)
+    .slice(0, 2);
+  const negatives = result.contributions
+    .filter((item) => item.weightedScore < 0)
+    .sort((left, right) => left.weightedScore - right.weightedScore)
+    .slice(0, 2);
 
-  const truncated =
-    result.contributions.length > top.length
-      ? ` | +${result.contributions.length - top.length} more`
-      : "";
+  const positiveLine =
+    positives.length > 0
+      ? `Why+: ${positives
+          .map(
+            (item) =>
+              `${escapeHtml(item.watched.label)} (${formatWeight(item.weightedScore)})`,
+          )
+          .join(" | ")}`
+      : "Why+: no strong positive contributors.";
 
-  return `Why: ${summary}${truncated}`;
+  const negativeLine =
+    negatives.length > 0
+      ? `Why-: ${negatives
+          .map(
+            (item) =>
+              `${escapeHtml(item.watched.label)} (${formatWeight(item.weightedScore)})`,
+          )
+          .join(" | ")}`
+      : "Why-: no notable negative contributors.";
+
+  return [
+    `<div class="rec-why-line rec-why-pos">${positiveLine}</div>`,
+    `<div class="rec-why-line rec-why-neg">${negativeLine}</div>`,
+  ].join("");
 }
 
 function parseRecommendationMode(value: string): RecommendationMode {
