@@ -91,6 +91,33 @@ interface RecommendationIndex {
   adjacency: Map<string, { otherNodeId: string; weight: number }[]>;
 }
 
+interface AnimeMetadata {
+  animeId: number;
+  year: number | null;
+  score: number | null;
+  genres: string[];
+  studios: string[];
+  synopsis: string;
+  imageUrl: string;
+  season: string | null;
+}
+
+interface RecommendationFilters {
+  genre: string;
+  minYear: number | null;
+  maxYear: number | null;
+  minScore: number | null;
+}
+
+interface SeasonalAnimeItem {
+  animeId: number;
+  title: string;
+  score: number | null;
+  year: number | null;
+  season: string | null;
+  imageUrl: string;
+}
+
 interface ImportedWatchedEntry {
   anime: AnimeInfo;
   weight: number;
@@ -147,6 +174,12 @@ const MODEL_BLEND_WEIGHT_STEP = 0.05;
 const USERNAME_IMPORT_MAX_RETRIES = 3;
 const USERNAME_IMPORT_PAGE_SIZE = 300;
 const USERNAME_IMPORT_PAGE_DELAY_MS = 350;
+const METADATA_MAX_RETRIES = 2;
+const METADATA_PREFETCH_LIMIT = 100;
+const METADATA_PREFETCH_WITH_FILTER_LIMIT = 30;
+const METADATA_PREFETCH_CONCURRENCY = 3;
+const METADATA_SCORE_STEP = 0.1;
+const SEASONAL_LIST_LIMIT = 12;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
 const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
 
@@ -278,8 +311,45 @@ app.innerHTML = `
 
           <section class="card">
             <h2>Top Recommendations</h2>
+            <section class="rec-filters">
+              <h3>Filters</h3>
+              <div class="rec-filter-grid">
+                <label class="control-inline" for="filter-genre">
+                  <span>Genre</span>
+                  <select id="filter-genre">
+                    <option value="">Any</option>
+                  </select>
+                </label>
+                <label class="control-inline" for="filter-year-min">
+                  <span>Year from</span>
+                  <input id="filter-year-min" type="number" min="1900" max="2100" step="1" placeholder="Any" />
+                </label>
+                <label class="control-inline" for="filter-year-max">
+                  <span>Year to</span>
+                  <input id="filter-year-max" type="number" min="1900" max="2100" step="1" placeholder="Any" />
+                </label>
+              </div>
+              <label class="control-inline control-inline-score" for="filter-min-score">
+                <span>Minimum MAL score</span>
+                <input id="filter-min-score" type="range" min="0" max="10" step="${METADATA_SCORE_STEP}" value="0" />
+                <output id="filter-min-score-value">Any</output>
+              </label>
+              <div class="rec-filter-actions">
+                <button id="clear-rec-filters" type="button" class="ghost-btn">Clear Filters</button>
+                <span id="metadata-status" class="metadata-status">Metadata: idle</span>
+              </div>
+            </section>
             <p id="rec-summary" class="muted">Add at least one anime to start.</p>
             <ol id="rec-results" class="rec-results"></ol>
+
+            <section class="seasonal">
+              <div class="seasonal-head">
+                <h3>Seasonal Trending</h3>
+                <button id="refresh-seasonal" type="button" class="ghost-btn">Refresh</button>
+              </div>
+              <p id="seasonal-status" class="muted">Loading current season...</p>
+              <ul id="seasonal-list" class="seasonal-list"></ul>
+            </section>
           </section>
         </div>
       </section>
@@ -381,6 +451,16 @@ const excludeAnimeEl = mustElement<HTMLDivElement>("#exclude-anime");
 const clearExcludeBtn = mustElement<HTMLButtonElement>("#clear-exclude");
 const recSummaryEl = mustElement<HTMLParagraphElement>("#rec-summary");
 const recResultsEl = mustElement<HTMLOListElement>("#rec-results");
+const filterGenreSelect = mustElement<HTMLSelectElement>("#filter-genre");
+const filterYearMinInput = mustElement<HTMLInputElement>("#filter-year-min");
+const filterYearMaxInput = mustElement<HTMLInputElement>("#filter-year-max");
+const filterMinScoreInput = mustElement<HTMLInputElement>("#filter-min-score");
+const filterMinScoreValue = mustElement<HTMLOutputElement>("#filter-min-score-value");
+const clearRecFiltersBtn = mustElement<HTMLButtonElement>("#clear-rec-filters");
+const metadataStatusEl = mustElement<HTMLSpanElement>("#metadata-status");
+const seasonalStatusEl = mustElement<HTMLParagraphElement>("#seasonal-status");
+const seasonalListEl = mustElement<HTMLUListElement>("#seasonal-list");
+const refreshSeasonalBtn = mustElement<HTMLButtonElement>("#refresh-seasonal");
 
 const statsEl = mustElement<HTMLDivElement>("#stats");
 const graphContainer = mustElement<HTMLDivElement>("#graph");
@@ -408,6 +488,17 @@ let recommendationMode: RecommendationMode = "graph";
 let modelBlendWeight = 0.5;
 let recommendationRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
+const recommendationFilters: RecommendationFilters = {
+  genre: "",
+  minYear: null,
+  maxYear: null,
+  minScore: null,
+};
+const animeMetadataCache = new Map<number, AnimeMetadata>();
+const animeMetadataUnavailable = new Set<number>();
+const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
+let seasonalItems: SeasonalAnimeItem[] = [];
+let seasonalLoadingPromise: Promise<void> | null = null;
 
 const graphData = await fetchGraph();
 const recommendationIndex = buildRecommendationIndex(graphData);
@@ -441,6 +532,8 @@ renderSelectedAnime();
 renderIncludeCandidates();
 renderExcludeCandidates();
 renderProfileOptions(savedProfiles);
+renderFilterControls();
+renderSeasonalList();
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
@@ -448,6 +541,7 @@ minWeightValue.textContent = defaultMinWeight.toFixed(2);
 
 setActiveView(viewFromHash(), true);
 void updateRecommendations();
+void loadSeasonalTrending(false);
 
 window.addEventListener("hashchange", () => {
   setActiveView(viewFromHash(), true);
@@ -487,6 +581,62 @@ profileLoadBtn.addEventListener("click", () => {
 
 profileDeleteBtn.addEventListener("click", () => {
   deleteSelectedProfile();
+});
+
+filterGenreSelect.addEventListener("change", () => {
+  recommendationFilters.genre = filterGenreSelect.value.trim().toLowerCase();
+  void updateRecommendations();
+});
+
+filterYearMinInput.addEventListener("change", () => {
+  recommendationFilters.minYear = parseYearFilterValue(filterYearMinInput.value);
+  void updateRecommendations();
+});
+
+filterYearMaxInput.addEventListener("change", () => {
+  recommendationFilters.maxYear = parseYearFilterValue(filterYearMaxInput.value);
+  void updateRecommendations();
+});
+
+filterMinScoreInput.addEventListener("input", () => {
+  const scoreValue = Number.parseFloat(filterMinScoreInput.value);
+  recommendationFilters.minScore =
+    Number.isFinite(scoreValue) && scoreValue > 0 ? scoreValue : null;
+  renderMinScoreFilterLabel();
+  void updateRecommendations();
+});
+
+clearRecFiltersBtn.addEventListener("click", () => {
+  recommendationFilters.genre = "";
+  recommendationFilters.minYear = null;
+  recommendationFilters.maxYear = null;
+  recommendationFilters.minScore = null;
+  renderFilterControls();
+  void updateRecommendations();
+});
+
+refreshSeasonalBtn.addEventListener("click", () => {
+  void loadSeasonalTrending(true);
+});
+
+seasonalListEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const button = target.closest<HTMLButtonElement>("button[data-seasonal-anime-id]");
+  if (!button) {
+    return;
+  }
+  const animeIdRaw = button.dataset.seasonalAnimeId;
+  if (!animeIdRaw) {
+    return;
+  }
+  const animeId = Number.parseInt(animeIdRaw, 10);
+  if (!Number.isFinite(animeId)) {
+    return;
+  }
+  addAnimeById(animeId);
 });
 
 addIncludeForm.addEventListener("submit", (event) => {
@@ -695,6 +845,59 @@ function viewFromHash(): AppView {
     : "recommendations";
 }
 
+function parseYearFilterValue(raw: string): number | null {
+  const value = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return Math.min(Math.max(value, 1900), 2100);
+}
+
+function renderFilterControls(): void {
+  filterGenreSelect.value = recommendationFilters.genre;
+  filterYearMinInput.value =
+    recommendationFilters.minYear === null
+      ? ""
+      : String(recommendationFilters.minYear);
+  filterYearMaxInput.value =
+    recommendationFilters.maxYear === null
+      ? ""
+      : String(recommendationFilters.maxYear);
+  filterMinScoreInput.value = (recommendationFilters.minScore ?? 0).toFixed(1);
+  renderMinScoreFilterLabel();
+}
+
+function renderMinScoreFilterLabel(): void {
+  if (recommendationFilters.minScore === null || recommendationFilters.minScore <= 0) {
+    filterMinScoreValue.textContent = "Any";
+    return;
+  }
+  filterMinScoreValue.textContent = recommendationFilters.minScore.toFixed(1);
+}
+
+function addAnimeById(animeId: number): void {
+  const anime = recommendationIndex.animeByAnimeId.get(animeId);
+  if (!anime) {
+    recMessageEl.textContent = `Anime ${animeId} is not in the current graph dataset.`;
+    return;
+  }
+  addAnimeToWatchedList(anime, "Added");
+}
+
+function addAnimeToWatchedList(anime: AnimeInfo, prefix: string): void {
+  if (selectedAnimeNodeIds.includes(anime.nodeId)) {
+    recMessageEl.textContent = `${anime.label} is already in your watched list.`;
+    return;
+  }
+
+  selectedAnimeNodeIds.push(anime.nodeId);
+  selectedAnimeWeights.set(anime.nodeId, 1);
+  persistRecommendationState();
+  recMessageEl.textContent = `${prefix}: ${anime.label}`;
+  renderSelectedAnime();
+  void updateRecommendations();
+}
+
 function addAnimeFromInput(): void {
   const raw = animeInput.value.trim();
   if (!raw) {
@@ -714,13 +917,8 @@ function addAnimeFromInput(): void {
     return;
   }
 
-  selectedAnimeNodeIds.push(anime.nodeId);
-  selectedAnimeWeights.set(anime.nodeId, 1);
-  persistRecommendationState();
   animeInput.value = "";
-  recMessageEl.textContent = `Added: ${anime.label}`;
-  renderSelectedAnime();
-  void updateRecommendations();
+  addAnimeToWatchedList(anime, "Added");
 }
 
 function importWatchedFromBulkInput(): void {
@@ -1337,6 +1535,7 @@ async function updateRecommendations(): Promise<void> {
           ? "Using ML model recommendations."
           : `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model).`;
     recResultsEl.innerHTML = "";
+    setMetadataStatus("Metadata: add anime to begin.");
     renderSelectedAnime();
     return;
   }
@@ -1421,6 +1620,37 @@ async function updateRecommendations(): Promise<void> {
     recSummaryEl.textContent =
       "No positive recommendations found from the current watched list. Try adding more anime.";
     recResultsEl.innerHTML = "";
+    setMetadataStatus("Metadata: no candidates.");
+    return;
+  }
+
+  const metadataCandidateAnimeIds = recommendations
+    .slice(0, METADATA_PREFETCH_LIMIT)
+    .map((item) => item.anime.animeId)
+    .filter((animeId) => Number.isFinite(animeId) && animeId > 0);
+  const metadataPrefetchLimit = hasActiveRecommendationFilters()
+    ? METADATA_PREFETCH_WITH_FILTER_LIMIT
+    : Math.min(12, metadataCandidateAnimeIds.length);
+  if (metadataPrefetchLimit > 0) {
+    await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit);
+    if (runId !== recommendationRunId) {
+      return;
+    }
+  }
+
+  updateGenreFilterOptions(recommendations);
+  const filterResult = applyRecommendationFilters(recommendations);
+  const filteredRecommendations = filterResult.recommendations;
+  if (filteredRecommendations.length === 0) {
+    recSummaryEl.textContent = hasActiveRecommendationFilters()
+      ? "No recommendations match your current metadata filters."
+      : "No positive recommendations found from the current watched list.";
+    recResultsEl.innerHTML = "";
+    setMetadataStatus(
+      hasActiveRecommendationFilters() && filterResult.missingMetadataCount > 0
+        ? `Metadata: ${filterResult.missingMetadataCount} candidate(s) skipped due to missing metadata.`
+        : "Metadata: no matches after filters.",
+    );
     return;
   }
 
@@ -1430,22 +1660,512 @@ async function updateRecommendations(): Promise<void> {
       : recommendationMode === "model"
         ? "ML model ranking"
         : "hybrid graph+ML ranking";
-  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, recommendations.length)} recommendations from ${recommendations.length} candidates (${methodLabel}).`;
+  const filterSummary = formatActiveFilterSummary();
+  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${filteredRecommendations.length} candidates (${methodLabel})${filterSummary}.`;
 
-  recResultsEl.innerHTML = recommendations
+  const visibleRecommendations = filteredRecommendations
     .slice(0, MAX_RECOMMENDATIONS)
-    .map(
-      (item) => `
+    .map((item) => renderRecommendationCard(item));
+  recResultsEl.innerHTML = visibleRecommendations.join("");
+
+  const visibleWithMetadata = filteredRecommendations
+    .slice(0, MAX_RECOMMENDATIONS)
+    .filter((item) => animeMetadataCache.has(item.anime.animeId)).length;
+  const visibleMissingMetadata = filteredRecommendations
+    .slice(0, MAX_RECOMMENDATIONS)
+    .filter(
+      (item) =>
+        !animeMetadataCache.has(item.anime.animeId) &&
+        !animeMetadataUnavailable.has(item.anime.animeId),
+    ).length;
+  const missingNote =
+    filterResult.missingMetadataCount > 0
+      ? ` | skipped (missing metadata): ${filterResult.missingMetadataCount}`
+      : "";
+  setMetadataStatus(
+    `Metadata loaded for ${visibleWithMetadata}/${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} visible recommendations` +
+      `${visibleMissingMetadata > 0 ? ` | pending: ${visibleMissingMetadata}` : ""}` +
+      missingNote,
+  );
+}
+
+function renderRecommendationCard(item: RecommendationResult): string {
+  const metadata = animeMetadataCache.get(item.anime.animeId) ?? null;
+  const coverHtml =
+    metadata && metadata.imageUrl
+      ? `<img class="rec-cover" src="${escapeHtml(metadata.imageUrl)}" alt="Cover for ${escapeHtml(item.anime.label)}" loading="lazy" />`
+      : `<div class="rec-cover rec-cover-placeholder" aria-hidden="true">No image</div>`;
+  const metadataMeta = formatRecommendationMetadataMeta(metadata);
+  const synopsisText =
+    metadata && metadata.synopsis
+      ? truncateText(metadata.synopsis, 180)
+      : "Metadata loading...";
+  const synopsisClass =
+    metadata && metadata.synopsis
+      ? "rec-synopsis"
+      : "rec-synopsis rec-synopsis-muted";
+
+  return `
       <li class="rec-item">
-        <div>
-          <div class="rec-title">${escapeHtml(item.anime.label)}</div>
-          <div class="rec-meta">Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}</div>
-          <div class="rec-why">${formatRecommendationWhyHtml(item)}</div>
+        <div class="rec-main">
+          ${coverHtml}
+          <div class="rec-copy">
+            <div class="rec-title">${escapeHtml(item.anime.label)}</div>
+            <div class="rec-meta">Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}</div>
+            <div class="rec-meta rec-meta-details">${escapeHtml(metadataMeta)}</div>
+            <p class="${synopsisClass}">${escapeHtml(synopsisText)}</p>
+            <div class="rec-why">${formatRecommendationWhyHtml(item)}</div>
+          </div>
         </div>
         <div class="rec-score">${formatWeight(item.score)}</div>
       </li>
-    `,
+    `;
+}
+
+function formatRecommendationMetadataMeta(metadata: AnimeMetadata | null): string {
+  if (!metadata) {
+    return "Metadata pending";
+  }
+
+  const parts: string[] = [];
+  if (metadata.year !== null) {
+    parts.push(String(metadata.year));
+  }
+  if (metadata.score !== null) {
+    parts.push(`MAL ${metadata.score.toFixed(2)}`);
+  }
+  if (metadata.studios.length > 0) {
+    parts.push(metadata.studios.slice(0, 2).join(", "));
+  }
+  if (metadata.genres.length > 0) {
+    parts.push(metadata.genres.slice(0, 3).join(", "));
+  }
+  if (parts.length === 0) {
+    return "Metadata available";
+  }
+  return parts.join(" | ");
+}
+
+function setMetadataStatus(message: string): void {
+  metadataStatusEl.textContent = message;
+}
+
+function hasActiveRecommendationFilters(): boolean {
+  return (
+    recommendationFilters.genre.length > 0 ||
+    recommendationFilters.minYear !== null ||
+    recommendationFilters.maxYear !== null ||
+    (recommendationFilters.minScore ?? 0) > 0
+  );
+}
+
+function formatActiveFilterSummary(): string {
+  const parts: string[] = [];
+  if (recommendationFilters.genre) {
+    parts.push(`genre=${recommendationFilters.genre}`);
+  }
+  if (recommendationFilters.minYear !== null) {
+    parts.push(`year>=${recommendationFilters.minYear}`);
+  }
+  if (recommendationFilters.maxYear !== null) {
+    parts.push(`year<=${recommendationFilters.maxYear}`);
+  }
+  if ((recommendationFilters.minScore ?? 0) > 0) {
+    parts.push(`score>=${(recommendationFilters.minScore ?? 0).toFixed(1)}`);
+  }
+  return parts.length > 0 ? ` | filters: ${parts.join(", ")}` : "";
+}
+
+function applyRecommendationFilters(recommendations: RecommendationResult[]): {
+  recommendations: RecommendationResult[];
+  missingMetadataCount: number;
+} {
+  if (!hasActiveRecommendationFilters()) {
+    return {
+      recommendations,
+      missingMetadataCount: 0,
+    };
+  }
+
+  const minYearRaw = recommendationFilters.minYear;
+  const maxYearRaw = recommendationFilters.maxYear;
+  const lowerYear =
+    minYearRaw !== null && maxYearRaw !== null
+      ? Math.min(minYearRaw, maxYearRaw)
+      : minYearRaw;
+  const upperYear =
+    minYearRaw !== null && maxYearRaw !== null
+      ? Math.max(minYearRaw, maxYearRaw)
+      : maxYearRaw;
+  const minScore = recommendationFilters.minScore ?? 0;
+  const genreFilter = recommendationFilters.genre.trim().toLowerCase();
+
+  let missingMetadataCount = 0;
+  const filtered = recommendations.filter((item) => {
+    const metadata = animeMetadataCache.get(item.anime.animeId);
+    if (!metadata) {
+      missingMetadataCount += 1;
+      return false;
+    }
+
+    if (genreFilter) {
+      const hasGenre = metadata.genres.some(
+        (genre) => genre.trim().toLowerCase() === genreFilter,
+      );
+      if (!hasGenre) {
+        return false;
+      }
+    }
+
+    if (lowerYear !== null) {
+      if (metadata.year === null || metadata.year < lowerYear) {
+        return false;
+      }
+    }
+
+    if (upperYear !== null) {
+      if (metadata.year === null || metadata.year > upperYear) {
+        return false;
+      }
+    }
+
+    if (minScore > 0) {
+      if (metadata.score === null || metadata.score < minScore) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  return {
+    recommendations: filtered,
+    missingMetadataCount,
+  };
+}
+
+function updateGenreFilterOptions(recommendations: RecommendationResult[]): void {
+  const byNormalized = new Map<string, string>();
+  for (const item of recommendations.slice(0, METADATA_PREFETCH_LIMIT)) {
+    const metadata = animeMetadataCache.get(item.anime.animeId);
+    if (!metadata) {
+      continue;
+    }
+    for (const genre of metadata.genres) {
+      const normalized = genre.trim().toLowerCase();
+      if (!normalized || byNormalized.has(normalized)) {
+        continue;
+      }
+      byNormalized.set(normalized, genre);
+    }
+  }
+
+  if (recommendationFilters.genre && !byNormalized.has(recommendationFilters.genre)) {
+    byNormalized.set(recommendationFilters.genre, recommendationFilters.genre);
+  }
+
+  const sortedGenres = [...byNormalized.entries()].sort((left, right) =>
+    left[1].localeCompare(right[1]),
+  );
+  filterGenreSelect.innerHTML = [
+    `<option value="">Any</option>`,
+    ...sortedGenres.map(
+      ([normalized, label]) =>
+        `<option value="${escapeHtml(normalized)}">${escapeHtml(label)}</option>`,
+    ),
+  ].join("");
+  filterGenreSelect.value = recommendationFilters.genre;
+}
+
+async function hydrateMetadataForAnimeIds(
+  animeIds: number[],
+  maxToFetch: number,
+): Promise<void> {
+  const uniqueTargets = [...new Set(animeIds)]
+    .filter(
+      (animeId) =>
+        animeId > 0 &&
+        !animeMetadataCache.has(animeId) &&
+        !animeMetadataUnavailable.has(animeId),
     )
+    .slice(0, maxToFetch);
+  if (uniqueTargets.length === 0) {
+    return;
+  }
+
+  const queue = [...uniqueTargets];
+  const workerCount = Math.min(METADATA_PREFETCH_CONCURRENCY, queue.length);
+  const workers: Promise<void>[] = [];
+
+  for (let i = 0; i < workerCount; i += 1) {
+    workers.push(
+      (async () => {
+        while (queue.length > 0) {
+          const animeId = queue.shift();
+          if (animeId === undefined) {
+            return;
+          }
+          await ensureAnimeMetadata(animeId);
+        }
+      })(),
+    );
+  }
+
+  await Promise.all(workers);
+}
+
+async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | null> {
+  const cached = animeMetadataCache.get(animeId);
+  if (cached) {
+    return cached;
+  }
+  if (animeMetadataUnavailable.has(animeId)) {
+    return null;
+  }
+  const inflight = animeMetadataInFlight.get(animeId);
+  if (inflight) {
+    return inflight;
+  }
+
+  const promise = fetchAnimeMetadataFromJikan(animeId)
+    .then((metadata) => {
+      if (!metadata) {
+        animeMetadataUnavailable.add(animeId);
+        return null;
+      }
+      animeMetadataCache.set(animeId, metadata);
+      return metadata;
+    })
+    .finally(() => {
+      animeMetadataInFlight.delete(animeId);
+    });
+
+  animeMetadataInFlight.set(animeId, promise);
+  return await promise;
+}
+
+async function fetchAnimeMetadataFromJikan(
+  animeId: number,
+): Promise<AnimeMetadata | null> {
+  const url = `https://api.jikan.moe/v4/anime/${animeId}/full`;
+
+  for (let attempt = 0; attempt <= METADATA_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as {
+          data?: Record<string, unknown>;
+        };
+        return parseAnimeMetadataPayload(animeId, payload.data);
+      }
+      if (response.status === 404) {
+        return null;
+      }
+      if (!isRetryableStatus(response.status) || attempt >= METADATA_MAX_RETRIES) {
+        return null;
+      }
+    } catch {
+      if (attempt >= METADATA_MAX_RETRIES) {
+        return null;
+      }
+    }
+
+    await sleep(Math.min(800 * 2 ** attempt, 5000) + Math.floor(Math.random() * 220));
+  }
+
+  return null;
+}
+
+function parseAnimeMetadataPayload(
+  animeId: number,
+  raw: Record<string, unknown> | undefined,
+): AnimeMetadata | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const year =
+    typeof raw.year === "number" && Number.isFinite(raw.year)
+      ? Math.trunc(raw.year)
+      : null;
+  const score =
+    typeof raw.score === "number" && Number.isFinite(raw.score)
+      ? Number(raw.score)
+      : null;
+  const synopsis = typeof raw.synopsis === "string" ? raw.synopsis.trim() : "";
+  const season = typeof raw.season === "string" ? raw.season : null;
+  const genres = parseNameList(raw.genres);
+  const studios = parseNameList(raw.studios);
+
+  const images = raw.images as Record<string, unknown> | undefined;
+  const webp = images?.webp as Record<string, unknown> | undefined;
+  const jpg = images?.jpg as Record<string, unknown> | undefined;
+  const imageUrl = [
+    webp?.large_image_url,
+    webp?.image_url,
+    jpg?.large_image_url,
+    jpg?.image_url,
+  ].find((value): value is string => typeof value === "string" && value.length > 0);
+
+  return {
+    animeId,
+    year,
+    score,
+    genres,
+    studios,
+    synopsis,
+    imageUrl: imageUrl ?? "",
+    season,
+  };
+}
+
+function parseNameList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const values: string[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const name = (entry as Record<string, unknown>).name;
+    if (typeof name !== "string") {
+      continue;
+    }
+    const trimmed = name.trim();
+    if (!trimmed || values.includes(trimmed)) {
+      continue;
+    }
+    values.push(trimmed);
+  }
+  return values;
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+async function loadSeasonalTrending(force: boolean): Promise<void> {
+  if (seasonalLoadingPromise && !force) {
+    return seasonalLoadingPromise;
+  }
+
+  refreshSeasonalBtn.disabled = true;
+  seasonalStatusEl.textContent = "Loading current season...";
+
+  const promise = (async () => {
+    try {
+      const payload = await fetchJsonWithRetries<{
+        data?: Array<Record<string, unknown>>;
+      }>(
+        `https://api.jikan.moe/v4/seasons/now?limit=${SEASONAL_LIST_LIMIT}`,
+        {
+          headers: {
+            Accept: "application/json",
+          },
+        },
+      );
+      const incoming = Array.isArray(payload.data) ? payload.data : [];
+      seasonalItems = incoming
+        .map((entry) => {
+          const animeId = Number((entry as Record<string, unknown>).mal_id ?? 0);
+          const title = String((entry as Record<string, unknown>).title ?? "").trim();
+          if (!Number.isFinite(animeId) || animeId <= 0 || !title) {
+            return null;
+          }
+          const scoreRaw = (entry as Record<string, unknown>).score;
+          const score =
+            typeof scoreRaw === "number" && Number.isFinite(scoreRaw)
+              ? scoreRaw
+              : null;
+          const yearRaw = (entry as Record<string, unknown>).year;
+          const year =
+            typeof yearRaw === "number" && Number.isFinite(yearRaw)
+              ? Math.trunc(yearRaw)
+              : null;
+          const seasonRaw = (entry as Record<string, unknown>).season;
+          const season = typeof seasonRaw === "string" ? seasonRaw : null;
+          const imageUrl = parseAnimeMetadataPayload(animeId, entry)?.imageUrl ?? "";
+
+          return {
+            animeId,
+            title,
+            score,
+            year,
+            season,
+            imageUrl,
+          } satisfies SeasonalAnimeItem;
+        })
+        .filter((entry): entry is SeasonalAnimeItem => entry !== null);
+      seasonalStatusEl.textContent =
+        seasonalItems.length > 0
+          ? `Loaded ${seasonalItems.length} seasonal anime from Jikan.`
+          : "No seasonal anime returned.";
+      renderSeasonalList();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Request failed.";
+      seasonalStatusEl.textContent = `Unable to load seasonal anime: ${message}`;
+      seasonalItems = [];
+      renderSeasonalList();
+    } finally {
+      refreshSeasonalBtn.disabled = false;
+      seasonalLoadingPromise = null;
+    }
+  })();
+
+  seasonalLoadingPromise = promise;
+  await promise;
+}
+
+function renderSeasonalList(): void {
+  if (seasonalItems.length === 0) {
+    seasonalListEl.innerHTML = `<li class="seasonal-empty">No seasonal data yet.</li>`;
+    return;
+  }
+
+  seasonalListEl.innerHTML = seasonalItems
+    .map((item) => {
+      const inGraph = recommendationIndex.animeByAnimeId.has(item.animeId);
+      const subtitleParts: string[] = [];
+      if (item.season) {
+        subtitleParts.push(item.season);
+      }
+      if (item.year !== null) {
+        subtitleParts.push(String(item.year));
+      }
+      if (item.score !== null) {
+        subtitleParts.push(`MAL ${item.score.toFixed(2)}`);
+      }
+      const subtitle = subtitleParts.length > 0 ? subtitleParts.join(" | ") : "No stats";
+      const coverHtml = item.imageUrl
+        ? `<img class="seasonal-cover" src="${escapeHtml(item.imageUrl)}" alt="Cover for ${escapeHtml(item.title)}" loading="lazy" />`
+        : `<div class="seasonal-cover seasonal-cover-placeholder" aria-hidden="true">No image</div>`;
+      return `
+        <li class="seasonal-item">
+          ${coverHtml}
+          <div class="seasonal-copy">
+            <div class="seasonal-title">${escapeHtml(item.title)}</div>
+            <div class="seasonal-meta">${escapeHtml(subtitle)}</div>
+          </div>
+          <button
+            type="button"
+            data-seasonal-anime-id="${item.animeId}"
+            ${inGraph ? "" : "disabled"}
+            title="${inGraph ? "Add to watched list" : "Not available in current graph"}"
+          >
+            ${inGraph ? "Add" : "N/A"}
+          </button>
+        </li>
+      `;
+    })
     .join("");
 }
 
