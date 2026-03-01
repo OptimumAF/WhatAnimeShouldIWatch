@@ -9,3 +9,8 @@ data/*.sqlite-wal
 
 web/dist/
 desktop/target/
+models/
+__pycache__/
+*.pyc
+
+*TODO.md

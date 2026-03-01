@@ -93,6 +93,14 @@ npm run sync:web
 npm run dev:web
 ```
 
+Optional ML recommendation engine for the web app:
+
+```bash
+npm run ml:train
+npm run ml:export:web
+npm run sync:web
+```
+
 ## 4) Build Static Site for GitHub Pages
 
 ```bash

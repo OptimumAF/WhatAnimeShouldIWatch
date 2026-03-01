@@ -6,6 +6,7 @@ import "./style.css";
 type NodeType = "user" | "anime";
 type EdgeType = "user-anime" | "anime-anime";
 type AppView = "recommendations" | "network";
+type RecommendationMode = "graph" | "model";
 
 interface GraphNode {
   id: string;
@@ -63,8 +64,30 @@ interface RecommendationContribution {
 interface RecommendationIndex {
   animeList: AnimeInfo[];
   animeByNodeId: Map<string, AnimeInfo>;
+  animeByAnimeId: Map<number, AnimeInfo>;
   titleLookup: Map<string, AnimeInfo[]>;
   adjacency: Map<string, { otherNodeId: string; weight: number }[]>;
+}
+
+interface ModelRecommendationAnime {
+  animeId: number;
+  title: string;
+  bias: number;
+  embedding: number[];
+}
+
+interface ModelRecommendationData {
+  generatedAt: string;
+  globalMean: number;
+  factors: number;
+  anime: ModelRecommendationAnime[];
+}
+
+interface ModelRecommendationIndex {
+  generatedAt: string;
+  factors: number;
+  globalMean: number;
+  animeByAnimeId: Map<number, ModelRecommendationAnime>;
 }
 
 const FORCE_ATLAS_MAX_EDGES = 45000;
@@ -98,7 +121,16 @@ app.innerHTML = `
         <div class="recommend-layout">
           <section class="card">
             <h2>Find Your Next Anime</h2>
-            <p class="muted">Add anime you just watched, then get the best next picks from anime-to-anime edge strength.</p>
+            <p class="muted">Add anime you just watched, then rank next picks with either graph edges or the trained ML model.</p>
+
+            <label class="rec-engine-control" for="rec-method">
+              <span>Recommendation engine</span>
+              <select id="rec-method">
+                <option value="graph" selected>Graph (anime-to-anime edges)</option>
+                <option value="model">ML Model (matrix factorization)</option>
+              </select>
+            </label>
+            <p id="rec-engine-status" class="rec-engine-status">Using graph recommendations.</p>
 
             <form id="add-anime-form" class="add-form">
               <input id="anime-input" type="text" list="anime-options" autocomplete="off" placeholder="Type an anime title" />
@@ -181,6 +213,8 @@ const viewNetwork = mustElement<HTMLElement>("#view-network");
 const addAnimeForm = mustElement<HTMLFormElement>("#add-anime-form");
 const animeInput = mustElement<HTMLInputElement>("#anime-input");
 const animeOptions = mustElement<HTMLDataListElement>("#anime-options");
+const recMethodSelect = mustElement<HTMLSelectElement>("#rec-method");
+const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status");
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
@@ -205,6 +239,9 @@ let renderer: Sigma | null = null;
 let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
 let activeView: AppView = "recommendations";
+let recommendationMode: RecommendationMode = "graph";
+let recommendationRunId = 0;
+let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
 
 const graphData = await fetchGraph();
 const recommendationIndex = buildRecommendationIndex(graphData);
@@ -218,7 +255,7 @@ minWeightInput.value = defaultMinWeight.toFixed(2);
 minWeightValue.textContent = defaultMinWeight.toFixed(2);
 
 setActiveView(viewFromHash(), true);
-updateRecommendations();
+void updateRecommendations();
 
 window.addEventListener("hashchange", () => {
   setActiveView(viewFromHash(), true);
@@ -285,7 +322,7 @@ selectedAnimeEl.addEventListener("input", (event) => {
     valueEl.textContent = `${clamped.toFixed(1)}x`;
   }
 
-  updateRecommendations();
+  void updateRecommendations();
 });
 
 clearWatchedBtn.addEventListener("click", () => {
@@ -293,7 +330,12 @@ clearWatchedBtn.addEventListener("click", () => {
   selectedAnimeWeights.clear();
   recMessageEl.textContent = "";
   renderSelectedAnime();
-  updateRecommendations();
+  void updateRecommendations();
+});
+
+recMethodSelect.addEventListener("change", () => {
+  recommendationMode = recMethodSelect.value === "model" ? "model" : "graph";
+  void updateRecommendations();
 });
 
 clearSelectionBtn.addEventListener("click", () => {
@@ -372,7 +414,7 @@ function addAnimeFromInput(): void {
   animeInput.value = "";
   recMessageEl.textContent = `Added: ${anime.label}`;
   renderSelectedAnime();
-  updateRecommendations();
+  void updateRecommendations();
 }
 
 function removeSelectedAnime(nodeId: string): void {
@@ -384,7 +426,7 @@ function removeSelectedAnime(nodeId: string): void {
   selectedAnimeWeights.delete(nodeId);
   recMessageEl.textContent = "";
   renderSelectedAnime();
-  updateRecommendations();
+  void updateRecommendations();
 }
 
 function renderSelectedAnime(): void {
@@ -423,19 +465,51 @@ function renderSelectedAnime(): void {
   selectedAnimeEl.innerHTML = html;
 }
 
-function updateRecommendations(): void {
+async function updateRecommendations(): Promise<void> {
+  const runId = ++recommendationRunId;
+
   if (selectedAnimeNodeIds.length === 0) {
     recSummaryEl.textContent = "Add at least one anime to start.";
+    recEngineStatusEl.textContent =
+      recommendationMode === "graph"
+        ? "Using graph recommendations."
+        : "Using ML model recommendations.";
     recResultsEl.innerHTML = "";
     renderSelectedAnime();
     return;
   }
 
-  const recommendations = buildRecommendations(
-    selectedAnimeNodeIds,
-    selectedAnimeWeights,
-    recommendationIndex,
-  );
+  let recommendations: RecommendationResult[] = [];
+
+  if (recommendationMode === "graph") {
+    recEngineStatusEl.textContent = "Using graph recommendations.";
+    recommendations = buildGraphRecommendations(
+      selectedAnimeNodeIds,
+      selectedAnimeWeights,
+      recommendationIndex,
+    );
+  } else {
+    recEngineStatusEl.textContent = "Loading ML model recommendations...";
+    const modelIndex = await ensureModelRecommendationIndex();
+    if (runId !== recommendationRunId) {
+      return;
+    }
+    if (!modelIndex) {
+      recEngineStatusEl.textContent =
+        "ML model data not found (expected ./data/model-mf-web.json).";
+      recSummaryEl.textContent =
+        "Model recommendations are unavailable until model data is exported to the web data folder.";
+      recResultsEl.innerHTML = "";
+      return;
+    }
+    recEngineStatusEl.textContent = `Using ML model recommendations (${modelIndex.factors} factors).`;
+    recommendations = buildModelRecommendations(
+      selectedAnimeNodeIds,
+      selectedAnimeWeights,
+      recommendationIndex,
+      modelIndex,
+    );
+  }
 
   if (recommendations.length === 0) {
     recSummaryEl.textContent =
@@ -444,7 +518,9 @@ function updateRecommendations(): void {
     return;
   }
 
-  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, recommendations.length)} recommendations from ${recommendations.length} candidates.`;
+  const methodLabel =
+    recommendationMode === "graph" ? "graph edge ranking" : "ML model ranking";
+  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, recommendations.length)} recommendations from ${recommendations.length} candidates (${methodLabel}).`;
 
   recResultsEl.innerHTML = recommendations
     .slice(0, MAX_RECOMMENDATIONS)
@@ -463,7 +539,7 @@ function updateRecommendations(): void {
     .join("");
 }
 
-function buildRecommendations(
+function buildGraphRecommendations(
   selectedNodeIds: string[],
   selectedWeights: Map<string, number>,
   index: RecommendationIndex,
@@ -568,6 +644,126 @@ function buildRecommendations(
     });
 }
 
+function buildModelRecommendations(
+  selectedNodeIds: string[],
+  selectedWeights: Map<string, number>,
+  index: RecommendationIndex,
+  modelIndex: ModelRecommendationIndex,
+): RecommendationResult[] {
+  const watchedEntries = selectedNodeIds
+    .map((nodeId) => {
+      const anime = index.animeByNodeId.get(nodeId);
+      if (!anime) {
+        return null;
+      }
+      const modelAnime = modelIndex.animeByAnimeId.get(anime.animeId);
+      if (!modelAnime) {
+        return null;
+      }
+      return {
+        anime,
+        modelAnime,
+        weight: clampWatchWeight(selectedWeights.get(nodeId) ?? 1),
+      };
+    })
+    .filter(
+      (
+        value,
+      ): value is {
+        anime: AnimeInfo;
+        modelAnime: ModelRecommendationAnime;
+        weight: number;
+      } => value !== null,
+    );
+
+  if (watchedEntries.length === 0) {
+    return [];
+  }
+
+  const factors = watchedEntries[0].modelAnime.embedding.length;
+  if (factors === 0) {
+    return [];
+  }
+
+  const watchedAnimeIds = new Set(watchedEntries.map((entry) => entry.anime.animeId));
+  const userVector = new Float32Array(factors);
+  let denominator = 0;
+
+  for (const watched of watchedEntries) {
+    denominator += Math.abs(watched.weight);
+    for (let i = 0; i < factors; i += 1) {
+      userVector[i] += watched.modelAnime.embedding[i] * watched.weight;
+    }
+  }
+
+  if (denominator <= 0) {
+    denominator = watchedEntries.length;
+  }
+  for (let i = 0; i < factors; i += 1) {
+    userVector[i] /= denominator;
+  }
+
+  const scored: RecommendationResult[] = [];
+  for (const [animeId, modelAnime] of modelIndex.animeByAnimeId.entries()) {
+    if (watchedAnimeIds.has(animeId)) {
+      continue;
+    }
+    if (modelAnime.embedding.length !== factors) {
+      continue;
+    }
+
+    let score = modelAnime.bias + modelIndex.globalMean;
+    for (let i = 0; i < factors; i += 1) {
+      score += userVector[i] * modelAnime.embedding[i];
+    }
+
+    const contributions = watchedEntries
+      .map((watched) => {
+        let similarity = 0;
+        for (let i = 0; i < factors; i += 1) {
+          similarity += watched.modelAnime.embedding[i] * modelAnime.embedding[i];
+        }
+        const weightedScore = similarity * watched.weight;
+        return {
+          watched: watched.anime,
+          edgeWeight: similarity,
+          weightFactor: watched.weight,
+          weightedScore,
+        } satisfies RecommendationContribution;
+      })
+      .sort((left, right) => right.weightedScore - left.weightedScore);
+
+    const anime =
+      index.animeByAnimeId.get(animeId) ??
+      ({
+        nodeId: `anime:${animeId}`,
+        animeId,
+        label: modelAnime.title,
+      } satisfies AnimeInfo);
+
+    const strongest = contributions.length > 0 ? contributions[0].weightedScore : 0;
+    const supportCount = contributions.filter((item) => item.weightedScore > 0).length;
+
+    scored.push({
+      anime,
+      score,
+      strongest,
+      supportCount,
+      contributions,
+    });
+  }
+
+  return scored.sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score;
+    }
+    if (right.supportCount !== left.supportCount) {
+      return right.supportCount - left.supportCount;
+    }
+    return right.strongest - left.strongest;
+  });
+}
+
 function resolveAnimeInput(
   raw: string,
   index: RecommendationIndex,
@@ -609,6 +805,7 @@ function populateAnimeOptions(animeList: AnimeInfo[], datalist: HTMLDataListElem
 function buildRecommendationIndex(graphDataValue: GraphData): RecommendationIndex {
   const animeList: AnimeInfo[] = [];
   const animeByNodeId = new Map<string, AnimeInfo>();
+  const animeByAnimeId = new Map<number, AnimeInfo>();
   const titleLookup = new Map<string, AnimeInfo[]>();
   const adjacency = new Map<string, { otherNodeId: string; weight: number }[]>();
 
@@ -626,6 +823,7 @@ function buildRecommendationIndex(graphDataValue: GraphData): RecommendationInde
 
     animeList.push(anime);
     animeByNodeId.set(node.id, anime);
+    animeByAnimeId.set(animeId, anime);
 
     const normalizedTitle = normalizeTitle(node.label);
     const existing = titleLookup.get(normalizedTitle);
@@ -651,6 +849,7 @@ function buildRecommendationIndex(graphDataValue: GraphData): RecommendationInde
   return {
     animeList,
     animeByNodeId,
+    animeByAnimeId,
     titleLookup,
     adjacency,
   };
@@ -794,6 +993,49 @@ async function fetchGraph(): Promise<GraphData> {
     throw new Error(`Unable to load graph.json (${response.status})`);
   }
   return (await response.json()) as GraphData;
+}
+
+async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
+  if (!modelRecommendationIndexPromise) {
+    modelRecommendationIndexPromise = fetchModelRecommendationIndex();
+  }
+  return modelRecommendationIndexPromise;
+}
+
+async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
+  const response = await fetch("./data/model-mf-web.json");
+  if (!response.ok) {
+    if (response.status !== 404) {
+      console.warn(`Unable to load model-mf-web.json (${response.status})`);
+    }
+    return null;
+  }
+
+  const raw = (await response.json()) as ModelRecommendationData;
+  const animeByAnimeId = new Map<number, ModelRecommendationAnime>();
+  for (const anime of raw.anime) {
+    if (!Number.isFinite(anime.animeId) || !Number.isFinite(anime.bias)) {
+      continue;
+    }
+    if (!Array.isArray(anime.embedding) || anime.embedding.length === 0) {
+      continue;
+    }
+    if (!anime.embedding.every((value) => Number.isFinite(value))) {
+      continue;
+    }
+    animeByAnimeId.set(anime.animeId, anime);
+  }
+
+  if (animeByAnimeId.size === 0) {
+    return null;
+  }
+
+  return {
+    generatedAt: raw.generatedAt,
+    factors: raw.factors,
+    globalMean: Number.isFinite(raw.globalMean) ? raw.globalMean : 0,
+    animeByAnimeId,
+  };
 }
 
 function mustElement<T extends Element>(selector: string): T {

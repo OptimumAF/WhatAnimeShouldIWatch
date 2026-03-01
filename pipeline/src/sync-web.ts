@@ -19,3 +19,16 @@ for (const filename of ["anonymized-ratings.json", "graph.json"]) {
   fs.copyFileSync(sourcePath, targetPath);
   process.stdout.write(`Synced ${filename} -> ${targetPath}\n`);
 }
+
+for (const optionalFilename of ["model-mf-web.json"]) {
+  const sourcePath = path.join(sourceDir, optionalFilename);
+  const targetPath = path.join(targetDir, optionalFilename);
+  if (!fs.existsSync(sourcePath)) {
+    process.stdout.write(
+      `Skipped optional ${optionalFilename}; file not found at ${sourcePath}\n`,
+    );
+    continue;
+  }
+  fs.copyFileSync(sourcePath, targetPath);
+  process.stdout.write(`Synced ${optionalFilename} -> ${targetPath}\n`);
+}

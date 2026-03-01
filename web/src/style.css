@@ -116,6 +116,32 @@ body {
   gap: 0.5rem;
 }
 
+.rec-engine-control {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.rec-engine-control span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.rec-engine-control select {
+  border: 1px solid #ffffff36;
+  border-radius: 10px;
+  background: #0b141f;
+  color: var(--text);
+  padding: 0.5rem 0.65rem;
+}
+
+.rec-engine-status {
+  margin: 0.5rem 0 0;
+  color: #9ec5e5;
+  min-height: 1.2rem;
+  font-size: 0.82rem;
+}
+
 .add-form input {
   border: 1px solid #ffffff36;
   border-radius: 10px;
