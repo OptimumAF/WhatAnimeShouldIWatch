@@ -139,6 +139,8 @@ interface StoredRecommendationState {
   mode: RecommendationMode;
   selected: { nodeId: string; weight: number }[];
   modelBlendWeight?: number;
+  includeCandidates?: string[];
+  excludeCandidates?: string[];
 }
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -194,6 +196,26 @@ app.innerHTML = `
               <button id="clear-watched" type="button" class="ghost-btn">Clear All</button>
             </div>
             <div id="selected-anime" class="selected-anime"></div>
+
+            <div class="selected-head">
+              <h3>Include Candidates</h3>
+              <button id="clear-include" type="button" class="ghost-btn">Clear</button>
+            </div>
+            <form id="add-include-form" class="add-form add-form-compact">
+              <input id="include-input" type="text" list="anime-options" autocomplete="off" placeholder="Add anime to force-include" />
+              <button type="submit">Add</button>
+            </form>
+            <div id="include-anime" class="selected-anime"></div>
+
+            <div class="selected-head">
+              <h3>Exclude Candidates</h3>
+              <button id="clear-exclude" type="button" class="ghost-btn">Clear</button>
+            </div>
+            <form id="add-exclude-form" class="add-form add-form-compact">
+              <input id="exclude-input" type="text" list="anime-options" autocomplete="off" placeholder="Add anime to exclude" />
+              <button type="submit">Add</button>
+            </form>
+            <div id="exclude-anime" class="selected-anime"></div>
           </section>
 
           <section class="card">
@@ -227,6 +249,16 @@ app.innerHTML = `
               <input id="toggle-users" type="checkbox" />
               <span>Show user nodes + user-anime edges</span>
             </label>
+
+            <section class="network-search">
+              <h3>Search In Graph</h3>
+              <form id="network-search-form" class="network-search-form">
+                <input id="network-search-input" type="text" list="network-node-options" placeholder="Title, anime:ID, or user:ID" />
+                <button type="submit">Find</button>
+              </form>
+              <datalist id="network-node-options"></datalist>
+              <p id="network-search-message" class="network-search-message"></p>
+            </section>
 
             <section class="inspect">
               <div class="inspect-head">
@@ -270,6 +302,14 @@ const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status"
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
+const addIncludeForm = mustElement<HTMLFormElement>("#add-include-form");
+const includeInput = mustElement<HTMLInputElement>("#include-input");
+const includeAnimeEl = mustElement<HTMLDivElement>("#include-anime");
+const clearIncludeBtn = mustElement<HTMLButtonElement>("#clear-include");
+const addExcludeForm = mustElement<HTMLFormElement>("#add-exclude-form");
+const excludeInput = mustElement<HTMLInputElement>("#exclude-input");
+const excludeAnimeEl = mustElement<HTMLDivElement>("#exclude-anime");
+const clearExcludeBtn = mustElement<HTMLButtonElement>("#clear-exclude");
 const recSummaryEl = mustElement<HTMLParagraphElement>("#rec-summary");
 const recResultsEl = mustElement<HTMLOListElement>("#rec-results");
 
@@ -279,6 +319,10 @@ const minWeightInput = mustElement<HTMLInputElement>("#min-weight");
 const minWeightValue = mustElement<HTMLOutputElement>("#min-weight-value");
 const toggleAnimeEdges = mustElement<HTMLInputElement>("#toggle-anime-edges");
 const toggleUsers = mustElement<HTMLInputElement>("#toggle-users");
+const networkSearchForm = mustElement<HTMLFormElement>("#network-search-form");
+const networkSearchInput = mustElement<HTMLInputElement>("#network-search-input");
+const networkNodeOptions = mustElement<HTMLDataListElement>("#network-node-options");
+const networkSearchMessage = mustElement<HTMLParagraphElement>("#network-search-message");
 const inspectEmptyEl = mustElement<HTMLParagraphElement>("#inspect-empty");
 const inspectContentEl = mustElement<HTMLDivElement>("#inspect-content");
 const inspectMetaEl = mustElement<HTMLDivElement>("#inspect-meta");
@@ -300,11 +344,19 @@ const graphData = await fetchGraph();
 const recommendationIndex = buildRecommendationIndex(graphData);
 const selectedAnimeNodeIds: string[] = [];
 const selectedAnimeWeights = new Map<string, number>();
+const includeCandidateNodeIds: string[] = [];
+const excludeCandidateNodeIds: string[] = [];
 const persistedState = loadRecommendationState(recommendationIndex);
 
 for (const entry of persistedState.selected) {
   selectedAnimeNodeIds.push(entry.nodeId);
   selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
+}
+for (const nodeId of persistedState.includeCandidates) {
+  includeCandidateNodeIds.push(nodeId);
+}
+for (const nodeId of persistedState.excludeCandidates) {
+  excludeCandidateNodeIds.push(nodeId);
 }
 recommendationMode = persistedState.mode;
 modelBlendWeight = clampModelBlendWeight(persistedState.modelBlendWeight ?? 0.5);
@@ -314,7 +366,10 @@ renderModelBlendValue();
 setBlendControlVisibility();
 
 populateAnimeOptions(recommendationIndex.animeList, animeOptions);
+populateNetworkNodeOptions(graphData.nodes, networkNodeOptions);
 renderSelectedAnime();
+renderIncludeCandidates();
+renderExcludeCandidates();
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
@@ -340,6 +395,16 @@ addAnimeForm.addEventListener("submit", (event) => {
   addAnimeFromInput();
 });
 
+addIncludeForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addCandidateFromInput(includeInput, includeCandidateNodeIds, "include");
+});
+
+addExcludeForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addCandidateFromInput(excludeInput, excludeCandidateNodeIds, "exclude");
+});
+
 animeInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
@@ -361,6 +426,38 @@ selectedAnimeEl.addEventListener("click", (event) => {
     return;
   }
   removeSelectedAnime(nodeId);
+});
+
+includeAnimeEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const button = target.closest<HTMLButtonElement>("button[data-include-node-id]");
+  if (!button) {
+    return;
+  }
+  const nodeId = button.dataset.includeNodeId;
+  if (!nodeId) {
+    return;
+  }
+  removeCandidateNodeId(nodeId, includeCandidateNodeIds, "include");
+});
+
+excludeAnimeEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const button = target.closest<HTMLButtonElement>("button[data-exclude-node-id]");
+  if (!button) {
+    return;
+  }
+  const nodeId = button.dataset.excludeNodeId;
+  if (!nodeId) {
+    return;
+  }
+  removeCandidateNodeId(nodeId, excludeCandidateNodeIds, "exclude");
 });
 
 selectedAnimeEl.addEventListener("input", (event) => {
@@ -401,6 +498,20 @@ clearWatchedBtn.addEventListener("click", () => {
   void updateRecommendations();
 });
 
+clearIncludeBtn.addEventListener("click", () => {
+  includeCandidateNodeIds.splice(0, includeCandidateNodeIds.length);
+  persistRecommendationState();
+  renderIncludeCandidates();
+  void updateRecommendations();
+});
+
+clearExcludeBtn.addEventListener("click", () => {
+  excludeCandidateNodeIds.splice(0, excludeCandidateNodeIds.length);
+  persistRecommendationState();
+  renderExcludeCandidates();
+  void updateRecommendations();
+});
+
 recMethodSelect.addEventListener("change", () => {
   recommendationMode = parseRecommendationMode(recMethodSelect.value);
   setBlendControlVisibility();
@@ -420,7 +531,11 @@ recBlendInput.addEventListener("input", () => {
 
 clearSelectionBtn.addEventListener("click", () => {
   selectedNodeId = null;
+  networkSearchMessage.textContent = "";
   renderInspectPanel(null);
+  if (renderer) {
+    renderer.refresh();
+  }
 });
 
 minWeightInput.addEventListener("input", () => {
@@ -440,6 +555,22 @@ toggleUsers.addEventListener("change", () => {
   if (activeView === "network") {
     rerenderGraph();
   }
+});
+
+networkSearchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const query = networkSearchInput.value.trim();
+  if (!query) {
+    networkSearchMessage.textContent = "Enter a node query first.";
+    return;
+  }
+  const match = resolveNetworkNodeQuery(query, graphData);
+  if (!match) {
+    networkSearchMessage.textContent = `No node match found for "${query}".`;
+    return;
+  }
+  networkSearchMessage.textContent = `Focused: ${match.label} (${match.id})`;
+  selectNodeAndFocus(match.id);
 });
 
 function setActiveView(view: AppView, fromHash: boolean): void {
@@ -547,6 +678,108 @@ function renderSelectedAnime(): void {
   selectedAnimeEl.innerHTML = html;
 }
 
+function addCandidateFromInput(
+  input: HTMLInputElement,
+  targetList: string[],
+  mode: "include" | "exclude",
+): void {
+  const raw = input.value.trim();
+  if (!raw) {
+    recMessageEl.textContent = "Enter an anime title first.";
+    return;
+  }
+
+  const anime = resolveAnimeInput(raw, recommendationIndex);
+  if (!anime) {
+    recMessageEl.textContent = `No anime match found for "${raw}".`;
+    return;
+  }
+  if (selectedAnimeNodeIds.includes(anime.nodeId)) {
+    recMessageEl.textContent = `${anime.label} is already in your watched list.`;
+    input.value = "";
+    return;
+  }
+  if (targetList.includes(anime.nodeId)) {
+    recMessageEl.textContent = `${anime.label} is already in your ${mode} list.`;
+    input.value = "";
+    return;
+  }
+
+  targetList.push(anime.nodeId);
+  if (mode === "include") {
+    const index = excludeCandidateNodeIds.indexOf(anime.nodeId);
+    if (index >= 0) {
+      excludeCandidateNodeIds.splice(index, 1);
+    }
+  } else {
+    const index = includeCandidateNodeIds.indexOf(anime.nodeId);
+    if (index >= 0) {
+      includeCandidateNodeIds.splice(index, 1);
+    }
+  }
+
+  persistRecommendationState();
+  input.value = "";
+  recMessageEl.textContent = `Added ${anime.label} to ${mode} list.`;
+  renderIncludeCandidates();
+  renderExcludeCandidates();
+  void updateRecommendations();
+}
+
+function removeCandidateNodeId(
+  nodeId: string,
+  targetList: string[],
+  mode: "include" | "exclude",
+): void {
+  const index = targetList.indexOf(nodeId);
+  if (index < 0) {
+    return;
+  }
+  targetList.splice(index, 1);
+  persistRecommendationState();
+  recMessageEl.textContent = "";
+  if (mode === "include") {
+    renderIncludeCandidates();
+  } else {
+    renderExcludeCandidates();
+  }
+  void updateRecommendations();
+}
+
+function renderIncludeCandidates(): void {
+  renderCandidateChips(includeAnimeEl, includeCandidateNodeIds, "include");
+}
+
+function renderExcludeCandidates(): void {
+  renderCandidateChips(excludeAnimeEl, excludeCandidateNodeIds, "exclude");
+}
+
+function renderCandidateChips(
+  container: HTMLDivElement,
+  nodeIds: string[],
+  mode: "include" | "exclude",
+): void {
+  if (nodeIds.length === 0) {
+    container.innerHTML = `<p class="muted">No anime in ${mode} list.</p>`;
+    return;
+  }
+
+  const dataAttrName = mode === "include" ? "data-include-node-id" : "data-exclude-node-id";
+  const html = nodeIds
+    .map((nodeId) => recommendationIndex.animeByNodeId.get(nodeId))
+    .filter((anime): anime is AnimeInfo => Boolean(anime))
+    .map(
+      (anime) => `
+      <div class="chip">
+        <span class="chip-title">${escapeHtml(anime.label)}</span>
+        <button type="button" ${dataAttrName}="${anime.nodeId}" aria-label="Remove ${escapeHtml(anime.label)}">x</button>
+      </div>
+    `,
+    )
+    .join("");
+  container.innerHTML = html;
+}
+
 async function updateRecommendations(): Promise<void> {
   const runId = ++recommendationRunId;
 
@@ -626,6 +859,18 @@ async function updateRecommendations(): Promise<void> {
     recEngineStatusEl.textContent =
       `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph).`;
   }
+
+  const includeSet = new Set(includeCandidateNodeIds);
+  const excludeSet = new Set(excludeCandidateNodeIds);
+  recommendations = recommendations.filter((item) => {
+    if (excludeSet.has(item.anime.nodeId)) {
+      return false;
+    }
+    if (includeSet.size > 0 && !includeSet.has(item.anime.nodeId)) {
+      return false;
+    }
+    return true;
+  });
 
   if (recommendations.length === 0) {
     recSummaryEl.textContent =
@@ -1051,6 +1296,99 @@ function populateAnimeOptions(animeList: AnimeInfo[], datalist: HTMLDataListElem
     .join("");
 }
 
+function populateNetworkNodeOptions(nodes: GraphNode[], datalist: HTMLDataListElement): void {
+  const values: string[] = [];
+  for (const node of nodes) {
+    values.push(node.label);
+    values.push(node.id);
+  }
+  const uniqueSorted = [...new Set(values)].sort((left, right) => left.localeCompare(right));
+  datalist.innerHTML = uniqueSorted
+    .slice(0, 8000)
+    .map((value) => `<option value="${escapeHtml(value)}"></option>`)
+    .join("");
+}
+
+function resolveNetworkNodeQuery(query: string, graphDataValue: GraphData): GraphNode | null {
+  const raw = query.trim();
+  if (!raw) {
+    return null;
+  }
+
+  const rawLower = raw.toLowerCase();
+  const normalized = normalizeTitle(raw);
+
+  const byExactId = graphDataValue.nodes.find((node) => node.id.toLowerCase() === rawLower);
+  if (byExactId) {
+    return byExactId;
+  }
+
+  if (/^\d+$/.test(raw)) {
+    const animeNodeId = `anime:${Number.parseInt(raw, 10)}`;
+    const byAnimeId = graphDataValue.nodes.find((node) => node.id === animeNodeId);
+    if (byAnimeId) {
+      return byAnimeId;
+    }
+  }
+
+  const byExactLabel = graphDataValue.nodes.find(
+    (node) => normalizeTitle(node.label) === normalized,
+  );
+  if (byExactLabel) {
+    return byExactLabel;
+  }
+
+  const byStartsWith = graphDataValue.nodes.find((node) =>
+    normalizeTitle(node.label).startsWith(normalized),
+  );
+  if (byStartsWith) {
+    return byStartsWith;
+  }
+
+  return (
+    graphDataValue.nodes.find((node) =>
+      normalizeTitle(`${node.label} ${node.id}`).includes(normalized),
+    ) ?? null
+  );
+}
+
+function selectNodeAndFocus(nodeId: string): void {
+  selectedNodeId = nodeId;
+  if (activeView !== "network") {
+    setActiveView("network", false);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        focusNodeInRenderer(nodeId);
+      });
+    });
+    return;
+  }
+  if (!currentGraph || !currentGraph.hasNode(nodeId)) {
+    rerenderGraph();
+    window.requestAnimationFrame(() => {
+      focusNodeInRenderer(nodeId);
+    });
+    return;
+  }
+  focusNodeInRenderer(nodeId);
+}
+
+function focusNodeInRenderer(nodeId: string): void {
+  if (!currentGraph || !renderer || !currentGraph.hasNode(nodeId)) {
+    return;
+  }
+  renderInspectPanel(nodeId);
+
+  const attrs = currentGraph.getNodeAttributes(nodeId) as Record<string, unknown>;
+  const x = Number(attrs.x);
+  const y = Number(attrs.y);
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    const camera = renderer.getCamera();
+    camera.animate({ x, y, ratio: 0.32 }, { duration: 360 });
+  }
+  renderer.refresh();
+}
+
 function buildRecommendationIndex(graphDataValue: GraphData): RecommendationIndex {
   const animeList: AnimeInfo[] = [];
   const animeByNodeId = new Map<string, AnimeInfo>();
@@ -1202,15 +1540,24 @@ function renderGraph(
     labelRenderedSizeThreshold: 14,
     allowInvalidContainer: false,
   });
+  applySelectionReducers();
 
   renderer.on("clickNode", (event) => {
     selectedNodeId = event.node;
     renderInspectPanel(event.node);
+    networkSearchMessage.textContent = `Focused: ${event.node}`;
+    if (renderer) {
+      renderer.refresh();
+    }
   });
 
   renderer.on("clickStage", () => {
     selectedNodeId = null;
+    networkSearchMessage.textContent = "";
     renderInspectPanel(null);
+    if (renderer) {
+      renderer.refresh();
+    }
   });
 
   const visibleUsers = countNodesByType(graph, "user");
@@ -1226,6 +1573,7 @@ function renderGraph(
 
   if (selectedNodeId && graph.hasNode(selectedNodeId)) {
     renderInspectPanel(selectedNodeId);
+    focusNodeInRenderer(selectedNodeId);
   } else {
     selectedNodeId = null;
     renderInspectPanel(null);
@@ -1519,6 +1867,62 @@ function applyLayout(graph: Graph): void {
   sanitizeCoordinates(graph);
 }
 
+function applySelectionReducers(): void {
+  if (!renderer || !currentGraph) {
+    return;
+  }
+
+  renderer.setSetting("nodeReducer", (node, data) => {
+    if (!selectedNodeId || !currentGraph || !currentGraph.hasNode(selectedNodeId)) {
+      return data;
+    }
+
+    const selected = selectedNodeId;
+    if (node === selected) {
+      return {
+        ...data,
+        zIndex: 2,
+        size: ((data.size as number) ?? 1) * 1.35,
+        color: "#ffd166",
+      };
+    }
+
+    const connected =
+      currentGraph.hasEdge(node, selected) || currentGraph.hasEdge(selected, node);
+    if (connected) {
+      return {
+        ...data,
+        zIndex: 1,
+      };
+    }
+
+    return {
+      ...data,
+      color: "#4f607388",
+      label: "",
+    };
+  });
+
+  renderer.setSetting("edgeReducer", (edge, data) => {
+    if (!selectedNodeId || !currentGraph || !currentGraph.hasNode(selectedNodeId)) {
+      return data;
+    }
+    const source = currentGraph.source(edge);
+    const target = currentGraph.target(edge);
+    if (source === selectedNodeId || target === selectedNodeId) {
+      return {
+        ...data,
+        color: "#ffd166bb",
+        size: ((data.size as number) ?? 1) * 1.3,
+      };
+    }
+    return {
+      ...data,
+      color: "#30415655",
+    };
+  });
+}
+
 function assignRingLayout(graph: Graph): void {
   const userNodes: string[] = [];
   const animeNodes: string[] = [];
@@ -1779,15 +2183,29 @@ function loadRecommendationState(index: RecommendationIndex): {
   mode: RecommendationMode;
   selected: { nodeId: string; weight: number }[];
   modelBlendWeight: number;
+  includeCandidates: string[];
+  excludeCandidates: string[];
 } {
   try {
     const raw = window.localStorage.getItem(RECOMMENDATION_STATE_STORAGE_KEY);
     if (!raw) {
-      return { mode: "graph", selected: [], modelBlendWeight: 0.5 };
+      return {
+        mode: "graph",
+        selected: [],
+        modelBlendWeight: 0.5,
+        includeCandidates: [],
+        excludeCandidates: [],
+      };
     }
     const parsed = JSON.parse(raw) as StoredRecommendationState;
-    if (!parsed || (parsed.version !== 1 && parsed.version !== 2)) {
-      return { mode: "graph", selected: [], modelBlendWeight: 0.5 };
+    if (!parsed || (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3)) {
+      return {
+        mode: "graph",
+        selected: [],
+        modelBlendWeight: 0.5,
+        includeCandidates: [],
+        excludeCandidates: [],
+      };
     }
     const mode = parseRecommendationMode(parsed.mode);
     const modelBlendWeight = clampModelBlendWeight(
@@ -1806,10 +2224,32 @@ function loadRecommendationState(index: RecommendationIndex): {
             weight: clampWatchWeight(Number(entry.weight)),
           }))
       : [];
-    return { mode, selected, modelBlendWeight };
+
+    const includeCandidates = Array.isArray(parsed.includeCandidates)
+      ? parsed.includeCandidates
+          .filter((entry) => typeof entry === "string" && index.animeByNodeId.has(entry))
+      : [];
+    const excludeCandidates = Array.isArray(parsed.excludeCandidates)
+      ? parsed.excludeCandidates
+          .filter((entry) => typeof entry === "string" && index.animeByNodeId.has(entry))
+      : [];
+
+    return {
+      mode,
+      selected,
+      modelBlendWeight,
+      includeCandidates,
+      excludeCandidates,
+    };
   } catch (error) {
     console.warn("Unable to load saved recommendation state.", error);
-    return { mode: "graph", selected: [], modelBlendWeight: 0.5 };
+    return {
+      mode: "graph",
+      selected: [],
+      modelBlendWeight: 0.5,
+      includeCandidates: [],
+      excludeCandidates: [],
+    };
   }
 }
 
@@ -1822,10 +2262,16 @@ function persistRecommendationState(): void {
         weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
       }));
     const payload: StoredRecommendationState = {
-      version: 2,
+      version: 3,
       mode: recommendationMode,
       selected,
       modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
+      includeCandidates: includeCandidateNodeIds.filter((nodeId) =>
+        recommendationIndex.animeByNodeId.has(nodeId),
+      ),
+      excludeCandidates: excludeCandidateNodeIds.filter((nodeId) =>
+        recommendationIndex.animeByNodeId.has(nodeId),
+      ),
     };
     window.localStorage.setItem(
       RECOMMENDATION_STATE_STORAGE_KEY,

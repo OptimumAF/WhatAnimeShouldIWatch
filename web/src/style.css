@@ -116,6 +116,10 @@ body {
   gap: 0.5rem;
 }
 
+.add-form-compact {
+  margin-top: 0.45rem;
+}
+
 .rec-engine-control {
   margin-top: 0.8rem;
   display: grid;
@@ -338,6 +342,49 @@ body {
   align-items: center;
   gap: 0.4rem;
   color: var(--muted);
+}
+
+.network-search {
+  margin-top: 0.9rem;
+  border: 1px solid #ffffff1f;
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+
+.network-search h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.network-search-form {
+  margin-top: 0.45rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.45rem;
+}
+
+.network-search-form input {
+  border: 1px solid #ffffff36;
+  border-radius: 10px;
+  background: #0b141f;
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+}
+
+.network-search-form button {
+  border: 1px solid #ffffff36;
+  border-radius: 10px;
+  background: #102133;
+  color: var(--text);
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+}
+
+.network-search-message {
+  margin: 0.45rem 0 0;
+  color: #9ec5e5;
+  font-size: 0.78rem;
+  min-height: 1.05rem;
 }
 
 .graph-shell {
