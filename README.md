@@ -118,6 +118,10 @@ npm run ml:export:web
 npm run sync:web
 ```
 
+Scheduled model retraining workflow (weekly + manual trigger):
+
+- `.github/workflows/ml-retrain.yml`
+
 Optional `sync:web` flags:
 - `SYNC_WEB_INCLUDE_DATASET=1` to also copy anonymized ratings for web (`*.compact.json` preferred).
 - `SYNC_WEB_KEEP_JSON=1` to keep plain `.json` next to `.json.gz`.

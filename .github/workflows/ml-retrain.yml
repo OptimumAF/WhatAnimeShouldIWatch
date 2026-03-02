@@ -1,0 +1,88 @@
+name: ML Periodic Retrain
+
+on:
+  schedule:
+    # Every Monday at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: "Training epochs"
+        required: false
+        default: "12"
+      factors:
+        description: "Latent factor dimension"
+        required: false
+        default: "96"
+
+permissions:
+  contents: read
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ml/requirements.txt
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r ml/requirements.txt
+
+      - name: Verify training data files
+        run: |
+          if [ ! -f data/anonymized-ratings.compact.json ] && [ ! -f data/anonymized-ratings.json ]; then
+            echo "Missing ratings export. Expected data/anonymized-ratings.compact.json or data/anonymized-ratings.json."
+            exit 1
+          fi
+          if [ ! -f data/graph.compact.json ] && [ ! -f data/graph.json ]; then
+            echo "Missing graph export. Expected data/graph.compact.json or data/graph.json."
+            exit 1
+          fi
+
+      - name: Train graph MF model
+        run: |
+          EPOCHS="${{ github.event.inputs.epochs || '12' }}"
+          FACTORS="${{ github.event.inputs.factors || '96' }}"
+          python ml/train_graph_mf.py \
+            --out-dir models/graph_mf_ci \
+            --epochs "$EPOCHS" \
+            --factors "$FACTORS"
+
+      - name: Export web model artifact
+        run: |
+          python ml/export_model_web.py \
+            --model models/graph_mf_ci/model.npz \
+            --out models/graph_mf_ci/model-mf-web.compact.json
+
+      - name: Capture run metadata
+        run: |
+          echo "RUN_TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_ENV"
+          cp models/graph_mf_ci/metrics.json models/graph_mf_ci/metrics-report.json
+
+      - name: Upload retrain artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-retrain-${{ env.RUN_TIMESTAMP }}
+          path: |
+            models/graph_mf_ci/model.npz
+            models/graph_mf_ci/metrics.json
+            models/graph_mf_ci/metrics-report.json
+            models/graph_mf_ci/model-mf-web.compact.json
+          if-no-files-found: error

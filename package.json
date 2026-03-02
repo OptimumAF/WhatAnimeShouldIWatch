@@ -16,6 +16,8 @@
     "build:web": "npm run build --workspace web",
     "build": "npm run build:graph --workspace pipeline -- && npm run sync:web && npm run build --workspace web",
     "ml:train": "python ml/train_graph_mf.py",
+    "ml:search": "python ml/search_graph_mf_optuna.py",
+    "ml:content:build": "python ml/build_content_features.py",
     "ml:recommend": "python ml/recommend_graph_mf.py",
     "ml:export:web": "python ml/export_model_web.py"
   }
