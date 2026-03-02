@@ -18,6 +18,7 @@
     "ml:train": "python ml/train_graph_mf.py",
     "ml:search": "python ml/search_graph_mf_optuna.py",
     "ml:content:build": "python ml/build_content_features.py",
+    "ml:gnn:eval": "python ml/eval_gnn_lightgcn.py",
     "ml:recommend": "python ml/recommend_graph_mf.py",
     "ml:export:web": "python ml/export_model_web.py"
   }

@@ -118,6 +118,12 @@ npm run ml:export:web
 npm run sync:web
 ```
 
+Optional GNN ranking baseline evaluation:
+
+```bash
+npm run ml:gnn:eval -- --epochs 12 --layers 3
+```
+
 Scheduled model retraining workflow (weekly + manual trigger):
 
 - `.github/workflows/ml-retrain.yml`

@@ -135,3 +135,22 @@ Control blend behavior:
 ```bash
 python ml/recommend_graph_mf.py --watched "1535,9253" --content-blend 0.35
 ```
+
+## GNN Ranking Evaluation (LightGCN)
+
+Evaluate a graph neural ranking baseline:
+
+```bash
+python ml/eval_gnn_lightgcn.py --epochs 12 --layers 3 --factors 64 --top-k 20
+```
+
+Or via npm:
+
+```bash
+npm run ml:gnn:eval -- --epochs 12 --layers 3
+```
+
+Outputs (default `models/gnn_lightgcn/`):
+
+- `model-lightgcn.npz`
+- `metrics-lightgcn.json`
