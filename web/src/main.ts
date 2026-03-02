@@ -8,6 +8,7 @@ type EdgeType = "user-anime" | "anime-anime";
 type AppView = "recommendations" | "network";
 type RecommendationMode = "graph" | "model" | "hybrid";
 type UsernameImportProvider = "anilist" | "mal";
+type ThemeMode = "dark" | "light";
 
 interface GraphNode {
   id: string;
@@ -182,6 +183,7 @@ const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
 const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
+const THEME_STORAGE_KEY = "wasiw.theme.v1";
 
 interface StoredRecommendationState {
   version: number;
@@ -213,6 +215,7 @@ app.innerHTML = `
       <nav class="topnav" aria-label="Primary">
         <button id="nav-recommendations" class="nav-btn" type="button">Recommendations</button>
         <button id="nav-network" class="nav-btn" type="button">Network Explorer</button>
+        <button id="theme-toggle" class="nav-btn theme-btn" type="button" aria-label="Toggle theme">Theme</button>
       </nav>
     </header>
 
@@ -244,7 +247,7 @@ app.innerHTML = `
             </form>
             <datalist id="anime-options"></datalist>
 
-            <p id="rec-message" class="rec-message"></p>
+            <p id="rec-message" class="rec-message" role="status" aria-live="polite"></p>
 
             <div class="selected-head">
               <h3>Watched List</h3>
@@ -336,10 +339,10 @@ app.innerHTML = `
               </label>
               <div class="rec-filter-actions">
                 <button id="clear-rec-filters" type="button" class="ghost-btn">Clear Filters</button>
-                <span id="metadata-status" class="metadata-status">Metadata: idle</span>
+                <span id="metadata-status" class="metadata-status" role="status" aria-live="polite">Metadata: idle</span>
               </div>
             </section>
-            <p id="rec-summary" class="muted">Add at least one anime to start.</p>
+            <p id="rec-summary" class="muted" role="status" aria-live="polite">Add at least one anime to start.</p>
             <ol id="rec-results" class="rec-results"></ol>
 
             <section class="seasonal">
@@ -347,7 +350,7 @@ app.innerHTML = `
                 <h3>Seasonal Trending</h3>
                 <button id="refresh-seasonal" type="button" class="ghost-btn">Refresh</button>
               </div>
-              <p id="seasonal-status" class="muted">Loading current season...</p>
+              <p id="seasonal-status" class="muted" role="status" aria-live="polite">Loading current season...</p>
               <ul id="seasonal-list" class="seasonal-list"></ul>
             </section>
           </section>
@@ -385,7 +388,7 @@ app.innerHTML = `
                 <button type="submit">Find</button>
               </form>
               <datalist id="network-node-options"></datalist>
-              <p id="network-search-message" class="network-search-message"></p>
+              <p id="network-search-message" class="network-search-message" role="status" aria-live="polite"></p>
             </section>
 
             <section class="inspect">
@@ -416,6 +419,7 @@ app.innerHTML = `
 
 const navRecommendationsBtn = mustElement<HTMLButtonElement>("#nav-recommendations");
 const navNetworkBtn = mustElement<HTMLButtonElement>("#nav-network");
+const themeToggleBtn = mustElement<HTMLButtonElement>("#theme-toggle");
 const viewRecommendations = mustElement<HTMLElement>("#view-recommendations");
 const viewNetwork = mustElement<HTMLElement>("#view-network");
 
@@ -499,6 +503,10 @@ const animeMetadataUnavailable = new Set<number>();
 const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
 let seasonalItems: SeasonalAnimeItem[] = [];
 let seasonalLoadingPromise: Promise<void> | null = null;
+let activeTheme: ThemeMode = loadThemeModePreference();
+const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+applyTheme(activeTheme);
 
 const graphData = await fetchGraph();
 const recommendationIndex = buildRecommendationIndex(graphData);
@@ -553,6 +561,12 @@ navRecommendationsBtn.addEventListener("click", () => {
 
 navNetworkBtn.addEventListener("click", () => {
   setActiveView("network", false);
+});
+
+themeToggleBtn.addEventListener("click", () => {
+  activeTheme = activeTheme === "dark" ? "light" : "dark";
+  applyTheme(activeTheme);
+  persistThemeModePreference(activeTheme);
 });
 
 addAnimeForm.addEventListener("submit", (event) => {
@@ -2656,7 +2670,10 @@ function focusNodeInRenderer(nodeId: string): void {
   const y = Number(attrs.y);
   if (Number.isFinite(x) && Number.isFinite(y)) {
     const camera = renderer.getCamera();
-    camera.animate({ x, y, ratio: 0.32 }, { duration: 360 });
+    camera.animate(
+      { x, y, ratio: 0.32 },
+      { duration: prefersReducedMotion() ? 0 : 360 },
+    );
   }
   renderer.refresh();
 }
@@ -3468,6 +3485,43 @@ function renderModelBlendValue(): void {
 
 function setBlendControlVisibility(): void {
   recBlendControl.hidden = recommendationMode !== "hybrid";
+}
+
+function loadThemeModePreference(): ThemeMode {
+  try {
+    const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (raw === "dark" || raw === "light") {
+      return raw;
+    }
+  } catch (error) {
+    console.warn("Unable to read saved theme preference.", error);
+  }
+
+  if (window.matchMedia("(prefers-color-scheme: light)").matches) {
+    return "light";
+  }
+  return "dark";
+}
+
+function persistThemeModePreference(theme: ThemeMode): void {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (error) {
+    console.warn("Unable to persist theme preference.", error);
+  }
+}
+
+function applyTheme(theme: ThemeMode): void {
+  document.documentElement.dataset.theme = theme;
+  themeToggleBtn.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
+  themeToggleBtn.setAttribute(
+    "aria-label",
+    theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+  );
+}
+
+function prefersReducedMotion(): boolean {
+  return reduceMotionMediaQuery.matches;
 }
 
 function loadRecommendationState(index: RecommendationIndex): {
