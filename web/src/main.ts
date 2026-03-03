@@ -190,6 +190,8 @@ const THEME_STORAGE_KEY = "wasiw.theme.v1";
 const CONTRAST_STORAGE_KEY = "wasiw.contrast.v1";
 const HELP_TIPS_STORAGE_KEY = "wasiw.helpTips.v1";
 const HELP_TIPS_VERSION = 1;
+const COMMAND_HISTORY_STORAGE_KEY = "wasiw.commandHistory.v1";
+const COMMAND_HISTORY_LIMIT = 6;
 
 interface StoredRecommendationState {
   version: number;
@@ -220,6 +222,11 @@ interface CommandAction {
   shortcutLabel?: string;
   keywords: string[];
   run: () => void;
+}
+
+interface CommandSection {
+  group: string;
+  actions: CommandAction[];
 }
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -685,6 +692,7 @@ let helpTipsDismissed = loadHelpTipsDismissed();
 let commandPaletteOpen = false;
 let commandSelectionIndex = 0;
 let commandFilteredActions: CommandAction[] = [];
+let commandHistoryIds = loadCommandHistoryIds();
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
   `(max-width: ${NETWORK_MOBILE_COMPACT_MAX_WIDTH}px)`,
@@ -1280,6 +1288,7 @@ function runCommandById(id: string): void {
   if (!command) {
     return;
   }
+  recordCommandHistory(id);
   command.run();
 }
 
@@ -1400,13 +1409,16 @@ function moveCommandSelection(delta: number): void {
 }
 
 function executeCommand(command: CommandAction): void {
+  recordCommandHistory(command.id);
   closeCommandPalette();
   command.run();
 }
 
 function renderCommandPaletteList(): void {
   const query = normalizeTitle(commandInput.value);
-  commandFilteredActions = filterCommandActions(query);
+  const filtered = filterCommandActions(query);
+  const sections = buildCommandSections(query, filtered);
+  commandFilteredActions = sections.flatMap((section) => section.actions);
   if (commandFilteredActions.length === 0) {
     commandSelectionIndex = 0;
     commandListEl.innerHTML = `<li class="command-empty">No command matches "${escapeHtml(query)}".</li>`;
@@ -1418,7 +1430,7 @@ function renderCommandPaletteList(): void {
   }
 
   let flatIndex = 0;
-  commandListEl.innerHTML = groupCommandActions(commandFilteredActions)
+  commandListEl.innerHTML = sections
     .map((section) => {
       const items = section.actions
         .map((command) => {
@@ -1438,7 +1450,8 @@ function renderCommandPaletteList(): void {
           `;
         })
         .join("");
-      return `<li class="command-group">${escapeHtml(section.group)}</li>${items}`;
+      const sectionClass = section.group === "Recent" ? "command-group recent" : "command-group";
+      return `<li class="${sectionClass}">${escapeHtml(section.group)}</li>${items}`;
     })
     .join("");
 }
@@ -1454,9 +1467,45 @@ function filterCommandActions(query: string): CommandAction[] {
   });
 }
 
+function buildCommandSections(
+  query: string,
+  filtered: CommandAction[],
+): CommandSection[] {
+  if (query.length > 0 || commandHistoryIds.length === 0) {
+    return groupCommandActions(filtered);
+  }
+
+  const byId = new Map(commandActions.map((command) => [command.id, command]));
+  const seen = new Set<string>();
+  const recentActions: CommandAction[] = [];
+  for (const commandId of commandHistoryIds) {
+    if (seen.has(commandId)) {
+      continue;
+    }
+    seen.add(commandId);
+    const command = byId.get(commandId);
+    if (!command) {
+      continue;
+    }
+    recentActions.push(command);
+  }
+
+  const recentIds = new Set(recentActions.map((command) => command.id));
+  const remaining = filtered.filter((command) => !recentIds.has(command.id));
+  const sections: CommandSection[] = [];
+  if (recentActions.length > 0) {
+    sections.push({
+      group: "Recent",
+      actions: recentActions,
+    });
+  }
+  sections.push(...groupCommandActions(remaining));
+  return sections;
+}
+
 function groupCommandActions(
   actions: CommandAction[],
-): Array<{ group: CommandGroup; actions: CommandAction[] }> {
+): CommandSection[] {
   const sections = new Map<CommandGroup, CommandAction[]>([
     ["Navigation", []],
     ["Display", []],
@@ -1471,6 +1520,41 @@ function groupCommandActions(
       group,
       actions: groupedActions,
     }));
+}
+
+function loadCommandHistoryIds(): string[] {
+  try {
+    const raw = window.localStorage.getItem(COMMAND_HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+      .slice(0, COMMAND_HISTORY_LIMIT);
+  } catch (error) {
+    console.warn("Unable to load command history.", error);
+    return [];
+  }
+}
+
+function persistCommandHistoryIds(history: string[]): void {
+  try {
+    window.localStorage.setItem(COMMAND_HISTORY_STORAGE_KEY, JSON.stringify(history));
+  } catch (error) {
+    console.warn("Unable to persist command history.", error);
+  }
+}
+
+function recordCommandHistory(commandId: string): void {
+  commandHistoryIds = [commandId, ...commandHistoryIds.filter((id) => id !== commandId)].slice(
+    0,
+    COMMAND_HISTORY_LIMIT,
+  );
+  persistCommandHistoryIds(commandHistoryIds);
 }
 
 function parseYearFilterValue(raw: string): number | null {

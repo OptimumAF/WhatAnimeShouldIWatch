@@ -339,6 +339,10 @@ body.palette-open {
   margin-top: 0;
 }
 
+.command-group.recent {
+  color: var(--accent);
+}
+
 .command-item {
   width: 100%;
   display: flex;
