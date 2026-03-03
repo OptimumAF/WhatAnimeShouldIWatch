@@ -1452,6 +1452,7 @@ function renderCommandPaletteList(): void {
           const selected = flatIndex === commandSelectionIndex;
           const quickIndex = flatIndex + 1;
           const quickIndexLabel = quickIndex <= 9 ? String(quickIndex) : "";
+          const highlightedLabel = highlightCommandLabel(command.label, query);
           flatIndex += 1;
           return `
             <li>
@@ -1462,7 +1463,7 @@ function renderCommandPaletteList(): void {
                       ? `<span class="command-item-index">${escapeHtml(quickIndexLabel)}</span>`
                       : ""
                   }
-                  <span class="command-item-label">${escapeHtml(command.label)}</span>
+                  <span class="command-item-label">${highlightedLabel}</span>
                 </span>
                 ${
                   command.shortcutLabel
@@ -1561,6 +1562,71 @@ function scoreSubsequenceMatch(token: string, haystack: string): number {
   const gapPenalty = Math.max(0, span - token.length);
   const positionBonus = matchedPositions[0] === 0 ? 6 : matchedPositions[0] <= 2 ? 3 : 0;
   return Math.max(12, 54 - Math.min(gapPenalty, 34) + positionBonus);
+}
+
+function highlightCommandLabel(label: string, normalizedQuery: string): string {
+  if (!normalizedQuery) {
+    return escapeHtml(label);
+  }
+
+  const tokens = normalizedQuery.split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return escapeHtml(label);
+  }
+
+  const lowerLabel = label.toLowerCase();
+  const scores = new Array<number>(label.length).fill(0);
+
+  for (const token of tokens) {
+    const contiguousStart = lowerLabel.indexOf(token);
+    if (contiguousStart >= 0) {
+      for (
+        let index = contiguousStart;
+        index < contiguousStart + token.length && index < scores.length;
+        index += 1
+      ) {
+        scores[index] += 2;
+      }
+      continue;
+    }
+
+    const positions = findSubsequencePositions(token, lowerLabel);
+    if (positions.length === token.length) {
+      for (const position of positions) {
+        if (position >= 0 && position < scores.length) {
+          scores[position] += 1;
+        }
+      }
+    }
+  }
+
+  let html = "";
+  let start = 0;
+  while (start < label.length) {
+    const highlighted = scores[start] > 0;
+    let end = start + 1;
+    while (end < label.length && (scores[end] > 0) === highlighted) {
+      end += 1;
+    }
+    const segment = escapeHtml(label.slice(start, end));
+    html += highlighted ? `<mark class="command-match">${segment}</mark>` : segment;
+    start = end;
+  }
+  return html;
+}
+
+function findSubsequencePositions(token: string, value: string): number[] {
+  const positions: number[] = [];
+  let searchFrom = 0;
+  for (const char of token) {
+    const position = value.indexOf(char, searchFrom);
+    if (position < 0) {
+      return [];
+    }
+    positions.push(position);
+    searchFrom = position + 1;
+  }
+  return positions;
 }
 
 function buildCommandSections(

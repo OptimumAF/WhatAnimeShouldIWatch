@@ -387,6 +387,13 @@ body.palette-open {
   white-space: nowrap;
 }
 
+.command-match {
+  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0 0.08rem;
+}
+
 .command-item-shortcut {
   border: 1px solid var(--line-strong);
   border-radius: 999px;
