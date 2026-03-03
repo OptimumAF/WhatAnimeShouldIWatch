@@ -16,6 +16,7 @@ python -m pip install -r ml/requirements.txt
 ## Train
 
 ```bash
+npm run data:fetch:release
 python ml/train_graph_mf.py
 ```
 

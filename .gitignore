@@ -6,8 +6,15 @@ dist/
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
+data/*.json
+data/*.json.gz
+!data/.gitkeep
+!data/README.md
 
 web/dist/
+web/public/data/*.json
+web/public/data/*.json.gz
+!web/public/data/.gitkeep
 desktop/target/
 models/
 __pycache__/

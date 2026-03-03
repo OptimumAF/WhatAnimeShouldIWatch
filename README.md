@@ -103,6 +103,7 @@ Graph rules implemented:
 ## 3) Run Web App
 
 ```bash
+npm run data:fetch:release
 npm run sync:web
 npm run dev:web
 ```
@@ -131,6 +132,22 @@ Scheduled model retraining workflow (weekly + manual trigger):
 Optional `sync:web` flags:
 - `SYNC_WEB_INCLUDE_DATASET=1` to also copy anonymized ratings for web (`*.compact.json` preferred).
 - `SYNC_WEB_KEEP_JSON=1` to keep plain `.json` next to `.json.gz`.
+
+## Data Artifacts In Releases
+
+Large JSON artifacts are no longer intended to be versioned in git.
+Use GitHub release assets (`data-*` tags) as the source of truth.
+
+Download into local `data/`:
+
+```bash
+npm run data:fetch:release
+```
+
+Publish/update data release assets from your local `data/*.compact.json` files:
+
+- Run workflow: `.github/workflows/publish-data-release.yml`
+- Default release tag: `data-latest`
 
 ## 4) Build Static Site for GitHub Pages
 

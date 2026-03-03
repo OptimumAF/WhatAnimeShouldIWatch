@@ -1,0 +1,86 @@
+name: Publish Data Release Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag for data assets"
+        required: false
+        default: "data-latest"
+      release_name:
+        description: "Release title"
+        required: false
+        default: "Data Assets (latest)"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required data files
+        run: |
+          test -f data/graph.compact.json
+          test -f data/anonymized-ratings.compact.json
+
+      - name: Build release asset bundle
+        run: |
+          mkdir -p release-data
+
+          gzip -c data/graph.compact.json > release-data/graph.compact.json.gz
+          gzip -c data/anonymized-ratings.compact.json > release-data/anonymized-ratings.compact.json.gz
+
+          if [ -f data/model-mf-web.compact.json ]; then
+            gzip -c data/model-mf-web.compact.json > release-data/model-mf-web.compact.json.gz
+          fi
+
+          (
+            cd release-data
+            sha256sum *.gz > SHA256SUMS.txt
+          )
+
+      - name: Write asset manifest
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const dir = path.resolve("release-data");
+          const files = fs
+            .readdirSync(dir)
+            .filter((name) => name.endsWith(".gz"))
+            .sort();
+          const manifest = {
+            generatedAt: new Date().toISOString(),
+            files: files.map((name) => {
+              const stat = fs.statSync(path.join(dir, name));
+              return { name, bytes: stat.size };
+            }),
+          };
+          fs.writeFileSync(
+            path.join(dir, "data-manifest.json"),
+            JSON.stringify(manifest, null, 2),
+            "utf8",
+          );
+          NODE
+
+      - name: Publish/Update GitHub release
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: |
+            release-data/*.gz
+            release-data/data-manifest.json
+            release-data/SHA256SUMS.txt
+          draft: false
+          generateReleaseNotes: false
+          name: ${{ github.event.inputs.release_name || 'Data Assets (latest)' }}
+          prerelease: false
+          replacesArtifacts: true
+          tag: ${{ github.event.inputs.tag_name || 'data-latest' }}
