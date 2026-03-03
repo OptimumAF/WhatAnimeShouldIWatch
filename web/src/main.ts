@@ -181,6 +181,7 @@ const METADATA_PREFETCH_WITH_FILTER_LIMIT = 30;
 const METADATA_PREFETCH_CONCURRENCY = 3;
 const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
+const QUICKSTART_SEASONAL_PICK_LIMIT = 3;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
 const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
 const THEME_STORAGE_KEY = "wasiw.theme.v1";
@@ -218,19 +219,44 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 app.innerHTML = `
   <div class="app-shell">
     <header class="topbar">
-      <div>
+      <div class="brand">
+        <p class="eyebrow">Graph + ML Recommendation Lab</p>
         <h1>What Anime Should I Watch</h1>
         <p>Recommendation-first anime discovery powered by the rating network.</p>
       </div>
       <nav class="topnav" aria-label="Primary">
-        <button id="nav-recommendations" class="nav-btn" type="button">Recommendations</button>
-        <button id="nav-network" class="nav-btn" type="button">Network Explorer</button>
+        <button id="nav-recommendations" class="nav-btn" type="button" aria-label="Open recommendations page">
+          <span class="nav-kicker">01</span>
+          <span>Recommendations</span>
+        </button>
+        <button id="nav-network" class="nav-btn" type="button" aria-label="Open network explorer page">
+          <span class="nav-kicker">02</span>
+          <span>Network Explorer</span>
+        </button>
         <button id="theme-toggle" class="nav-btn theme-btn" type="button" aria-label="Toggle theme">Theme</button>
       </nav>
     </header>
 
     <main>
       <section id="view-recommendations" class="view">
+        <section class="panel intro-panel">
+          <div class="intro-copy">
+            <h2>Start in 3 Steps</h2>
+            <p class="muted">
+              Add what you watched, tune scoring, then review ranked picks with explainable reasons.
+            </p>
+          </div>
+          <ol class="intro-steps">
+            <li><strong>Step 1:</strong> Add at least one watched anime.</li>
+            <li><strong>Step 2:</strong> Pick Graph, Model, or Hybrid ranking.</li>
+            <li><strong>Step 3:</strong> Use filters and inspect recommendation reasons.</li>
+          </ol>
+          <div class="intro-actions">
+            <button id="quickstart-seasonal" type="button" class="primary-btn">Use 3 Seasonal Picks</button>
+            <button id="quickstart-network" type="button" class="ghost-btn">Open Network Explorer</button>
+          </div>
+        </section>
+
         <div class="recommend-layout">
           <section class="card">
             <h2>Find Your Next Anime</h2>
@@ -252,106 +278,114 @@ app.innerHTML = `
             <p id="rec-engine-status" class="rec-engine-status">Using graph recommendations.</p>
 
             <form id="add-anime-form" class="add-form">
-              <input id="anime-input" type="text" list="anime-options" autocomplete="off" placeholder="Type an anime title" />
-              <button type="submit">Add</button>
+              <input id="anime-input" type="text" list="anime-options" autocomplete="off" placeholder="Type an anime title" aria-label="Anime title input" />
+              <button type="submit" class="primary-btn">Add</button>
             </form>
             <datalist id="anime-options"></datalist>
 
             <p id="rec-message" class="rec-message" role="status" aria-live="polite"></p>
 
             <div class="selected-head">
-              <h3>Watched List</h3>
+              <h3>Watched List <span id="watched-count" class="count-pill">0</span></h3>
               <button id="clear-watched" type="button" class="ghost-btn">Clear All</button>
             </div>
             <div id="selected-anime" class="selected-anime"></div>
 
-            <section class="bulk-import">
-              <h3>Bulk Import</h3>
-              <p class="muted">One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>.</p>
-              <form id="bulk-import-form" class="bulk-import-form">
-                <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
-                <button type="submit">Import Watched Entries</button>
-              </form>
-            </section>
+            <details class="accordion">
+              <summary>Import & Profiles</summary>
+              <section class="bulk-import">
+                <h3>Bulk Import</h3>
+                <p class="muted">One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>.</p>
+                <form id="bulk-import-form" class="bulk-import-form">
+                  <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
+                  <button type="submit">Import Watched Entries</button>
+                </form>
+              </section>
 
-            <section class="username-import">
-              <h3>Import From Username</h3>
-              <p class="muted">Load rated anime from a public AniList or MAL profile.</p>
-              <form id="username-import-form" class="username-import-form">
-                <select id="username-import-provider" aria-label="Import provider">
-                  <option value="anilist" selected>AniList</option>
-                  <option value="mal">MyAnimeList (MAL)</option>
-                </select>
-                <input id="username-import-input" type="text" autocomplete="off" placeholder="Enter username" />
-                <button id="username-import-submit" type="submit">Import User List</button>
-              </form>
-            </section>
+              <section class="username-import">
+                <h3>Import From Username</h3>
+                <p class="muted">Load rated anime from a public AniList or MAL profile.</p>
+                <form id="username-import-form" class="username-import-form">
+                  <select id="username-import-provider" aria-label="Import provider">
+                    <option value="anilist" selected>AniList</option>
+                    <option value="mal">MyAnimeList (MAL)</option>
+                  </select>
+                  <input id="username-import-input" type="text" autocomplete="off" placeholder="Enter username" />
+                  <button id="username-import-submit" type="submit">Import User List</button>
+                </form>
+              </section>
 
-            <section class="profiles">
-              <h3>Saved Profiles</h3>
-              <p class="muted">Save and reload named recommendation setups.</p>
-              <form id="profile-save-form" class="profile-save-form">
-                <input id="profile-name-input" type="text" autocomplete="off" placeholder="Profile name" />
-                <button id="profile-save-submit" type="submit">Save Profile</button>
-              </form>
-              <div class="profile-load-row">
-                <select id="profile-select" aria-label="Saved profile"></select>
-                <button id="profile-load-btn" type="button">Load</button>
-                <button id="profile-delete-btn" type="button" class="ghost-btn">Delete</button>
+              <section class="profiles">
+                <h3>Saved Profiles</h3>
+                <p class="muted">Save and reload named recommendation setups.</p>
+                <form id="profile-save-form" class="profile-save-form">
+                  <input id="profile-name-input" type="text" autocomplete="off" placeholder="Profile name" />
+                  <button id="profile-save-submit" type="submit">Save Profile</button>
+                </form>
+                <div class="profile-load-row">
+                  <select id="profile-select" aria-label="Saved profile"></select>
+                  <button id="profile-load-btn" type="button">Load</button>
+                  <button id="profile-delete-btn" type="button" class="ghost-btn">Delete</button>
+                </div>
+              </section>
+            </details>
+
+            <details class="accordion">
+              <summary>Candidate Overrides</summary>
+              <div class="selected-head">
+                <h3>Include Candidates</h3>
+                <button id="clear-include" type="button" class="ghost-btn">Clear</button>
               </div>
-            </section>
+              <form id="add-include-form" class="add-form add-form-compact">
+                <input id="include-input" type="text" list="anime-options" autocomplete="off" placeholder="Add anime to force-include" />
+                <button type="submit">Add</button>
+              </form>
+              <div id="include-anime" class="selected-anime"></div>
 
-            <div class="selected-head">
-              <h3>Include Candidates</h3>
-              <button id="clear-include" type="button" class="ghost-btn">Clear</button>
-            </div>
-            <form id="add-include-form" class="add-form add-form-compact">
-              <input id="include-input" type="text" list="anime-options" autocomplete="off" placeholder="Add anime to force-include" />
-              <button type="submit">Add</button>
-            </form>
-            <div id="include-anime" class="selected-anime"></div>
-
-            <div class="selected-head">
-              <h3>Exclude Candidates</h3>
-              <button id="clear-exclude" type="button" class="ghost-btn">Clear</button>
-            </div>
-            <form id="add-exclude-form" class="add-form add-form-compact">
-              <input id="exclude-input" type="text" list="anime-options" autocomplete="off" placeholder="Add anime to exclude" />
-              <button type="submit">Add</button>
-            </form>
-            <div id="exclude-anime" class="selected-anime"></div>
+              <div class="selected-head">
+                <h3>Exclude Candidates</h3>
+                <button id="clear-exclude" type="button" class="ghost-btn">Clear</button>
+              </div>
+              <form id="add-exclude-form" class="add-form add-form-compact">
+                <input id="exclude-input" type="text" list="anime-options" autocomplete="off" placeholder="Add anime to exclude" />
+                <button type="submit">Add</button>
+              </form>
+              <div id="exclude-anime" class="selected-anime"></div>
+            </details>
           </section>
 
           <section class="card">
             <h2>Top Recommendations</h2>
-            <section class="rec-filters">
-              <h3>Filters</h3>
-              <div class="rec-filter-grid">
-                <label class="control-inline" for="filter-genre">
-                  <span>Genre</span>
-                  <select id="filter-genre">
-                    <option value="">Any</option>
-                  </select>
+            <details class="accordion" open>
+              <summary>Filters</summary>
+              <section class="rec-filters rec-filters-inline">
+                <div class="rec-filter-grid">
+                  <label class="control-inline" for="filter-genre">
+                    <span>Genre</span>
+                    <select id="filter-genre">
+                      <option value="">Any</option>
+                    </select>
+                  </label>
+                  <label class="control-inline" for="filter-year-min">
+                    <span>Year from</span>
+                    <input id="filter-year-min" type="number" min="1900" max="2100" step="1" placeholder="Any" />
+                  </label>
+                  <label class="control-inline" for="filter-year-max">
+                    <span>Year to</span>
+                    <input id="filter-year-max" type="number" min="1900" max="2100" step="1" placeholder="Any" />
+                  </label>
+                </div>
+                <label class="control-inline control-inline-score" for="filter-min-score">
+                  <span>Minimum MAL score</span>
+                  <input id="filter-min-score" type="range" min="0" max="10" step="${METADATA_SCORE_STEP}" value="0" />
+                  <output id="filter-min-score-value">Any</output>
                 </label>
-                <label class="control-inline" for="filter-year-min">
-                  <span>Year from</span>
-                  <input id="filter-year-min" type="number" min="1900" max="2100" step="1" placeholder="Any" />
-                </label>
-                <label class="control-inline" for="filter-year-max">
-                  <span>Year to</span>
-                  <input id="filter-year-max" type="number" min="1900" max="2100" step="1" placeholder="Any" />
-                </label>
-              </div>
-              <label class="control-inline control-inline-score" for="filter-min-score">
-                <span>Minimum MAL score</span>
-                <input id="filter-min-score" type="range" min="0" max="10" step="${METADATA_SCORE_STEP}" value="0" />
-                <output id="filter-min-score-value">Any</output>
-              </label>
-              <div class="rec-filter-actions">
-                <button id="clear-rec-filters" type="button" class="ghost-btn">Clear Filters</button>
-                <span id="metadata-status" class="metadata-status" role="status" aria-live="polite">Metadata: idle</span>
-              </div>
-            </section>
+                <div class="rec-filter-actions">
+                  <button id="clear-rec-filters" type="button" class="ghost-btn">Clear Filters</button>
+                  <span id="metadata-status" class="metadata-status" role="status" aria-live="polite">Metadata: idle</span>
+                </div>
+              </section>
+            </details>
             <p id="rec-summary" class="muted" role="status" aria-live="polite">Add at least one anime to start.</p>
             <ol id="rec-results" class="rec-results"></ol>
 
@@ -373,29 +407,32 @@ app.innerHTML = `
             <h2>Network Explorer</h2>
             <p class="muted">Interact with the graph, inspect node connections, and filter visible edges.</p>
 
-            <div class="stats" id="stats"></div>
+            <details class="accordion network-controls" open>
+              <summary>Visibility Controls</summary>
+              <div class="stats" id="stats"></div>
 
-            <label class="control">
-              <span>Min absolute edge weight</span>
-              <input id="min-weight" type="range" min="0" max="4" value="0" step="0.05" />
-              <output id="min-weight-value">0.00</output>
-            </label>
+              <label class="control" for="min-weight">
+                <span>Min absolute edge weight</span>
+                <input id="min-weight" type="range" min="0" max="4" value="0" step="0.05" aria-label="Minimum absolute edge weight" />
+                <output id="min-weight-value">0.00</output>
+              </label>
 
-            <label class="checkbox">
-              <input id="toggle-anime-edges" type="checkbox" checked />
-              <span>Show anime-to-anime edges</span>
-            </label>
+              <label class="checkbox">
+                <input id="toggle-anime-edges" type="checkbox" checked />
+                <span>Show anime-to-anime edges</span>
+              </label>
 
-            <label class="checkbox">
-              <input id="toggle-users" type="checkbox" />
-              <span>Show user nodes + user-anime edges</span>
-            </label>
+              <label class="checkbox">
+                <input id="toggle-users" type="checkbox" />
+                <span>Show user nodes + user-anime edges</span>
+              </label>
+            </details>
 
             <section class="network-search">
               <h3>Search In Graph</h3>
               <form id="network-search-form" class="network-search-form">
-                <input id="network-search-input" type="text" list="network-node-options" placeholder="Title, anime:ID, or user:ID" />
-                <button type="submit">Find</button>
+                <input id="network-search-input" type="text" list="network-node-options" placeholder="Title, anime:ID, or user:ID" aria-label="Search for anime or user node" />
+                <button type="submit" class="primary-btn">Find</button>
               </form>
               <datalist id="network-node-options"></datalist>
               <p id="network-search-message" class="network-search-message" role="status" aria-live="polite"></p>
@@ -432,6 +469,8 @@ const navNetworkBtn = mustElement<HTMLButtonElement>("#nav-network");
 const themeToggleBtn = mustElement<HTMLButtonElement>("#theme-toggle");
 const viewRecommendations = mustElement<HTMLElement>("#view-recommendations");
 const viewNetwork = mustElement<HTMLElement>("#view-network");
+const quickstartSeasonalBtn = mustElement<HTMLButtonElement>("#quickstart-seasonal");
+const quickstartNetworkBtn = mustElement<HTMLButtonElement>("#quickstart-network");
 
 const addAnimeForm = mustElement<HTMLFormElement>("#add-anime-form");
 const animeInput = mustElement<HTMLInputElement>("#anime-input");
@@ -443,6 +482,7 @@ const recBlendValueEl = mustElement<HTMLOutputElement>("#rec-blend-value");
 const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status");
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
+const watchedCountEl = mustElement<HTMLSpanElement>("#watched-count");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
 const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
 const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
@@ -571,6 +611,14 @@ navRecommendationsBtn.addEventListener("click", () => {
 
 navNetworkBtn.addEventListener("click", () => {
   setActiveView("network", false);
+});
+
+quickstartNetworkBtn.addEventListener("click", () => {
+  setActiveView("network", false);
+});
+
+quickstartSeasonalBtn.addEventListener("click", () => {
+  addSeasonalStarterPicks();
 });
 
 themeToggleBtn.addEventListener("click", () => {
@@ -920,6 +968,43 @@ function addAnimeToWatchedList(anime: AnimeInfo, prefix: string): void {
   recMessageEl.textContent = `${prefix}: ${anime.label}`;
   renderSelectedAnime();
   void updateRecommendations();
+}
+
+function addSeasonalStarterPicks(): void {
+  const candidates = seasonalItems
+    .map((item) => recommendationIndex.animeByAnimeId.get(item.animeId))
+    .filter((anime): anime is AnimeInfo => Boolean(anime))
+    .slice(0, QUICKSTART_SEASONAL_PICK_LIMIT);
+
+  if (candidates.length === 0) {
+    recMessageEl.textContent =
+      "Seasonal list is not ready yet. Try again in a moment or add anime manually.";
+    return;
+  }
+
+  let added = 0;
+  let skipped = 0;
+  for (const anime of candidates) {
+    if (selectedAnimeNodeIds.includes(anime.nodeId)) {
+      skipped += 1;
+      continue;
+    }
+    selectedAnimeNodeIds.push(anime.nodeId);
+    selectedAnimeWeights.set(anime.nodeId, 1);
+    added += 1;
+  }
+
+  if (added === 0) {
+    recMessageEl.textContent = "Those seasonal starter picks are already in your watched list.";
+    return;
+  }
+
+  persistRecommendationState();
+  renderSelectedAnime();
+  void updateRecommendations();
+  recMessageEl.textContent =
+    `Added ${added} seasonal starter ${added === 1 ? "pick" : "picks"}.` +
+    (skipped > 0 ? ` Skipped ${skipped} already-watched item${skipped === 1 ? "" : "s"}.` : "");
 }
 
 function addAnimeFromInput(): void {
@@ -1410,6 +1495,7 @@ function removeSelectedAnime(nodeId: string): void {
 }
 
 function renderSelectedAnime(): void {
+  watchedCountEl.textContent = String(selectedAnimeNodeIds.length);
   if (selectedAnimeNodeIds.length === 0) {
     selectedAnimeEl.innerHTML = `<p class="muted">No anime added yet.</p>`;
     return;
