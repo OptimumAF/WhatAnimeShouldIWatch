@@ -966,6 +966,22 @@ button:hover,
   gap: 1rem;
 }
 
+.network-mobile-toggle {
+  display: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, var(--line-strong) 38%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-soft) 84%, var(--accent) 16%);
+  color: var(--text);
+  padding: 0.5rem 0.9rem;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.network-mobile-toggle[hidden] {
+  display: none !important;
+}
+
 .stats {
   margin: 0.9rem 0;
   padding: 0.8rem;
@@ -1269,8 +1285,33 @@ input[type="range"] {
     grid-template-columns: 1fr;
   }
 
+  .network-mobile-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 0 0.65rem;
+    position: sticky;
+    top: 0.55rem;
+    z-index: 9;
+    backdrop-filter: blur(3px);
+  }
+
   .network-layout {
     min-height: auto;
+  }
+
+  .network-layout.mobile-compact #network-panel {
+    max-height: min(62vh, 680px);
+    overflow: auto;
+  }
+
+  .network-layout.mobile-compact.controls-hidden > #network-panel {
+    display: none;
+  }
+
+  .network-layout.mobile-compact.controls-hidden .graph-shell,
+  .network-layout.mobile-compact.controls-hidden #graph {
+    min-height: 72vh;
   }
 
   .graph-shell,

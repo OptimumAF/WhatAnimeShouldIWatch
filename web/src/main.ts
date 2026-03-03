@@ -182,6 +182,7 @@ const METADATA_PREFETCH_CONCURRENCY = 3;
 const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
 const QUICKSTART_SEASONAL_PICK_LIMIT = 3;
+const NETWORK_MOBILE_COMPACT_MAX_WIDTH = 980;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
 const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
 const THEME_STORAGE_KEY = "wasiw.theme.v1";
@@ -452,8 +453,11 @@ app.innerHTML = `
           </ul>
         </section>
 
-        <div class="network-layout">
-          <aside class="panel">
+        <button id="network-mobile-toggle" type="button" class="network-mobile-toggle" hidden aria-expanded="false">
+          Show Controls
+        </button>
+        <div id="network-layout" class="network-layout">
+          <aside id="network-panel" class="panel">
             <h2>Network Explorer</h2>
             <p class="muted">Interact with the graph, inspect node connections, and filter visible edges.</p>
 
@@ -587,6 +591,9 @@ const seasonalListEl = mustElement<HTMLUListElement>("#seasonal-list");
 const refreshSeasonalBtn = mustElement<HTMLButtonElement>("#refresh-seasonal");
 
 const statsEl = mustElement<HTMLDivElement>("#stats");
+const networkMobileToggleBtn = mustElement<HTMLButtonElement>("#network-mobile-toggle");
+const networkLayoutEl = mustElement<HTMLDivElement>("#network-layout");
+const networkPanelEl = mustElement<HTMLElement>("#network-panel");
 const networkRenderStatusEl = mustElement<HTMLParagraphElement>("#network-render-status");
 const graphShell = mustElement<HTMLElement>("#graph-shell");
 const graphLoadingEl = mustElement<HTMLDivElement>("#graph-loading");
@@ -631,6 +638,10 @@ let seasonalLoadingPromise: Promise<void> | null = null;
 let activeTheme: ThemeMode = loadThemeModePreference();
 let helpTipsDismissed = loadHelpTipsDismissed();
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const networkCompactMediaQuery = window.matchMedia(
+  `(max-width: ${NETWORK_MOBILE_COMPACT_MAX_WIDTH}px)`,
+);
+let networkControlsHiddenOnMobile = true;
 
 applyTheme(activeTheme);
 
@@ -669,6 +680,7 @@ renderProfileOptions(savedProfiles);
 renderFilterControls();
 renderSeasonalList();
 renderContextualTips();
+syncNetworkCompactMode();
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
@@ -702,6 +714,21 @@ themeToggleBtn.addEventListener("click", () => {
   activeTheme = activeTheme === "dark" ? "light" : "dark";
   applyTheme(activeTheme);
   persistThemeModePreference(activeTheme);
+});
+
+networkMobileToggleBtn.addEventListener("click", () => {
+  networkControlsHiddenOnMobile = !networkControlsHiddenOnMobile;
+  applyNetworkCompactControlsState();
+  if (!networkControlsHiddenOnMobile) {
+    networkPanelEl.scrollIntoView({
+      block: "start",
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+    });
+  }
+});
+
+onMediaQueryChange(networkCompactMediaQuery, () => {
+  syncNetworkCompactMode();
 });
 
 tipsToggleBtn.addEventListener("click", () => {
@@ -989,6 +1016,7 @@ function setActiveView(view: AppView, fromHash: boolean): void {
   viewRecommendations.hidden = view !== "recommendations";
   viewNetwork.hidden = view !== "network";
   renderContextualTips();
+  applyNetworkCompactControlsState();
 
   navRecommendationsBtn.classList.toggle("active", view === "recommendations");
   navNetworkBtn.classList.toggle("active", view === "network");
@@ -1008,6 +1036,26 @@ function setActiveView(view: AppView, fromHash: boolean): void {
     graphRenderRunId += 1;
     setGraphLoadingState(false, "Render status: ready.");
   }
+}
+
+function syncNetworkCompactMode(): void {
+  if (!networkCompactMediaQuery.matches) {
+    networkControlsHiddenOnMobile = false;
+  } else if (!networkLayoutEl.classList.contains("mobile-compact")) {
+    networkControlsHiddenOnMobile = true;
+  }
+  applyNetworkCompactControlsState();
+}
+
+function applyNetworkCompactControlsState(): void {
+  const compact = networkCompactMediaQuery.matches;
+  networkLayoutEl.classList.toggle("mobile-compact", compact);
+  networkMobileToggleBtn.hidden = !compact || activeView !== "network";
+
+  const hideControls = compact && networkControlsHiddenOnMobile;
+  networkLayoutEl.classList.toggle("controls-hidden", hideControls);
+  networkMobileToggleBtn.setAttribute("aria-expanded", hideControls ? "false" : "true");
+  networkMobileToggleBtn.textContent = hideControls ? "Show Controls" : "Hide Controls";
 }
 
 function viewFromHash(): AppView {
@@ -3805,6 +3853,25 @@ function persistHelpTipsDismissed(dismissed: boolean): void {
 
 function prefersReducedMotion(): boolean {
   return reduceMotionMediaQuery.matches;
+}
+
+function onMediaQueryChange(
+  mediaQuery: MediaQueryList,
+  listener: () => void,
+): void {
+  try {
+    mediaQuery.addEventListener("change", listener);
+    return;
+  } catch {
+    const legacyMediaQuery = mediaQuery as MediaQueryList & {
+      addListener?: (
+        callback: (this: MediaQueryList, event: MediaQueryListEvent) => void,
+      ) => void;
+    };
+    legacyMediaQuery.addListener?.(() => {
+      listener();
+    });
+  }
 }
 
 function loadRecommendationState(index: RecommendationIndex): {
