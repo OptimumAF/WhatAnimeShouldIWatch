@@ -233,25 +233,26 @@ app.innerHTML = `
         <p class="eyebrow">Graph + ML Recommendation Lab</p>
         <h1>What Anime Should I Watch</h1>
         <p>Recommendation-first anime discovery powered by the rating network.</p>
+        <p class="shortcut-hint">Shortcuts: Alt+1 Recommendations, Alt+2 Network, Alt+/ Focus, Alt+H Tips</p>
       </div>
       <nav class="topnav" aria-label="Primary">
-        <button id="nav-recommendations" class="nav-btn" type="button" aria-label="Open recommendations page">
+        <button id="nav-recommendations" class="nav-btn" type="button" aria-label="Open recommendations page" aria-keyshortcuts="Alt+1">
           <span class="nav-kicker">01</span>
           <span>Recommendations</span>
         </button>
-        <button id="nav-network" class="nav-btn" type="button" aria-label="Open network explorer page">
+        <button id="nav-network" class="nav-btn" type="button" aria-label="Open network explorer page" aria-keyshortcuts="Alt+2">
           <span class="nav-kicker">02</span>
           <span>Network Explorer</span>
         </button>
-        <button id="theme-toggle" class="nav-btn theme-btn" type="button" aria-label="Toggle theme">
+        <button id="theme-toggle" class="nav-btn theme-btn" type="button" aria-label="Toggle theme" aria-keyshortcuts="Alt+T">
           <span class="icon icon-theme" aria-hidden="true"></span>
           <span id="theme-toggle-label">Theme</span>
         </button>
-        <button id="contrast-toggle" class="nav-btn contrast-btn" type="button" aria-label="Toggle high contrast mode">
+        <button id="contrast-toggle" class="nav-btn contrast-btn" type="button" aria-label="Toggle high contrast mode" aria-keyshortcuts="Alt+C">
           <span class="icon icon-contrast" aria-hidden="true"></span>
           <span id="contrast-toggle-label">Contrast: Normal</span>
         </button>
-        <button id="tips-toggle" class="nav-btn tips-btn" type="button" aria-label="Hide help tips" aria-pressed="true">
+        <button id="tips-toggle" class="nav-btn tips-btn" type="button" aria-label="Hide help tips" aria-pressed="true" aria-keyshortcuts="Alt+H">
           <span class="icon icon-help" aria-hidden="true"></span>
           <span id="tips-toggle-label">Hide Tips</span>
         </button>
@@ -269,6 +270,7 @@ app.innerHTML = `
             <li>Start with 2-5 watched anime for stronger signal quality.</li>
             <li>Use <strong>Hybrid</strong> mode when model data is available for best balance.</li>
             <li>Use Include/Exclude overrides to hard-control candidate results.</li>
+            <li>Keyboard: <strong>Alt+/</strong> focuses the main anime input instantly.</li>
           </ul>
         </section>
 
@@ -456,6 +458,7 @@ app.innerHTML = `
             <li>Start with anime-only edges to reduce graph noise, then add users as needed.</li>
             <li>Raise minimum edge weight to highlight stronger similarity clusters.</li>
             <li>Click a node to inspect top weighted neighbors and compare context.</li>
+            <li>Keyboard: <strong>Alt+/</strong> jumps to graph search from anywhere.</li>
           </ul>
         </section>
 
@@ -702,6 +705,10 @@ void loadSeasonalTrending(false);
 
 window.addEventListener("hashchange", () => {
   setActiveView(viewFromHash(), true);
+});
+
+window.addEventListener("keydown", (event) => {
+  handleGlobalShortcut(event);
 });
 
 navRecommendationsBtn.addEventListener("click", () => {
@@ -1078,6 +1085,71 @@ function viewFromHash(): AppView {
   return window.location.hash.toLowerCase() === "#network"
     ? "network"
     : "recommendations";
+}
+
+function handleGlobalShortcut(event: KeyboardEvent): void {
+  if (isTypingTarget(event.target)) {
+    return;
+  }
+  if (!event.altKey || event.metaKey || event.ctrlKey) {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+  switch (key) {
+    case "1":
+      event.preventDefault();
+      navRecommendationsBtn.click();
+      break;
+    case "2":
+      event.preventDefault();
+      navNetworkBtn.click();
+      break;
+    case "t":
+      event.preventDefault();
+      themeToggleBtn.click();
+      break;
+    case "c":
+      event.preventDefault();
+      contrastToggleBtn.click();
+      break;
+    case "h":
+      event.preventDefault();
+      tipsToggleBtn.click();
+      break;
+    case "/":
+    case "?":
+      event.preventDefault();
+      focusPrimaryInputForActiveView();
+      break;
+    default:
+      break;
+  }
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  if (target.closest("textarea, input, select, [contenteditable='true']")) {
+    return true;
+  }
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
+function focusPrimaryInputForActiveView(): void {
+  if (activeView === "network") {
+    if (networkCompactMediaQuery.matches && networkControlsHiddenOnMobile) {
+      networkControlsHiddenOnMobile = false;
+      applyNetworkCompactControlsState();
+    }
+    networkSearchInput.focus();
+    networkSearchInput.select();
+    return;
+  }
+
+  animeInput.focus();
+  animeInput.select();
 }
 
 function parseYearFilterValue(raw: string): number | null {

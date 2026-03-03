@@ -138,6 +138,14 @@ body {
   max-width: 66ch;
 }
 
+.shortcut-hint {
+  margin: 0.34rem 0 0;
+  color: var(--info);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
 .topnav {
   display: flex;
   gap: 0.6rem;
@@ -1312,6 +1320,10 @@ input[type="range"] {
 
   .intro-actions {
     grid-template-columns: 1fr;
+  }
+
+  .shortcut-hint {
+    display: none;
   }
 
   .recommend-layout,
