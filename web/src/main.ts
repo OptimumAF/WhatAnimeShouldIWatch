@@ -289,7 +289,7 @@ app.innerHTML = `
           <button id="command-close" type="button" class="ghost-btn" aria-label="Close command palette">Close</button>
         </div>
         <input id="command-input" type="text" autocomplete="off" placeholder="Type an action (e.g. network, theme, import)" />
-        <p id="command-hint" class="muted command-hint">Enter to run selected action. Esc to close.</p>
+        <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes.</p>
         <ul id="command-list" class="command-list"></ul>
       </section>
     </div>
@@ -784,6 +784,21 @@ commandInput.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     event.preventDefault();
     closeCommandPalette();
+    return;
+  }
+  if (
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    /^[1-9]$/.test(event.key)
+  ) {
+    const index = Number.parseInt(event.key, 10) - 1;
+    const command = commandFilteredActions[index];
+    if (command) {
+      event.preventDefault();
+      executeCommand(command);
+    }
     return;
   }
   if (event.key === "ArrowDown") {
@@ -1435,11 +1450,20 @@ function renderCommandPaletteList(): void {
       const items = section.actions
         .map((command) => {
           const selected = flatIndex === commandSelectionIndex;
+          const quickIndex = flatIndex + 1;
+          const quickIndexLabel = quickIndex <= 9 ? String(quickIndex) : "";
           flatIndex += 1;
           return `
             <li>
               <button type="button" class="command-item${selected ? " selected" : ""}" data-command-id="${escapeHtml(command.id)}">
-                <span class="command-item-label">${escapeHtml(command.label)}</span>
+                <span class="command-item-prefix">
+                  ${
+                    quickIndexLabel
+                      ? `<span class="command-item-index">${escapeHtml(quickIndexLabel)}</span>`
+                      : ""
+                  }
+                  <span class="command-item-label">${escapeHtml(command.label)}</span>
+                </span>
                 ${
                   command.shortcutLabel
                     ? `<span class="command-item-shortcut">${escapeHtml(command.shortcutLabel)}</span>`

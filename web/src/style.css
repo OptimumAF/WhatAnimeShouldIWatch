@@ -359,6 +359,27 @@ body.palette-open {
   font-size: 0.85rem;
 }
 
+.command-item-prefix {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.command-item-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.67rem;
+  color: var(--accent-soft);
+  flex: 0 0 auto;
+}
+
 .command-item-label {
   min-width: 0;
   overflow: hidden;
@@ -379,6 +400,11 @@ body.palette-open {
 .command-item.selected {
   border-color: var(--accent-soft);
   background: var(--surface-active);
+}
+
+.command-item.selected .command-item-index {
+  border-color: color-mix(in srgb, var(--accent-soft) 75%, #fff 25%);
+  color: var(--text);
 }
 
 .command-empty {
