@@ -185,6 +185,8 @@ const QUICKSTART_SEASONAL_PICK_LIMIT = 3;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
 const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
 const THEME_STORAGE_KEY = "wasiw.theme.v1";
+const HELP_TIPS_STORAGE_KEY = "wasiw.helpTips.v1";
+const HELP_TIPS_VERSION = 1;
 
 interface StoredRecommendationState {
   version: number;
@@ -199,6 +201,11 @@ interface RecommendationProfileRecord {
   name: string;
   updatedAt: string;
   state: StoredRecommendationState;
+}
+
+interface StoredHelpTipsState {
+  version: number;
+  dismissed: boolean;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -237,11 +244,27 @@ app.innerHTML = `
           <span class="icon icon-theme" aria-hidden="true"></span>
           <span id="theme-toggle-label">Theme</span>
         </button>
+        <button id="tips-toggle" class="nav-btn tips-btn" type="button" aria-label="Hide help tips" aria-pressed="true">
+          <span class="icon icon-help" aria-hidden="true"></span>
+          <span id="tips-toggle-label">Hide Tips</span>
+        </button>
       </nav>
     </header>
 
     <main>
       <section id="view-recommendations" class="view">
+        <section id="tips-recommendations" class="panel contextual-tip" hidden>
+          <div class="contextual-tip-head">
+            <h3>Quick Tips</h3>
+            <button id="tips-dismiss-recommendations" class="ghost-btn" type="button">Dismiss Tips</button>
+          </div>
+          <ul class="contextual-tip-list">
+            <li>Start with 2-5 watched anime for stronger signal quality.</li>
+            <li>Use <strong>Hybrid</strong> mode when model data is available for best balance.</li>
+            <li>Use Include/Exclude overrides to hard-control candidate results.</li>
+          </ul>
+        </section>
+
         <section class="panel intro-panel">
           <div class="intro-copy">
             <h2>Start in 3 Steps</h2>
@@ -417,6 +440,18 @@ app.innerHTML = `
       </section>
 
       <section id="view-network" class="view" hidden>
+        <section id="tips-network" class="panel contextual-tip" hidden>
+          <div class="contextual-tip-head">
+            <h3>Network Tips</h3>
+            <button id="tips-dismiss-network" class="ghost-btn" type="button">Dismiss Tips</button>
+          </div>
+          <ul class="contextual-tip-list">
+            <li>Start with anime-only edges to reduce graph noise, then add users as needed.</li>
+            <li>Raise minimum edge weight to highlight stronger similarity clusters.</li>
+            <li>Click a node to inspect top weighted neighbors and compare context.</li>
+          </ul>
+        </section>
+
         <div class="network-layout">
           <aside class="panel">
             <h2>Network Explorer</h2>
@@ -493,8 +528,16 @@ const navRecommendationsBtn = mustElement<HTMLButtonElement>("#nav-recommendatio
 const navNetworkBtn = mustElement<HTMLButtonElement>("#nav-network");
 const themeToggleBtn = mustElement<HTMLButtonElement>("#theme-toggle");
 const themeToggleLabelEl = mustElement<HTMLSpanElement>("#theme-toggle-label");
+const tipsToggleBtn = mustElement<HTMLButtonElement>("#tips-toggle");
+const tipsToggleLabelEl = mustElement<HTMLSpanElement>("#tips-toggle-label");
 const viewRecommendations = mustElement<HTMLElement>("#view-recommendations");
 const viewNetwork = mustElement<HTMLElement>("#view-network");
+const tipsRecommendationsEl = mustElement<HTMLElement>("#tips-recommendations");
+const tipsNetworkEl = mustElement<HTMLElement>("#tips-network");
+const tipsDismissRecommendationsBtn = mustElement<HTMLButtonElement>(
+  "#tips-dismiss-recommendations",
+);
+const tipsDismissNetworkBtn = mustElement<HTMLButtonElement>("#tips-dismiss-network");
 const quickstartSeasonalBtn = mustElement<HTMLButtonElement>("#quickstart-seasonal");
 const quickstartNetworkBtn = mustElement<HTMLButtonElement>("#quickstart-network");
 
@@ -586,6 +629,7 @@ const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
 let seasonalItems: SeasonalAnimeItem[] = [];
 let seasonalLoadingPromise: Promise<void> | null = null;
 let activeTheme: ThemeMode = loadThemeModePreference();
+let helpTipsDismissed = loadHelpTipsDismissed();
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 applyTheme(activeTheme);
@@ -624,6 +668,7 @@ renderExcludeCandidates();
 renderProfileOptions(savedProfiles);
 renderFilterControls();
 renderSeasonalList();
+renderContextualTips();
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
@@ -657,6 +702,24 @@ themeToggleBtn.addEventListener("click", () => {
   activeTheme = activeTheme === "dark" ? "light" : "dark";
   applyTheme(activeTheme);
   persistThemeModePreference(activeTheme);
+});
+
+tipsToggleBtn.addEventListener("click", () => {
+  helpTipsDismissed = !helpTipsDismissed;
+  persistHelpTipsDismissed(helpTipsDismissed);
+  renderContextualTips();
+});
+
+tipsDismissRecommendationsBtn.addEventListener("click", () => {
+  helpTipsDismissed = true;
+  persistHelpTipsDismissed(helpTipsDismissed);
+  renderContextualTips();
+});
+
+tipsDismissNetworkBtn.addEventListener("click", () => {
+  helpTipsDismissed = true;
+  persistHelpTipsDismissed(helpTipsDismissed);
+  renderContextualTips();
 });
 
 addAnimeForm.addEventListener("submit", (event) => {
@@ -925,6 +988,7 @@ function setActiveView(view: AppView, fromHash: boolean): void {
   activeView = view;
   viewRecommendations.hidden = view !== "recommendations";
   viewNetwork.hidden = view !== "network";
+  renderContextualTips();
 
   navRecommendationsBtn.classList.toggle("active", view === "recommendations");
   navNetworkBtn.classList.toggle("active", view === "network");
@@ -3692,6 +3756,51 @@ function applyTheme(theme: ThemeMode): void {
     "aria-label",
     theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
   );
+}
+
+function renderContextualTips(): void {
+  const showTips = !helpTipsDismissed;
+  tipsRecommendationsEl.hidden = !showTips || activeView !== "recommendations";
+  tipsNetworkEl.hidden = !showTips || activeView !== "network";
+  tipsToggleBtn.setAttribute("aria-pressed", showTips ? "true" : "false");
+  tipsToggleBtn.setAttribute(
+    "aria-label",
+    showTips ? "Hide help tips" : "Show help tips",
+  );
+  tipsToggleLabelEl.textContent = showTips ? "Hide Tips" : "Show Tips";
+}
+
+function loadHelpTipsDismissed(): boolean {
+  try {
+    const raw = window.localStorage.getItem(HELP_TIPS_STORAGE_KEY);
+    if (!raw) {
+      return false;
+    }
+    const parsed = JSON.parse(raw) as StoredHelpTipsState | null;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      Number(parsed.version) === HELP_TIPS_VERSION &&
+      typeof parsed.dismissed === "boolean"
+    ) {
+      return parsed.dismissed;
+    }
+  } catch (error) {
+    console.warn("Unable to load help tips preference.", error);
+  }
+  return false;
+}
+
+function persistHelpTipsDismissed(dismissed: boolean): void {
+  try {
+    const payload: StoredHelpTipsState = {
+      version: HELP_TIPS_VERSION,
+      dismissed,
+    };
+    window.localStorage.setItem(HELP_TIPS_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Unable to persist help tips preference.", error);
+  }
 }
 
 function prefersReducedMotion(): boolean {
