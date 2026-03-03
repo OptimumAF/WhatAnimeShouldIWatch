@@ -211,6 +211,13 @@ interface StoredHelpTipsState {
   dismissed: boolean;
 }
 
+interface CommandAction {
+  id: string;
+  label: string;
+  keywords: string[];
+  run: () => void;
+}
+
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app container");
@@ -233,7 +240,7 @@ app.innerHTML = `
         <p class="eyebrow">Graph + ML Recommendation Lab</p>
         <h1>What Anime Should I Watch</h1>
         <p>Recommendation-first anime discovery powered by the rating network.</p>
-        <p class="shortcut-hint">Shortcuts: Alt+1 Recommendations, Alt+2 Network, Alt+/ Focus, Alt+H Tips</p>
+        <p class="shortcut-hint">Shortcuts: Alt+1 Recommendations, Alt+2 Network, Ctrl/Cmd+K Commands, Alt+/ Focus</p>
       </div>
       <nav class="topnav" aria-label="Primary">
         <button id="nav-recommendations" class="nav-btn" type="button" aria-label="Open recommendations page" aria-keyshortcuts="Alt+1">
@@ -256,8 +263,25 @@ app.innerHTML = `
           <span class="icon icon-help" aria-hidden="true"></span>
           <span id="tips-toggle-label">Hide Tips</span>
         </button>
+        <button id="commands-toggle" class="nav-btn commands-btn" type="button" aria-label="Open command palette" aria-keyshortcuts="Control+K Meta+K">
+          <span class="icon icon-command" aria-hidden="true"></span>
+          <span>Commands</span>
+        </button>
       </nav>
     </header>
+
+    <div id="command-palette" class="command-palette" hidden aria-hidden="true">
+      <div class="command-backdrop" data-command-close="true"></div>
+      <section class="command-dialog" role="dialog" aria-modal="true" aria-labelledby="command-title">
+        <div class="command-head">
+          <h2 id="command-title">Quick Actions</h2>
+          <button id="command-close" type="button" class="ghost-btn" aria-label="Close command palette">Close</button>
+        </div>
+        <input id="command-input" type="text" autocomplete="off" placeholder="Type an action (e.g. network, theme, import)" />
+        <p id="command-hint" class="muted command-hint">Enter to run selected action. Esc to close.</p>
+        <ul id="command-list" class="command-list"></ul>
+      </section>
+    </div>
 
     <main>
       <section id="view-recommendations" class="view">
@@ -545,6 +569,11 @@ const contrastToggleBtn = mustElement<HTMLButtonElement>("#contrast-toggle");
 const contrastToggleLabelEl = mustElement<HTMLSpanElement>("#contrast-toggle-label");
 const tipsToggleBtn = mustElement<HTMLButtonElement>("#tips-toggle");
 const tipsToggleLabelEl = mustElement<HTMLSpanElement>("#tips-toggle-label");
+const commandsToggleBtn = mustElement<HTMLButtonElement>("#commands-toggle");
+const commandPaletteEl = mustElement<HTMLDivElement>("#command-palette");
+const commandInput = mustElement<HTMLInputElement>("#command-input");
+const commandListEl = mustElement<HTMLUListElement>("#command-list");
+const commandCloseBtn = mustElement<HTMLButtonElement>("#command-close");
 const viewRecommendations = mustElement<HTMLElement>("#view-recommendations");
 const viewNetwork = mustElement<HTMLElement>("#view-network");
 const tipsRecommendationsEl = mustElement<HTMLElement>("#tips-recommendations");
@@ -649,6 +678,9 @@ let seasonalLoadingPromise: Promise<void> | null = null;
 let activeTheme: ThemeMode = loadThemeModePreference();
 let activeContrast: ContrastMode = loadContrastModePreference();
 let helpTipsDismissed = loadHelpTipsDismissed();
+let commandPaletteOpen = false;
+let commandSelectionIndex = 0;
+let commandFilteredActions: CommandAction[] = [];
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
   `(max-width: ${NETWORK_MOBILE_COMPACT_MAX_WIDTH}px)`,
@@ -666,6 +698,7 @@ const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
 const persistedState = loadRecommendationState(recommendationIndex);
 const savedProfiles = loadRecommendationProfiles();
+const commandActions = buildCommandActions();
 
 for (const entry of persistedState.selected) {
   selectedAnimeNodeIds.push(entry.nodeId);
@@ -694,6 +727,7 @@ renderFilterControls();
 renderSeasonalList();
 renderContextualTips();
 syncNetworkCompactMode();
+renderCommandPaletteList();
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
@@ -709,6 +743,74 @@ window.addEventListener("hashchange", () => {
 
 window.addEventListener("keydown", (event) => {
   handleGlobalShortcut(event);
+});
+
+commandsToggleBtn.addEventListener("click", () => {
+  toggleCommandPalette();
+});
+
+commandCloseBtn.addEventListener("click", () => {
+  closeCommandPalette();
+});
+
+commandPaletteEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  if (target.dataset.commandClose === "true") {
+    closeCommandPalette();
+  }
+});
+
+commandInput.addEventListener("input", () => {
+  commandSelectionIndex = 0;
+  renderCommandPaletteList();
+});
+
+commandInput.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeCommandPalette();
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    moveCommandSelection(1);
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    moveCommandSelection(-1);
+    return;
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const selected = commandFilteredActions[commandSelectionIndex];
+    if (selected) {
+      executeCommand(selected);
+    }
+  }
+});
+
+commandListEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const button = target.closest<HTMLButtonElement>("button[data-command-id]");
+  if (!button) {
+    return;
+  }
+  const commandId = button.dataset.commandId;
+  if (!commandId) {
+    return;
+  }
+  const command = commandActions.find((item) => item.id === commandId);
+  if (!command) {
+    return;
+  }
+  executeCommand(command);
 });
 
 navRecommendationsBtn.addEventListener("click", () => {
@@ -1088,6 +1190,24 @@ function viewFromHash(): AppView {
 }
 
 function handleGlobalShortcut(event: KeyboardEvent): void {
+  const key = event.key.toLowerCase();
+  const commandModifier = event.ctrlKey || event.metaKey;
+
+  if (commandModifier && !event.altKey && key === "k") {
+    event.preventDefault();
+    toggleCommandPalette();
+    return;
+  }
+
+  if (commandPaletteOpen && key === "escape") {
+    event.preventDefault();
+    closeCommandPalette();
+    return;
+  }
+
+  if (commandPaletteOpen) {
+    return;
+  }
   if (isTypingTarget(event.target)) {
     return;
   }
@@ -1095,7 +1215,6 @@ function handleGlobalShortcut(event: KeyboardEvent): void {
     return;
   }
 
-  const key = event.key.toLowerCase();
   switch (key) {
     case "1":
       event.preventDefault();
@@ -1150,6 +1269,151 @@ function focusPrimaryInputForActiveView(): void {
 
   animeInput.focus();
   animeInput.select();
+}
+
+function buildCommandActions(): CommandAction[] {
+  return [
+    {
+      id: "open-recommendations",
+      label: "Open Recommendations",
+      keywords: ["recommend", "home", "view"],
+      run: () => setActiveView("recommendations", false),
+    },
+    {
+      id: "open-network",
+      label: "Open Network Explorer",
+      keywords: ["network", "graph", "view"],
+      run: () => setActiveView("network", false),
+    },
+    {
+      id: "focus-input",
+      label: "Focus Main Input",
+      keywords: ["focus", "search", "anime", "input"],
+      run: () => focusPrimaryInputForActiveView(),
+    },
+    {
+      id: "toggle-theme",
+      label: "Toggle Theme",
+      keywords: ["theme", "dark", "light"],
+      run: () => themeToggleBtn.click(),
+    },
+    {
+      id: "toggle-contrast",
+      label: "Toggle Contrast",
+      keywords: ["contrast", "accessibility", "readability"],
+      run: () => contrastToggleBtn.click(),
+    },
+    {
+      id: "toggle-tips",
+      label: "Toggle Help Tips",
+      keywords: ["tips", "help", "onboarding"],
+      run: () => tipsToggleBtn.click(),
+    },
+    {
+      id: "seasonal-starter",
+      label: "Add Seasonal Starter Picks",
+      keywords: ["seasonal", "starter", "quickstart"],
+      run: () => addSeasonalStarterPicks(),
+    },
+    {
+      id: "toggle-network-controls",
+      label: "Toggle Mobile Network Controls",
+      keywords: ["mobile", "network", "controls", "panel"],
+      run: () => {
+        if (activeView !== "network") {
+          setActiveView("network", false);
+        }
+        if (networkCompactMediaQuery.matches) {
+          networkControlsHiddenOnMobile = !networkControlsHiddenOnMobile;
+          applyNetworkCompactControlsState();
+        } else {
+          focusPrimaryInputForActiveView();
+        }
+      },
+    },
+  ];
+}
+
+function toggleCommandPalette(): void {
+  if (commandPaletteOpen) {
+    closeCommandPalette();
+    return;
+  }
+  openCommandPalette();
+}
+
+function openCommandPalette(): void {
+  commandPaletteOpen = true;
+  commandPaletteEl.hidden = false;
+  commandPaletteEl.setAttribute("aria-hidden", "false");
+  commandInput.value = "";
+  commandSelectionIndex = 0;
+  renderCommandPaletteList();
+  document.body.classList.add("palette-open");
+  window.requestAnimationFrame(() => {
+    commandInput.focus();
+  });
+}
+
+function closeCommandPalette(): void {
+  commandPaletteOpen = false;
+  commandPaletteEl.hidden = true;
+  commandPaletteEl.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("palette-open");
+  commandsToggleBtn.focus();
+}
+
+function moveCommandSelection(delta: number): void {
+  if (commandFilteredActions.length === 0) {
+    return;
+  }
+  commandSelectionIndex =
+    (commandSelectionIndex + delta + commandFilteredActions.length) %
+    commandFilteredActions.length;
+  renderCommandPaletteList();
+}
+
+function executeCommand(command: CommandAction): void {
+  closeCommandPalette();
+  command.run();
+}
+
+function renderCommandPaletteList(): void {
+  const query = normalizeTitle(commandInput.value);
+  commandFilteredActions = filterCommandActions(query);
+  if (commandFilteredActions.length === 0) {
+    commandSelectionIndex = 0;
+    commandListEl.innerHTML = `<li class="command-empty">No command matches "${escapeHtml(query)}".</li>`;
+    return;
+  }
+
+  if (commandSelectionIndex >= commandFilteredActions.length) {
+    commandSelectionIndex = 0;
+  }
+
+  commandListEl.innerHTML = commandFilteredActions
+    .map((command, index) => {
+      const selected = index === commandSelectionIndex;
+      return `
+        <li>
+          <button type="button" class="command-item${selected ? " selected" : ""}" data-command-id="${escapeHtml(command.id)}">
+            <span>${escapeHtml(command.label)}</span>
+          </button>
+        </li>
+      `;
+    })
+    .join("");
+}
+
+function filterCommandActions(query: string): CommandAction[] {
+  if (!query) {
+    return [...commandActions];
+  }
+  const queryTokens = query.split(/\s+/).filter((token) => token.length > 0);
+  return commandActions.filter((command) => {
+    const haystack = normalizeTitle([command.label, ...command.keywords].join(" "));
+    return queryTokens.every((token) => haystack.includes(token));
+  });
 }
 
 function parseYearFilterValue(raw: string): number | null {

@@ -196,6 +196,11 @@ body {
   justify-content: center;
 }
 
+.commands-btn {
+  min-width: 124px;
+  justify-content: center;
+}
+
 .icon {
   display: inline-block;
   width: 0.92rem;
@@ -249,6 +254,101 @@ body {
 .icon-help {
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10s10-4.477 10-10S17.523 2 12 2Zm0 18a8 8 0 1 1 0-16a8 8 0 0 1 0 16Zm-.02-5.998a1.1 1.1 0 1 0 0 2.2a1.1 1.1 0 0 0 0-2.2Zm2.235-5.04c0 1.2-.733 1.819-1.515 2.388-.73.53-1.1.918-1.1 1.65v.4h-1.8v-.5c0-1.195.596-1.924 1.46-2.54c.75-.53 1.155-.884 1.155-1.496c0-.694-.53-1.147-1.37-1.147c-.845 0-1.45.42-1.95 1.086L7.72 7.685c.75-1.15 1.93-1.87 3.46-1.87c1.86 0 3.035 1.128 3.035 2.947Z'/%3E%3C/svg%3E");
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10s10-4.477 10-10S17.523 2 12 2Zm0 18a8 8 0 1 1 0-16a8 8 0 0 1 0 16Zm-.02-5.998a1.1 1.1 0 1 0 0 2.2a1.1 1.1 0 0 0 0-2.2Zm2.235-5.04c0 1.2-.733 1.819-1.515 2.388-.73.53-1.1.918-1.1 1.65v.4h-1.8v-.5c0-1.195.596-1.924 1.46-2.54c.75-.53 1.155-.884 1.155-1.496c0-.694-.53-1.147-1.37-1.147c-.845 0-1.45.42-1.95 1.086L7.72 7.685c.75-1.15 1.93-1.87 3.46-1.87c1.86 0 3.035 1.128 3.035 2.947Z'/%3E%3C/svg%3E");
+}
+
+.icon-command {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2a4 4 0 0 1 3.874 3h2.252A4 4 0 1 1 17 10h-.17l.79 2H21v2h-2.59l.79 2H21v2h-1.8A4 4 0 1 1 13.126 19h-2.252A4 4 0 1 1 7 14h.17l-.79-2H3v-2h2.59l-.79-2H3V6h1.8A4 4 0 1 1 10.874 5h2.252A4 4 0 0 1 17 2a4 4 0 0 1 0 8h-1.17l.79 2h-9.24l.79-2H7a4 4 0 0 1 0-8Zm10 2a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM7 4a2 2 0 1 0 0 4a2 2 0 0 0 0-4Zm0 12a2 2 0 1 0 0 4a2 2 0 0 0 0-4Zm10 0a2 2 0 1 0 0 4a2 2 0 0 0 0-4Z'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2a4 4 0 0 1 3.874 3h2.252A4 4 0 1 1 17 10h-.17l.79 2H21v2h-2.59l.79 2H21v2h-1.8A4 4 0 1 1 13.126 19h-2.252A4 4 0 1 1 7 14h.17l-.79-2H3v-2h2.59l-.79-2H3V6h1.8A4 4 0 1 1 10.874 5h2.252A4 4 0 0 1 17 2a4 4 0 0 1 0 8h-1.17l.79 2h-9.24l.79-2H7a4 4 0 0 1 0-8Zm10 2a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM7 4a2 2 0 1 0 0 4a2 2 0 0 0 0-4Zm0 12a2 2 0 1 0 0 4a2 2 0 0 0 0-4Zm10 0a2 2 0 1 0 0 4a2 2 0 0 0 0-4Z'/%3E%3C/svg%3E");
+}
+
+body.palette-open {
+  overflow: hidden;
+}
+
+.command-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.command-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--surface-strong) 56%, #000 44%);
+  backdrop-filter: blur(2px);
+}
+
+.command-dialog {
+  position: relative;
+  margin: max(7vh, 2.4rem) auto 0;
+  width: min(740px, calc(100vw - 1.2rem));
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  padding: 0.8rem;
+  backdrop-filter: blur(8px);
+}
+
+.command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.command-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+#command-input {
+  margin-top: 0.6rem;
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--text);
+  padding: 0.55rem 0.68rem;
+}
+
+.command-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.74rem;
+}
+
+.command-list {
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.34rem;
+  max-height: min(56vh, 460px);
+  overflow: auto;
+}
+
+.command-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface-card);
+  color: var(--text);
+  padding: 0.5rem 0.62rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.command-item.selected {
+  border-color: var(--accent-soft);
+  background: var(--surface-active);
+}
+
+.command-empty {
+  color: var(--muted);
+  border: 1px dashed var(--line-soft);
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.8rem;
 }
 
 button:hover,
