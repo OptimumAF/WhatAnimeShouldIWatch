@@ -966,11 +966,53 @@ button:hover,
 }
 
 .graph-shell {
+  position: relative;
   border-radius: 16px;
   border: 1px solid var(--panel-border);
   background: linear-gradient(165deg, var(--graph-bg-start) 0%, var(--graph-bg-end) 100%);
   overflow: hidden;
   min-height: 70vh;
+}
+
+.network-render-status {
+  margin: 0.15rem 0 0.35rem;
+  color: var(--info);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.73rem;
+}
+
+.graph-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.7rem;
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 5;
+}
+
+.graph-loading p {
+  margin: 0;
+  color: var(--accent-soft);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.graph-spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: graph-spin 0.85s linear infinite;
+}
+
+@keyframes graph-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 #graph {

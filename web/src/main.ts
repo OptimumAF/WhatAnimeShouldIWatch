@@ -410,6 +410,9 @@ app.innerHTML = `
             <details class="accordion network-controls" open>
               <summary>Visibility Controls</summary>
               <div class="stats" id="stats"></div>
+              <p id="network-render-status" class="network-render-status" role="status" aria-live="polite">
+                Render status: ready.
+              </p>
 
               <label class="control" for="min-weight">
                 <span>Min absolute edge weight</span>
@@ -455,7 +458,11 @@ app.innerHTML = `
             </section>
           </aside>
 
-          <section class="graph-shell">
+          <section id="graph-shell" class="graph-shell">
+            <div id="graph-loading" class="graph-loading" hidden aria-hidden="true">
+              <div class="graph-spinner"></div>
+              <p id="graph-loading-message">Rendering network...</p>
+            </div>
             <div id="graph"></div>
           </section>
         </div>
@@ -517,6 +524,10 @@ const seasonalListEl = mustElement<HTMLUListElement>("#seasonal-list");
 const refreshSeasonalBtn = mustElement<HTMLButtonElement>("#refresh-seasonal");
 
 const statsEl = mustElement<HTMLDivElement>("#stats");
+const networkRenderStatusEl = mustElement<HTMLParagraphElement>("#network-render-status");
+const graphShell = mustElement<HTMLElement>("#graph-shell");
+const graphLoadingEl = mustElement<HTMLDivElement>("#graph-loading");
+const graphLoadingMessageEl = mustElement<HTMLParagraphElement>("#graph-loading-message");
 const graphContainer = mustElement<HTMLDivElement>("#graph");
 const minWeightInput = mustElement<HTMLInputElement>("#min-weight");
 const minWeightValue = mustElement<HTMLOutputElement>("#min-weight-value");
@@ -541,6 +552,7 @@ let activeView: AppView = "recommendations";
 let recommendationMode: RecommendationMode = "graph";
 let modelBlendWeight = 0.5;
 let recommendationRunId = 0;
+let graphRenderRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
 const recommendationFilters: RecommendationFilters = {
   genre: "",
@@ -908,6 +920,9 @@ function setActiveView(view: AppView, fromHash: boolean): void {
     window.requestAnimationFrame(() => {
       rerenderGraph();
     });
+  } else {
+    graphRenderRunId += 1;
+    setGraphLoadingState(false, "Render status: ready.");
   }
 }
 
@@ -2854,12 +2869,54 @@ function normalizeTitle(value: string): string {
 function rerenderGraph(): void {
   const minWeight = Number.parseFloat(minWeightInput.value);
   minWeightValue.textContent = minWeight.toFixed(2);
-  renderGraph(
-    graphData,
-    minWeight,
-    toggleAnimeEdges.checked,
-    toggleUsers.checked,
-  );
+  const showAnimeAnimeEdges = toggleAnimeEdges.checked;
+  const showUsers = toggleUsers.checked;
+  const runId = ++graphRenderRunId;
+
+  setGraphLoadingState(true, "Render status: rendering network...");
+
+  window.setTimeout(() => {
+    if (runId !== graphRenderRunId) {
+      return;
+    }
+
+    if (activeView !== "network") {
+      setGraphLoadingState(false, "Render status: ready.");
+      return;
+    }
+
+    const startedAt = performance.now();
+    try {
+      renderGraph(
+        graphData,
+        minWeight,
+        showAnimeAnimeEdges,
+        showUsers,
+      );
+      if (runId !== graphRenderRunId) {
+        return;
+      }
+      const elapsedMs = Math.max(1, Math.round(performance.now() - startedAt));
+      const visibleNodes = currentGraph ? currentGraph.order : 0;
+      const visibleEdges = currentGraph ? currentGraph.size : 0;
+      setGraphLoadingState(
+        false,
+        `Render status: ${visibleNodes.toLocaleString()} nodes, ${visibleEdges.toLocaleString()} edges (${elapsedMs} ms).`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "unknown error";
+      setGraphLoadingState(false, `Render status: failed (${errorMessage}).`);
+      console.error("Graph render failed.", error);
+    }
+  }, 0);
+}
+
+function setGraphLoadingState(loading: boolean, statusMessage: string): void {
+  graphLoadingEl.hidden = !loading;
+  graphLoadingEl.setAttribute("aria-hidden", loading ? "false" : "true");
+  graphShell.setAttribute("aria-busy", loading ? "true" : "false");
+  graphLoadingMessageEl.textContent = loading ? "Rendering network..." : "";
+  networkRenderStatusEl.textContent = statusMessage;
 }
 
 function renderGraph(
