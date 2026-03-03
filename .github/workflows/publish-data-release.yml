@@ -23,50 +23,53 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify required data files
+      - name: Prepare release asset bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          test -f data/graph.compact.json
-          test -f data/anonymized-ratings.compact.json
-
-      - name: Build release asset bundle
-        run: |
+          set -euo pipefail
           mkdir -p release-data
+          TAG="${{ github.event.inputs.tag_name || 'data-latest' }}"
+          if [ -f data/graph.compact.json ] && [ -f data/anonymized-ratings.compact.json ]; then
+            echo "Using local data/*.compact.json files."
+            gzip -c data/graph.compact.json > release-data/graph.compact.json.gz
+            gzip -c data/anonymized-ratings.compact.json > release-data/anonymized-ratings.compact.json.gz
 
-          gzip -c data/graph.compact.json > release-data/graph.compact.json.gz
-          gzip -c data/anonymized-ratings.compact.json > release-data/anonymized-ratings.compact.json.gz
-
-          if [ -f data/model-mf-web.compact.json ]; then
-            gzip -c data/model-mf-web.compact.json > release-data/model-mf-web.compact.json.gz
+            if [ -f data/model-mf-web.compact.json ]; then
+              gzip -c data/model-mf-web.compact.json > release-data/model-mf-web.compact.json.gz
+            fi
+          else
+            echo "Local data files missing; downloading existing release assets from ${TAG}."
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-data --pattern "*.gz"
           fi
+
+          test -f release-data/graph.compact.json.gz
+          test -f release-data/anonymized-ratings.compact.json.gz
 
           (
             cd release-data
             sha256sum *.gz > SHA256SUMS.txt
           )
-
-      - name: Write asset manifest
-        shell: bash
-        run: |
           node <<'NODE'
-          const fs = require("fs");
-          const path = require("path");
-          const dir = path.resolve("release-data");
-          const files = fs
-            .readdirSync(dir)
-            .filter((name) => name.endsWith(".gz"))
-            .sort();
-          const manifest = {
-            generatedAt: new Date().toISOString(),
-            files: files.map((name) => {
-              const stat = fs.statSync(path.join(dir, name));
-              return { name, bytes: stat.size };
-            }),
-          };
-          fs.writeFileSync(
-            path.join(dir, "data-manifest.json"),
-            JSON.stringify(manifest, null, 2),
-            "utf8",
-          );
+            const fs = require("fs");
+            const path = require("path");
+            const dir = path.resolve("release-data");
+            const files = fs
+              .readdirSync(dir)
+              .filter((name) => name.endsWith(".gz"))
+              .sort();
+            const manifest = {
+              generatedAt: new Date().toISOString(),
+              files: files.map((name) => {
+                const stat = fs.statSync(path.join(dir, name));
+                return { name, bytes: stat.size };
+              }),
+            };
+            fs.writeFileSync(
+              path.join(dir, "data-manifest.json"),
+              JSON.stringify(manifest, null, 2),
+              "utf8",
+            );
           NODE
 
       - name: Publish/Update GitHub release
