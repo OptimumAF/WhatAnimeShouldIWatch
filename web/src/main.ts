@@ -211,9 +211,13 @@ interface StoredHelpTipsState {
   dismissed: boolean;
 }
 
+type CommandGroup = "Navigation" | "Display" | "Utilities";
+
 interface CommandAction {
   id: string;
   label: string;
+  group: CommandGroup;
+  shortcutLabel?: string;
   keywords: string[];
   run: () => void;
 }
@@ -1218,28 +1222,28 @@ function handleGlobalShortcut(event: KeyboardEvent): void {
   switch (key) {
     case "1":
       event.preventDefault();
-      navRecommendationsBtn.click();
+      runCommandById("open-recommendations");
       break;
     case "2":
       event.preventDefault();
-      navNetworkBtn.click();
+      runCommandById("open-network");
       break;
     case "t":
       event.preventDefault();
-      themeToggleBtn.click();
+      runCommandById("toggle-theme");
       break;
     case "c":
       event.preventDefault();
-      contrastToggleBtn.click();
+      runCommandById("toggle-contrast");
       break;
     case "h":
       event.preventDefault();
-      tipsToggleBtn.click();
+      runCommandById("toggle-tips");
       break;
     case "/":
     case "?":
       event.preventDefault();
-      focusPrimaryInputForActiveView();
+      runCommandById("focus-input");
       break;
     default:
       break;
@@ -1271,53 +1275,75 @@ function focusPrimaryInputForActiveView(): void {
   animeInput.select();
 }
 
+function runCommandById(id: string): void {
+  const command = commandActions.find((item) => item.id === id);
+  if (!command) {
+    return;
+  }
+  command.run();
+}
+
 function buildCommandActions(): CommandAction[] {
   return [
     {
       id: "open-recommendations",
       label: "Open Recommendations",
+      group: "Navigation",
+      shortcutLabel: "Alt+1",
       keywords: ["recommend", "home", "view"],
       run: () => setActiveView("recommendations", false),
     },
     {
       id: "open-network",
       label: "Open Network Explorer",
+      group: "Navigation",
+      shortcutLabel: "Alt+2",
       keywords: ["network", "graph", "view"],
       run: () => setActiveView("network", false),
     },
     {
       id: "focus-input",
       label: "Focus Main Input",
+      group: "Navigation",
+      shortcutLabel: "Alt+/",
       keywords: ["focus", "search", "anime", "input"],
       run: () => focusPrimaryInputForActiveView(),
     },
     {
       id: "toggle-theme",
       label: "Toggle Theme",
+      group: "Display",
+      shortcutLabel: "Alt+T",
       keywords: ["theme", "dark", "light"],
       run: () => themeToggleBtn.click(),
     },
     {
       id: "toggle-contrast",
       label: "Toggle Contrast",
+      group: "Display",
+      shortcutLabel: "Alt+C",
       keywords: ["contrast", "accessibility", "readability"],
       run: () => contrastToggleBtn.click(),
     },
     {
       id: "toggle-tips",
       label: "Toggle Help Tips",
+      group: "Display",
+      shortcutLabel: "Alt+H",
       keywords: ["tips", "help", "onboarding"],
       run: () => tipsToggleBtn.click(),
     },
     {
       id: "seasonal-starter",
       label: "Add Seasonal Starter Picks",
+      group: "Utilities",
       keywords: ["seasonal", "starter", "quickstart"],
       run: () => addSeasonalStarterPicks(),
     },
     {
       id: "toggle-network-controls",
       label: "Toggle Mobile Network Controls",
+      group: "Utilities",
       keywords: ["mobile", "network", "controls", "panel"],
       run: () => {
         if (activeView !== "network") {
@@ -1391,16 +1417,28 @@ function renderCommandPaletteList(): void {
     commandSelectionIndex = 0;
   }
 
-  commandListEl.innerHTML = commandFilteredActions
-    .map((command, index) => {
-      const selected = index === commandSelectionIndex;
-      return `
-        <li>
-          <button type="button" class="command-item${selected ? " selected" : ""}" data-command-id="${escapeHtml(command.id)}">
-            <span>${escapeHtml(command.label)}</span>
-          </button>
-        </li>
-      `;
+  let flatIndex = 0;
+  commandListEl.innerHTML = groupCommandActions(commandFilteredActions)
+    .map((section) => {
+      const items = section.actions
+        .map((command) => {
+          const selected = flatIndex === commandSelectionIndex;
+          flatIndex += 1;
+          return `
+            <li>
+              <button type="button" class="command-item${selected ? " selected" : ""}" data-command-id="${escapeHtml(command.id)}">
+                <span class="command-item-label">${escapeHtml(command.label)}</span>
+                ${
+                  command.shortcutLabel
+                    ? `<span class="command-item-shortcut">${escapeHtml(command.shortcutLabel)}</span>`
+                    : ""
+                }
+              </button>
+            </li>
+          `;
+        })
+        .join("");
+      return `<li class="command-group">${escapeHtml(section.group)}</li>${items}`;
     })
     .join("");
 }
@@ -1414,6 +1452,25 @@ function filterCommandActions(query: string): CommandAction[] {
     const haystack = normalizeTitle([command.label, ...command.keywords].join(" "));
     return queryTokens.every((token) => haystack.includes(token));
   });
+}
+
+function groupCommandActions(
+  actions: CommandAction[],
+): Array<{ group: CommandGroup; actions: CommandAction[] }> {
+  const sections = new Map<CommandGroup, CommandAction[]>([
+    ["Navigation", []],
+    ["Display", []],
+    ["Utilities", []],
+  ]);
+  for (const action of actions) {
+    sections.get(action.group)?.push(action);
+  }
+  return [...sections.entries()]
+    .filter((entry) => entry[1].length > 0)
+    .map(([group, groupedActions]) => ({
+      group,
+      actions: groupedActions,
+    }));
 }
 
 function parseYearFilterValue(raw: string): number | null {

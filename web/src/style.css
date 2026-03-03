@@ -326,8 +326,25 @@ body.palette-open {
   overflow: auto;
 }
 
+.command-group {
+  margin: 0.4rem 0 0.1rem;
+  color: var(--accent-soft);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.command-group:first-child {
+  margin-top: 0;
+}
+
 .command-item {
   width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
   text-align: left;
   border: 1px solid var(--line-soft);
   border-radius: 10px;
@@ -336,6 +353,23 @@ body.palette-open {
   padding: 0.5rem 0.62rem;
   cursor: pointer;
   font-size: 0.85rem;
+}
+
+.command-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-item-shortcut {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 0.08rem 0.42rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.67rem;
+  color: var(--info);
+  white-space: nowrap;
 }
 
 .command-item.selected {
