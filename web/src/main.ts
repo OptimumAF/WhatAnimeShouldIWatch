@@ -9,6 +9,7 @@ type AppView = "recommendations" | "network";
 type RecommendationMode = "graph" | "model" | "hybrid";
 type UsernameImportProvider = "anilist" | "mal";
 type ThemeMode = "dark" | "light";
+type ContrastMode = "normal" | "high";
 
 interface GraphNode {
   id: string;
@@ -186,6 +187,7 @@ const NETWORK_MOBILE_COMPACT_MAX_WIDTH = 980;
 const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
 const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
 const THEME_STORAGE_KEY = "wasiw.theme.v1";
+const CONTRAST_STORAGE_KEY = "wasiw.contrast.v1";
 const HELP_TIPS_STORAGE_KEY = "wasiw.helpTips.v1";
 const HELP_TIPS_VERSION = 1;
 
@@ -244,6 +246,10 @@ app.innerHTML = `
         <button id="theme-toggle" class="nav-btn theme-btn" type="button" aria-label="Toggle theme">
           <span class="icon icon-theme" aria-hidden="true"></span>
           <span id="theme-toggle-label">Theme</span>
+        </button>
+        <button id="contrast-toggle" class="nav-btn contrast-btn" type="button" aria-label="Toggle high contrast mode">
+          <span class="icon icon-contrast" aria-hidden="true"></span>
+          <span id="contrast-toggle-label">Contrast: Normal</span>
         </button>
         <button id="tips-toggle" class="nav-btn tips-btn" type="button" aria-label="Hide help tips" aria-pressed="true">
           <span class="icon icon-help" aria-hidden="true"></span>
@@ -532,6 +538,8 @@ const navRecommendationsBtn = mustElement<HTMLButtonElement>("#nav-recommendatio
 const navNetworkBtn = mustElement<HTMLButtonElement>("#nav-network");
 const themeToggleBtn = mustElement<HTMLButtonElement>("#theme-toggle");
 const themeToggleLabelEl = mustElement<HTMLSpanElement>("#theme-toggle-label");
+const contrastToggleBtn = mustElement<HTMLButtonElement>("#contrast-toggle");
+const contrastToggleLabelEl = mustElement<HTMLSpanElement>("#contrast-toggle-label");
 const tipsToggleBtn = mustElement<HTMLButtonElement>("#tips-toggle");
 const tipsToggleLabelEl = mustElement<HTMLSpanElement>("#tips-toggle-label");
 const viewRecommendations = mustElement<HTMLElement>("#view-recommendations");
@@ -636,6 +644,7 @@ const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
 let seasonalItems: SeasonalAnimeItem[] = [];
 let seasonalLoadingPromise: Promise<void> | null = null;
 let activeTheme: ThemeMode = loadThemeModePreference();
+let activeContrast: ContrastMode = loadContrastModePreference();
 let helpTipsDismissed = loadHelpTipsDismissed();
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
@@ -644,6 +653,7 @@ const networkCompactMediaQuery = window.matchMedia(
 let networkControlsHiddenOnMobile = true;
 
 applyTheme(activeTheme);
+applyContrast(activeContrast);
 
 const graphData = await fetchGraph();
 const recommendationIndex = buildRecommendationIndex(graphData);
@@ -714,6 +724,12 @@ themeToggleBtn.addEventListener("click", () => {
   activeTheme = activeTheme === "dark" ? "light" : "dark";
   applyTheme(activeTheme);
   persistThemeModePreference(activeTheme);
+});
+
+contrastToggleBtn.addEventListener("click", () => {
+  activeContrast = activeContrast === "normal" ? "high" : "normal";
+  applyContrast(activeContrast);
+  persistContrastModePreference(activeContrast);
 });
 
 networkMobileToggleBtn.addEventListener("click", () => {
@@ -3788,11 +3804,31 @@ function loadThemeModePreference(): ThemeMode {
   return "dark";
 }
 
+function loadContrastModePreference(): ContrastMode {
+  try {
+    const raw = window.localStorage.getItem(CONTRAST_STORAGE_KEY);
+    if (raw === "normal" || raw === "high") {
+      return raw;
+    }
+  } catch (error) {
+    console.warn("Unable to read saved contrast preference.", error);
+  }
+  return "normal";
+}
+
 function persistThemeModePreference(theme: ThemeMode): void {
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   } catch (error) {
     console.warn("Unable to persist theme preference.", error);
+  }
+}
+
+function persistContrastModePreference(contrast: ContrastMode): void {
+  try {
+    window.localStorage.setItem(CONTRAST_STORAGE_KEY, contrast);
+  } catch (error) {
+    console.warn("Unable to persist contrast preference.", error);
   }
 }
 
@@ -3803,6 +3839,17 @@ function applyTheme(theme: ThemeMode): void {
   themeToggleBtn.setAttribute(
     "aria-label",
     theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+  );
+}
+
+function applyContrast(contrast: ContrastMode): void {
+  document.documentElement.dataset.contrast = contrast;
+  contrastToggleBtn.dataset.mode = contrast;
+  contrastToggleLabelEl.textContent =
+    contrast === "high" ? "Contrast: High" : "Contrast: Normal";
+  contrastToggleBtn.setAttribute(
+    "aria-label",
+    contrast === "high" ? "Switch to normal contrast mode" : "Switch to high contrast mode",
   );
 }
 
