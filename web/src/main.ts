@@ -233,7 +233,10 @@ app.innerHTML = `
           <span class="nav-kicker">02</span>
           <span>Network Explorer</span>
         </button>
-        <button id="theme-toggle" class="nav-btn theme-btn" type="button" aria-label="Toggle theme">Theme</button>
+        <button id="theme-toggle" class="nav-btn theme-btn" type="button" aria-label="Toggle theme">
+          <span class="icon icon-theme" aria-hidden="true"></span>
+          <span id="theme-toggle-label">Theme</span>
+        </button>
       </nav>
     </header>
 
@@ -298,7 +301,10 @@ app.innerHTML = `
                 <p class="muted">One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>.</p>
                 <form id="bulk-import-form" class="bulk-import-form">
                   <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
-                  <button type="submit">Import Watched Entries</button>
+                  <button type="submit">
+                    <span class="icon icon-import" aria-hidden="true"></span>
+                    <span>Import Watched Entries</span>
+                  </button>
                 </form>
               </section>
 
@@ -311,7 +317,10 @@ app.innerHTML = `
                     <option value="mal">MyAnimeList (MAL)</option>
                   </select>
                   <input id="username-import-input" type="text" autocomplete="off" placeholder="Enter username" />
-                  <button id="username-import-submit" type="submit">Import User List</button>
+                  <button id="username-import-submit" type="submit">
+                    <span class="icon icon-import" aria-hidden="true"></span>
+                    <span id="username-import-submit-label">Import User List</span>
+                  </button>
                 </form>
               </section>
 
@@ -320,11 +329,17 @@ app.innerHTML = `
                 <p class="muted">Save and reload named recommendation setups.</p>
                 <form id="profile-save-form" class="profile-save-form">
                   <input id="profile-name-input" type="text" autocomplete="off" placeholder="Profile name" />
-                  <button id="profile-save-submit" type="submit">Save Profile</button>
+                  <button id="profile-save-submit" type="submit">
+                    <span class="icon icon-save" aria-hidden="true"></span>
+                    <span>Save Profile</span>
+                  </button>
                 </form>
                 <div class="profile-load-row">
                   <select id="profile-select" aria-label="Saved profile"></select>
-                  <button id="profile-load-btn" type="button">Load</button>
+                  <button id="profile-load-btn" type="button">
+                    <span class="icon icon-load" aria-hidden="true"></span>
+                    <span>Load</span>
+                  </button>
                   <button id="profile-delete-btn" type="button" class="ghost-btn">Delete</button>
                 </div>
               </section>
@@ -435,7 +450,10 @@ app.innerHTML = `
               <h3>Search In Graph</h3>
               <form id="network-search-form" class="network-search-form">
                 <input id="network-search-input" type="text" list="network-node-options" placeholder="Title, anime:ID, or user:ID" aria-label="Search for anime or user node" />
-                <button type="submit" class="primary-btn">Find</button>
+                <button type="submit" class="primary-btn">
+                  <span class="icon icon-search" aria-hidden="true"></span>
+                  <span>Find</span>
+                </button>
               </form>
               <datalist id="network-node-options"></datalist>
               <p id="network-search-message" class="network-search-message" role="status" aria-live="polite"></p>
@@ -474,6 +492,7 @@ app.innerHTML = `
 const navRecommendationsBtn = mustElement<HTMLButtonElement>("#nav-recommendations");
 const navNetworkBtn = mustElement<HTMLButtonElement>("#nav-network");
 const themeToggleBtn = mustElement<HTMLButtonElement>("#theme-toggle");
+const themeToggleLabelEl = mustElement<HTMLSpanElement>("#theme-toggle-label");
 const viewRecommendations = mustElement<HTMLElement>("#view-recommendations");
 const viewNetwork = mustElement<HTMLElement>("#view-network");
 const quickstartSeasonalBtn = mustElement<HTMLButtonElement>("#quickstart-seasonal");
@@ -497,6 +516,7 @@ const usernameImportForm = mustElement<HTMLFormElement>("#username-import-form")
 const usernameImportProvider = mustElement<HTMLSelectElement>("#username-import-provider");
 const usernameImportInput = mustElement<HTMLInputElement>("#username-import-input");
 const usernameImportSubmit = mustElement<HTMLButtonElement>("#username-import-submit");
+const usernameImportSubmitLabel = mustElement<HTMLSpanElement>("#username-import-submit-label");
 const profileSaveForm = mustElement<HTMLFormElement>("#profile-save-form");
 const profileNameInput = mustElement<HTMLInputElement>("#profile-name-input");
 const profileSelect = mustElement<HTMLSelectElement>("#profile-select");
@@ -1168,7 +1188,7 @@ function setUsernameImportLoading(
   usernameImportProvider.disabled = loading;
   usernameImportInput.disabled = loading;
   usernameImportSubmit.disabled = loading;
-  usernameImportSubmit.textContent = loading
+  usernameImportSubmitLabel.textContent = loading
     ? `Importing ${providerLabel(provider)}...`
     : "Import User List";
 }
@@ -3666,7 +3686,8 @@ function persistThemeModePreference(theme: ThemeMode): void {
 
 function applyTheme(theme: ThemeMode): void {
   document.documentElement.dataset.theme = theme;
-  themeToggleBtn.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
+  themeToggleBtn.dataset.mode = theme;
+  themeToggleLabelEl.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
   themeToggleBtn.setAttribute(
     "aria-label",
     theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
