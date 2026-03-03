@@ -289,7 +289,7 @@ app.innerHTML = `
           <button id="command-close" type="button" class="ghost-btn" aria-label="Close command palette">Close</button>
         </div>
         <input id="command-input" type="text" autocomplete="off" placeholder="Type an action (e.g. network, theme, import)" />
-        <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes.</p>
+        <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes. Fuzzy search enabled.</p>
         <ul id="command-list" class="command-list"></ul>
       </section>
     </div>
@@ -1485,10 +1485,82 @@ function filterCommandActions(query: string): CommandAction[] {
     return [...commandActions];
   }
   const queryTokens = query.split(/\s+/).filter((token) => token.length > 0);
-  return commandActions.filter((command) => {
-    const haystack = normalizeTitle([command.label, ...command.keywords].join(" "));
-    return queryTokens.every((token) => haystack.includes(token));
+  const scoredMatches = commandActions
+    .map((command) => {
+      const label = normalizeTitle(command.label);
+      const haystack = normalizeTitle([command.label, ...command.keywords].join(" "));
+      let score = 0;
+      for (const token of queryTokens) {
+        const tokenScore = scoreCommandTokenMatch(token, label, haystack);
+        if (tokenScore <= 0) {
+          return null;
+        }
+        score += tokenScore;
+      }
+      const historyIndex = commandHistoryIds.indexOf(command.id);
+      if (historyIndex >= 0) {
+        score += Math.max(0, 12 - historyIndex * 2);
+      }
+      return { command, score };
+    })
+    .filter((entry): entry is { command: CommandAction; score: number } => entry !== null);
+
+  scoredMatches.sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score;
+    }
+    return left.command.label.localeCompare(right.command.label);
   });
+  return scoredMatches.map((entry) => entry.command);
+}
+
+function scoreCommandTokenMatch(
+  token: string,
+  label: string,
+  haystack: string,
+): number {
+  if (label === token) {
+    return 180;
+  }
+  if (label.startsWith(token)) {
+    return 140;
+  }
+
+  const haystackWords = haystack.split(/\s+/);
+  if (haystackWords.some((word) => word.startsWith(token))) {
+    return 110;
+  }
+  if (haystack.includes(token)) {
+    return 80;
+  }
+
+  const fuzzyScore = scoreSubsequenceMatch(token, haystack);
+  if (fuzzyScore > 0) {
+    return fuzzyScore;
+  }
+  return 0;
+}
+
+function scoreSubsequenceMatch(token: string, haystack: string): number {
+  let tokenIndex = 0;
+  const matchedPositions: number[] = [];
+  for (let haystackIndex = 0; haystackIndex < haystack.length; haystackIndex += 1) {
+    if (haystack[haystackIndex] === token[tokenIndex]) {
+      matchedPositions.push(haystackIndex);
+      tokenIndex += 1;
+      if (tokenIndex === token.length) {
+        break;
+      }
+    }
+  }
+  if (tokenIndex !== token.length || matchedPositions.length === 0) {
+    return 0;
+  }
+
+  const span = matchedPositions[matchedPositions.length - 1] - matchedPositions[0] + 1;
+  const gapPenalty = Math.max(0, span - token.length);
+  const positionBonus = matchedPositions[0] === 0 ? 6 : matchedPositions[0] <= 2 ? 3 : 0;
+  return Math.max(12, 54 - Math.min(gapPenalty, 34) + positionBonus);
 }
 
 function buildCommandSections(
