@@ -359,6 +359,41 @@ body.palette-open {
   font-size: 0.85rem;
 }
 
+.command-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+}
+
+.command-reason {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 0.08rem 0.4rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.63rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.command-reason-exact,
+.command-reason-prefix {
+  color: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent-soft) 56%, var(--line-soft) 44%);
+}
+
+.command-reason-fuzzy,
+.command-reason-contains,
+.command-reason-word {
+  color: var(--info);
+}
+
+.command-reason-recent {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line-soft) 40%);
+}
+
 .command-item-prefix {
   min-width: 0;
   display: flex;
@@ -407,6 +442,10 @@ body.palette-open {
 .command-item.selected {
   border-color: var(--accent-soft);
   background: var(--surface-active);
+}
+
+.command-item.selected .command-reason {
+  color: var(--text);
 }
 
 .command-item.selected .command-item-index {

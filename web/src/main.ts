@@ -10,6 +10,13 @@ type RecommendationMode = "graph" | "model" | "hybrid";
 type UsernameImportProvider = "anilist" | "mal";
 type ThemeMode = "dark" | "light";
 type ContrastMode = "normal" | "high";
+type CommandMatchReason =
+  | "exact"
+  | "prefix"
+  | "word"
+  | "contains"
+  | "fuzzy"
+  | "recent";
 
 interface GraphNode {
   id: string;
@@ -227,6 +234,11 @@ interface CommandAction {
 interface CommandSection {
   group: string;
   actions: CommandAction[];
+}
+
+interface CommandTokenMatch {
+  score: number;
+  reason: Exclude<CommandMatchReason, "recent">;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -692,6 +704,7 @@ let helpTipsDismissed = loadHelpTipsDismissed();
 let commandPaletteOpen = false;
 let commandSelectionIndex = 0;
 let commandFilteredActions: CommandAction[] = [];
+let commandMatchReasons = new Map<string, CommandMatchReason[]>();
 let commandHistoryIds = loadCommandHistoryIds();
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
@@ -1453,6 +1466,7 @@ function renderCommandPaletteList(): void {
           const quickIndex = flatIndex + 1;
           const quickIndexLabel = quickIndex <= 9 ? String(quickIndex) : "";
           const highlightedLabel = highlightCommandLabel(command.label, query);
+          const reasonBadges = renderCommandReasonBadges(command.id, section.group, query);
           flatIndex += 1;
           return `
             <li>
@@ -1465,11 +1479,14 @@ function renderCommandPaletteList(): void {
                   }
                   <span class="command-item-label">${highlightedLabel}</span>
                 </span>
-                ${
-                  command.shortcutLabel
-                    ? `<span class="command-item-shortcut">${escapeHtml(command.shortcutLabel)}</span>`
-                    : ""
-                }
+                <span class="command-item-meta">
+                  ${reasonBadges}
+                  ${
+                    command.shortcutLabel
+                      ? `<span class="command-item-shortcut">${escapeHtml(command.shortcutLabel)}</span>`
+                      : ""
+                  }
+                </span>
               </button>
             </li>
           `;
@@ -1483,28 +1500,39 @@ function renderCommandPaletteList(): void {
 
 function filterCommandActions(query: string): CommandAction[] {
   if (!query) {
+    commandMatchReasons = new Map();
     return [...commandActions];
   }
   const queryTokens = query.split(/\s+/).filter((token) => token.length > 0);
+  const matchReasons = new Map<string, Set<CommandMatchReason>>();
   const scoredMatches = commandActions
     .map((command) => {
       const label = normalizeTitle(command.label);
       const haystack = normalizeTitle([command.label, ...command.keywords].join(" "));
       let score = 0;
+      const reasons = new Set<CommandMatchReason>();
       for (const token of queryTokens) {
-        const tokenScore = scoreCommandTokenMatch(token, label, haystack);
-        if (tokenScore <= 0) {
+        const tokenMatch = scoreCommandTokenMatch(token, label, haystack);
+        if (!tokenMatch) {
           return null;
         }
-        score += tokenScore;
+        score += tokenMatch.score;
+        reasons.add(tokenMatch.reason);
       }
       const historyIndex = commandHistoryIds.indexOf(command.id);
       if (historyIndex >= 0) {
         score += Math.max(0, 12 - historyIndex * 2);
+        reasons.add("recent");
       }
-      return { command, score };
+      matchReasons.set(command.id, reasons);
+      return { command, score, reasons };
     })
-    .filter((entry): entry is { command: CommandAction; score: number } => entry !== null);
+    .filter(
+      (
+        entry,
+      ): entry is { command: CommandAction; score: number; reasons: Set<CommandMatchReason> } =>
+        entry !== null,
+    );
 
   scoredMatches.sort((left, right) => {
     if (right.score !== left.score) {
@@ -1512,6 +1540,13 @@ function filterCommandActions(query: string): CommandAction[] {
     }
     return left.command.label.localeCompare(right.command.label);
   });
+
+  commandMatchReasons = new Map(
+    scoredMatches.map((entry) => [
+      entry.command.id,
+      normalizeCommandReasons(entry.reasons),
+    ]),
+  );
   return scoredMatches.map((entry) => entry.command);
 }
 
@@ -1519,27 +1554,27 @@ function scoreCommandTokenMatch(
   token: string,
   label: string,
   haystack: string,
-): number {
+): CommandTokenMatch | null {
   if (label === token) {
-    return 180;
+    return { score: 180, reason: "exact" };
   }
   if (label.startsWith(token)) {
-    return 140;
+    return { score: 140, reason: "prefix" };
   }
 
   const haystackWords = haystack.split(/\s+/);
   if (haystackWords.some((word) => word.startsWith(token))) {
-    return 110;
+    return { score: 110, reason: "word" };
   }
   if (haystack.includes(token)) {
-    return 80;
+    return { score: 80, reason: "contains" };
   }
 
   const fuzzyScore = scoreSubsequenceMatch(token, haystack);
   if (fuzzyScore > 0) {
-    return fuzzyScore;
+    return { score: fuzzyScore, reason: "fuzzy" };
   }
-  return 0;
+  return null;
 }
 
 function scoreSubsequenceMatch(token: string, haystack: string): number {
@@ -1562,6 +1597,50 @@ function scoreSubsequenceMatch(token: string, haystack: string): number {
   const gapPenalty = Math.max(0, span - token.length);
   const positionBonus = matchedPositions[0] === 0 ? 6 : matchedPositions[0] <= 2 ? 3 : 0;
   return Math.max(12, 54 - Math.min(gapPenalty, 34) + positionBonus);
+}
+
+function normalizeCommandReasons(
+  reasons: Set<CommandMatchReason>,
+): CommandMatchReason[] {
+  const order: CommandMatchReason[] = [
+    "exact",
+    "prefix",
+    "word",
+    "contains",
+    "fuzzy",
+    "recent",
+  ];
+  return order.filter((reason) => reasons.has(reason));
+}
+
+function renderCommandReasonBadges(
+  commandId: string,
+  sectionGroup: string,
+  query: string,
+): string {
+  const reasons = new Set(commandMatchReasons.get(commandId) ?? []);
+  if (!query && sectionGroup === "Recent") {
+    reasons.add("recent");
+  }
+  if (reasons.size === 0) {
+    return "";
+  }
+  return normalizeCommandReasons(reasons)
+    .slice(0, 3)
+    .map(
+      (reason) =>
+        `<span class="command-reason command-reason-${reason}">${escapeHtml(
+          commandReasonLabel(reason),
+        )}</span>`,
+    )
+    .join("");
+}
+
+function commandReasonLabel(reason: CommandMatchReason): string {
+  if (reason === "word") {
+    return "keyword";
+  }
+  return reason;
 }
 
 function highlightCommandLabel(label: string, normalizedQuery: string): string {
