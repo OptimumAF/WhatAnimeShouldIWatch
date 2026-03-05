@@ -304,7 +304,7 @@ app.innerHTML = `
           <button id="command-close" type="button" class="ghost-btn" aria-label="Close command palette">Close</button>
         </div>
         <input id="command-input" type="text" autocomplete="off" placeholder="Type an action (e.g. network, theme, import)" />
-        <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes. Fuzzy search enabled. Use the star to pin favorites.</p>
+        <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes. Fuzzy search enabled. Use the star to pin favorites and drag the grip to reorder.</p>
         <ul id="command-list" class="command-list"></ul>
       </section>
     </div>
@@ -710,6 +710,7 @@ let commandFilteredActions: CommandAction[] = [];
 let commandMatchReasons = new Map<string, CommandMatchReason[]>();
 let commandPinnedIds = loadCommandPinnedIds();
 let commandHistoryIds = loadCommandHistoryIds();
+let draggedPinnedCommandId: string | null = null;
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
   `(max-width: ${NETWORK_MOBILE_COMPACT_MAX_WIDTH}px)`,
@@ -842,6 +843,10 @@ commandListEl.addEventListener("click", (event) => {
   if (!(target instanceof HTMLElement)) {
     return;
   }
+  const dragHandle = target.closest<HTMLButtonElement>("button[data-command-drag-id]");
+  if (dragHandle) {
+    return;
+  }
   const pinButton = target.closest<HTMLButtonElement>("button[data-command-pin-id]");
   if (pinButton) {
     const commandId = pinButton.dataset.commandPinId;
@@ -865,6 +870,76 @@ commandListEl.addEventListener("click", (event) => {
     return;
   }
   executeCommand(command);
+});
+
+commandListEl.addEventListener("dragstart", (event) => {
+  if (!(event instanceof DragEvent)) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const dragHandle = target.closest<HTMLButtonElement>("button[data-command-drag-id]");
+  const commandId = dragHandle?.dataset.commandDragId;
+  if (!commandId || !isCommandPinned(commandId)) {
+    return;
+  }
+  draggedPinnedCommandId = commandId;
+  dragHandle.classList.add("active");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", commandId);
+  }
+});
+
+commandListEl.addEventListener("dragover", (event) => {
+  if (!(event instanceof DragEvent) || !draggedPinnedCommandId) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const row = target.closest<HTMLElement>(".command-row[data-command-row-id]");
+  if (!row) {
+    return;
+  }
+  const targetId = row.dataset.commandRowId;
+  if (!targetId || !isCommandPinned(targetId)) {
+    return;
+  }
+  event.preventDefault();
+  clearCommandDragOverState();
+  row.classList.add("drag-over");
+});
+
+commandListEl.addEventListener("drop", (event) => {
+  if (!(event instanceof DragEvent) || !draggedPinnedCommandId) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const row = target.closest<HTMLElement>(".command-row[data-command-row-id]");
+  if (!row) {
+    clearCommandDragState();
+    return;
+  }
+  const targetId = row.dataset.commandRowId;
+  if (!targetId || !isCommandPinned(targetId)) {
+    clearCommandDragState();
+    return;
+  }
+  event.preventDefault();
+  movePinnedCommandBefore(draggedPinnedCommandId, targetId);
+  clearCommandDragState();
+  renderCommandPaletteList();
+});
+
+commandListEl.addEventListener("dragend", () => {
+  clearCommandDragState();
 });
 
 navRecommendationsBtn.addEventListener("click", () => {
@@ -1437,6 +1512,7 @@ function closeCommandPalette(): void {
   commandPaletteEl.hidden = true;
   commandPaletteEl.setAttribute("aria-hidden", "true");
   document.body.classList.remove("palette-open");
+  clearCommandDragState();
   commandsToggleBtn.focus();
 }
 
@@ -1482,9 +1558,22 @@ function renderCommandPaletteList(): void {
           const highlightedLabel = highlightCommandLabel(command.label, query);
           const reasonBadges = renderCommandReasonBadges(command.id, section.group, query);
           const pinned = isCommandPinned(command.id);
+          const draggablePinned = section.group === "Pinned" && pinned;
           flatIndex += 1;
           return `
-            <li class="command-row">
+            <li class="command-row" data-command-row-id="${escapeHtml(command.id)}">
+              ${
+                draggablePinned
+                  ? `<button
+                      type="button"
+                      class="command-drag-handle"
+                      data-command-drag-id="${escapeHtml(command.id)}"
+                      draggable="true"
+                      aria-label="Drag to reorder pinned command"
+                      title="Drag to reorder"
+                    >⋮⋮</button>`
+                  : ""
+              }
               <button type="button" class="command-item${selected ? " selected" : ""}" data-command-id="${escapeHtml(command.id)}">
                 <span class="command-item-prefix">
                   ${
@@ -1850,6 +1939,39 @@ function toggleCommandPinned(commandId: string): void {
     commandPinnedIds = [commandId, ...commandPinnedIds].slice(0, COMMAND_PINNED_LIMIT);
   }
   persistCommandPinnedIds(commandPinnedIds);
+}
+
+function movePinnedCommandBefore(draggedId: string, targetId: string): void {
+  if (draggedId === targetId) {
+    return;
+  }
+  if (!isCommandPinned(draggedId) || !isCommandPinned(targetId)) {
+    return;
+  }
+
+  const orderedPinned = commandPinnedIds.filter((id) => isCommandPinned(id));
+  const withoutDragged = orderedPinned.filter((id) => id !== draggedId);
+  const targetIndex = withoutDragged.indexOf(targetId);
+  if (targetIndex < 0) {
+    return;
+  }
+  withoutDragged.splice(targetIndex, 0, draggedId);
+  commandPinnedIds = withoutDragged.slice(0, COMMAND_PINNED_LIMIT);
+  persistCommandPinnedIds(commandPinnedIds);
+}
+
+function clearCommandDragOverState(): void {
+  commandListEl
+    .querySelectorAll<HTMLElement>(".command-row.drag-over")
+    .forEach((row) => row.classList.remove("drag-over"));
+}
+
+function clearCommandDragState(): void {
+  draggedPinnedCommandId = null;
+  clearCommandDragOverState();
+  commandListEl
+    .querySelectorAll<HTMLElement>(".command-drag-handle.active")
+    .forEach((handle) => handle.classList.remove("active"));
 }
 
 function loadCommandHistoryIds(): string[] {

@@ -353,6 +353,36 @@ body.palette-open {
   gap: 0.34rem;
 }
 
+.command-row.drag-over .command-item {
+  border-color: color-mix(in srgb, var(--accent-soft) 75%, var(--line-soft) 25%);
+}
+
+.command-drag-handle {
+  border: 1px dashed var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface-card);
+  color: var(--muted);
+  min-width: 2rem;
+  padding: 0 0.32rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  font-size: 0.72rem;
+  letter-spacing: -0.1em;
+  user-select: none;
+}
+
+.command-drag-handle:hover,
+.command-drag-handle.active {
+  color: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent-soft) 58%, var(--line-soft) 42%);
+}
+
+.command-drag-handle:active {
+  cursor: grabbing;
+}
+
 .command-item {
   width: auto;
   flex: 1 1 auto;
