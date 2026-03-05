@@ -343,8 +343,19 @@ body.palette-open {
   color: var(--accent);
 }
 
+.command-group.pinned {
+  color: color-mix(in srgb, var(--accent) 70%, var(--accent-soft) 30%);
+}
+
+.command-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.34rem;
+}
+
 .command-item {
-  width: 100%;
+  width: auto;
+  flex: 1 1 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -357,6 +368,31 @@ body.palette-open {
   padding: 0.5rem 0.62rem;
   cursor: pointer;
   font-size: 0.85rem;
+}
+
+.command-pin-btn {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface-card);
+  color: var(--muted);
+  min-width: 2.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.4rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.command-pin-btn:hover,
+.command-pin-btn.pinned {
+  color: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent-soft) 54%, var(--line-soft) 46%);
+}
+
+.command-pin-btn.pinned {
+  background: color-mix(in srgb, var(--surface-active) 80%, var(--accent-soft) 20%);
 }
 
 .command-item-meta {
@@ -392,6 +428,11 @@ body.palette-open {
 .command-reason-recent {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 60%, var(--line-soft) 40%);
+}
+
+.command-reason-pinned {
+  color: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent-soft) 65%, var(--line-soft) 35%);
 }
 
 .command-item-prefix {
@@ -451,6 +492,10 @@ body.palette-open {
 .command-item.selected .command-item-index {
   border-color: color-mix(in srgb, var(--accent-soft) 75%, #fff 25%);
   color: var(--text);
+}
+
+.command-item.selected + .command-pin-btn {
+  border-color: color-mix(in srgb, var(--accent-soft) 75%, var(--line-soft) 25%);
 }
 
 .command-empty {

@@ -11,6 +11,7 @@ type UsernameImportProvider = "anilist" | "mal";
 type ThemeMode = "dark" | "light";
 type ContrastMode = "normal" | "high";
 type CommandMatchReason =
+  | "pinned"
   | "exact"
   | "prefix"
   | "word"
@@ -199,6 +200,8 @@ const HELP_TIPS_STORAGE_KEY = "wasiw.helpTips.v1";
 const HELP_TIPS_VERSION = 1;
 const COMMAND_HISTORY_STORAGE_KEY = "wasiw.commandHistory.v1";
 const COMMAND_HISTORY_LIMIT = 6;
+const COMMAND_PINNED_STORAGE_KEY = "wasiw.commandPinned.v1";
+const COMMAND_PINNED_LIMIT = 8;
 
 interface StoredRecommendationState {
   version: number;
@@ -238,7 +241,7 @@ interface CommandSection {
 
 interface CommandTokenMatch {
   score: number;
-  reason: Exclude<CommandMatchReason, "recent">;
+  reason: Exclude<CommandMatchReason, "recent" | "pinned">;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -301,7 +304,7 @@ app.innerHTML = `
           <button id="command-close" type="button" class="ghost-btn" aria-label="Close command palette">Close</button>
         </div>
         <input id="command-input" type="text" autocomplete="off" placeholder="Type an action (e.g. network, theme, import)" />
-        <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes. Fuzzy search enabled.</p>
+        <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes. Fuzzy search enabled. Use the star to pin favorites.</p>
         <ul id="command-list" class="command-list"></ul>
       </section>
     </div>
@@ -705,6 +708,7 @@ let commandPaletteOpen = false;
 let commandSelectionIndex = 0;
 let commandFilteredActions: CommandAction[] = [];
 let commandMatchReasons = new Map<string, CommandMatchReason[]>();
+let commandPinnedIds = loadCommandPinnedIds();
 let commandHistoryIds = loadCommandHistoryIds();
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
@@ -836,6 +840,16 @@ commandInput.addEventListener("keydown", (event) => {
 commandListEl.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const pinButton = target.closest<HTMLButtonElement>("button[data-command-pin-id]");
+  if (pinButton) {
+    const commandId = pinButton.dataset.commandPinId;
+    if (!commandId) {
+      return;
+    }
+    toggleCommandPinned(commandId);
+    renderCommandPaletteList();
     return;
   }
   const button = target.closest<HTMLButtonElement>("button[data-command-id]");
@@ -1467,9 +1481,10 @@ function renderCommandPaletteList(): void {
           const quickIndexLabel = quickIndex <= 9 ? String(quickIndex) : "";
           const highlightedLabel = highlightCommandLabel(command.label, query);
           const reasonBadges = renderCommandReasonBadges(command.id, section.group, query);
+          const pinned = isCommandPinned(command.id);
           flatIndex += 1;
           return `
-            <li>
+            <li class="command-row">
               <button type="button" class="command-item${selected ? " selected" : ""}" data-command-id="${escapeHtml(command.id)}">
                 <span class="command-item-prefix">
                   ${
@@ -1488,11 +1503,26 @@ function renderCommandPaletteList(): void {
                   }
                 </span>
               </button>
+              <button
+                type="button"
+                class="command-pin-btn${pinned ? " pinned" : ""}"
+                data-command-pin-id="${escapeHtml(command.id)}"
+                aria-pressed="${pinned ? "true" : "false"}"
+                aria-label="${pinned ? "Unpin command" : "Pin command"}"
+                title="${pinned ? "Unpin command" : "Pin command"}"
+              >
+                ★
+              </button>
             </li>
           `;
         })
         .join("");
-      const sectionClass = section.group === "Recent" ? "command-group recent" : "command-group";
+      const sectionClass =
+        section.group === "Pinned"
+          ? "command-group pinned"
+          : section.group === "Recent"
+            ? "command-group recent"
+            : "command-group";
       return `<li class="${sectionClass}">${escapeHtml(section.group)}</li>${items}`;
     })
     .join("");
@@ -1518,6 +1548,10 @@ function filterCommandActions(query: string): CommandAction[] {
         }
         score += tokenMatch.score;
         reasons.add(tokenMatch.reason);
+      }
+      if (isCommandPinned(command.id)) {
+        score += 18;
+        reasons.add("pinned");
       }
       const historyIndex = commandHistoryIds.indexOf(command.id);
       if (historyIndex >= 0) {
@@ -1603,6 +1637,7 @@ function normalizeCommandReasons(
   reasons: Set<CommandMatchReason>,
 ): CommandMatchReason[] {
   const order: CommandMatchReason[] = [
+    "pinned",
     "exact",
     "prefix",
     "word",
@@ -1619,6 +1654,9 @@ function renderCommandReasonBadges(
   query: string,
 ): string {
   const reasons = new Set(commandMatchReasons.get(commandId) ?? []);
+  if (!query && sectionGroup === "Pinned") {
+    reasons.add("pinned");
+  }
   if (!query && sectionGroup === "Recent") {
     reasons.add("recent");
   }
@@ -1712,36 +1750,47 @@ function buildCommandSections(
   query: string,
   filtered: CommandAction[],
 ): CommandSection[] {
-  if (query.length > 0 || commandHistoryIds.length === 0) {
-    return groupCommandActions(filtered);
+  const sections: CommandSection[] = [];
+  const pinnedActions = orderCommandsByIds(commandPinnedIds, filtered);
+  if (pinnedActions.length > 0) {
+    sections.push({
+      group: "Pinned",
+      actions: pinnedActions,
+    });
   }
 
-  const byId = new Map(commandActions.map((command) => [command.id, command]));
-  const seen = new Set<string>();
-  const recentActions: CommandAction[] = [];
-  for (const commandId of commandHistoryIds) {
-    if (seen.has(commandId)) {
-      continue;
+  const pinnedIds = new Set(pinnedActions.map((command) => command.id));
+  let remaining = filtered.filter((command) => !pinnedIds.has(command.id));
+  if (!query && commandHistoryIds.length > 0) {
+    const recentActions = orderCommandsByIds(commandHistoryIds, remaining);
+    if (recentActions.length > 0) {
+      sections.push({
+        group: "Recent",
+        actions: recentActions,
+      });
+      const recentIds = new Set(recentActions.map((command) => command.id));
+      remaining = remaining.filter((command) => !recentIds.has(command.id));
     }
-    seen.add(commandId);
-    const command = byId.get(commandId);
+  }
+
+  sections.push(...groupCommandActions(remaining));
+  return sections;
+}
+
+function orderCommandsByIds(
+  ids: string[],
+  commands: CommandAction[],
+): CommandAction[] {
+  const byId = new Map(commands.map((command) => [command.id, command]));
+  const ordered: CommandAction[] = [];
+  for (const id of ids) {
+    const command = byId.get(id);
     if (!command) {
       continue;
     }
-    recentActions.push(command);
+    ordered.push(command);
   }
-
-  const recentIds = new Set(recentActions.map((command) => command.id));
-  const remaining = filtered.filter((command) => !recentIds.has(command.id));
-  const sections: CommandSection[] = [];
-  if (recentActions.length > 0) {
-    sections.push({
-      group: "Recent",
-      actions: recentActions,
-    });
-  }
-  sections.push(...groupCommandActions(remaining));
-  return sections;
+  return ordered;
 }
 
 function groupCommandActions(
@@ -1761,6 +1810,46 @@ function groupCommandActions(
       group,
       actions: groupedActions,
     }));
+}
+
+function loadCommandPinnedIds(): string[] {
+  try {
+    const raw = window.localStorage.getItem(COMMAND_PINNED_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+      .slice(0, COMMAND_PINNED_LIMIT);
+  } catch (error) {
+    console.warn("Unable to load pinned commands.", error);
+    return [];
+  }
+}
+
+function persistCommandPinnedIds(ids: string[]): void {
+  try {
+    window.localStorage.setItem(COMMAND_PINNED_STORAGE_KEY, JSON.stringify(ids));
+  } catch (error) {
+    console.warn("Unable to persist pinned commands.", error);
+  }
+}
+
+function isCommandPinned(commandId: string): boolean {
+  return commandPinnedIds.includes(commandId);
+}
+
+function toggleCommandPinned(commandId: string): void {
+  if (isCommandPinned(commandId)) {
+    commandPinnedIds = commandPinnedIds.filter((id) => id !== commandId);
+  } else {
+    commandPinnedIds = [commandId, ...commandPinnedIds].slice(0, COMMAND_PINNED_LIMIT);
+  }
+  persistCommandPinnedIds(commandPinnedIds);
 }
 
 function loadCommandHistoryIds(): string[] {
