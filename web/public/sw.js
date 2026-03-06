@@ -43,6 +43,9 @@ self.addEventListener("fetch", (event) => {
   }
 
   const requestUrl = new URL(event.request.url);
+  if (!isCacheableProtocol(requestUrl)) {
+    return;
+  }
   const sameOrigin = requestUrl.origin === self.location.origin;
 
   if (event.request.mode === "navigate") {
@@ -76,7 +79,7 @@ async function networkFirst(request, cacheName) {
   const cache = await caches.open(cacheName);
   try {
     const response = await fetch(request);
-    if (response && response.ok) {
+    if (response && response.ok && canStoreResponse(request, response)) {
       cache.put(request, response.clone());
     }
     return response;
@@ -106,7 +109,7 @@ async function cacheFirst(request, cacheName) {
     return cached;
   }
   const response = await fetch(request);
-  if (response && response.ok) {
+  if (response && response.ok && canStoreResponse(request, response)) {
     cache.put(request, response.clone());
   }
   return response;
@@ -117,7 +120,7 @@ async function staleWhileRevalidate(request, cacheName) {
   const cached = await cache.match(request);
   const fetchPromise = fetch(request)
     .then((response) => {
-      if (response && response.ok) {
+      if (response && response.ok && canStoreResponse(request, response)) {
         cache.put(request, response.clone());
       }
       return response;
@@ -133,4 +136,15 @@ async function staleWhileRevalidate(request, cacheName) {
     return response;
   }
   throw new Error("Network request failed and no cached response exists.");
+}
+
+function canStoreResponse(request, response) {
+  if (!response) {
+    return false;
+  }
+  return isCacheableProtocol(new URL(request.url));
+}
+
+function isCacheableProtocol(url) {
+  return url.protocol === "http:" || url.protocol === "https:";
 }
