@@ -64,6 +64,8 @@ interface CompactGraphData {
   edgeCount: number;
 }
 
+type LoadedGraphData = GraphData | CompactGraphData;
+
 interface ConnectedItem {
   nodeId: string;
   label: string;
@@ -723,7 +725,10 @@ applyTheme(activeTheme);
 applyContrast(activeContrast);
 
 const graphData = await fetchGraph();
-const recommendationIndex = buildRecommendationIndex(graphData);
+const graphNodes = getGraphNodes(graphData);
+const recommendationIndex = isCompactGraphData(graphData)
+  ? buildRecommendationIndexFromCompact(graphData)
+  : buildRecommendationIndex(graphData);
 const selectedAnimeNodeIds: string[] = [];
 const selectedAnimeWeights = new Map<string, number>();
 const includeCandidateNodeIds: string[] = [];
@@ -750,7 +755,7 @@ renderModelBlendValue();
 setBlendControlVisibility();
 
 populateAnimeOptions(recommendationIndex.animeList, animeOptions);
-populateNetworkNodeOptions(graphData.nodes, networkNodeOptions);
+populateNetworkNodeOptions(graphNodes, networkNodeOptions);
 renderSelectedAnime();
 renderIncludeCandidates();
 renderExcludeCandidates();
@@ -3785,7 +3790,10 @@ function populateNetworkNodeOptions(nodes: GraphNode[], datalist: HTMLDataListEl
     .join("");
 }
 
-function resolveNetworkNodeQuery(query: string, graphDataValue: GraphData): GraphNode | null {
+function resolveNetworkNodeQuery(
+  query: string,
+  graphDataValue: LoadedGraphData,
+): GraphNode | null {
   const raw = query.trim();
   if (!raw) {
     return null;
@@ -3793,28 +3801,29 @@ function resolveNetworkNodeQuery(query: string, graphDataValue: GraphData): Grap
 
   const rawLower = raw.toLowerCase();
   const normalized = normalizeTitle(raw);
+  const nodes = getGraphNodes(graphDataValue);
 
-  const byExactId = graphDataValue.nodes.find((node) => node.id.toLowerCase() === rawLower);
+  const byExactId = nodes.find((node) => node.id.toLowerCase() === rawLower);
   if (byExactId) {
     return byExactId;
   }
 
   if (/^\d+$/.test(raw)) {
     const animeNodeId = `anime:${Number.parseInt(raw, 10)}`;
-    const byAnimeId = graphDataValue.nodes.find((node) => node.id === animeNodeId);
+    const byAnimeId = nodes.find((node) => node.id === animeNodeId);
     if (byAnimeId) {
       return byAnimeId;
     }
   }
 
-  const byExactLabel = graphDataValue.nodes.find(
+  const byExactLabel = nodes.find(
     (node) => normalizeTitle(node.label) === normalized,
   );
   if (byExactLabel) {
     return byExactLabel;
   }
 
-  const byStartsWith = graphDataValue.nodes.find((node) =>
+  const byStartsWith = nodes.find((node) =>
     normalizeTitle(node.label).startsWith(normalized),
   );
   if (byStartsWith) {
@@ -3822,7 +3831,7 @@ function resolveNetworkNodeQuery(query: string, graphDataValue: GraphData): Grap
   }
 
   return (
-    graphDataValue.nodes.find((node) =>
+    nodes.find((node) =>
       normalizeTitle(`${node.label} ${node.id}`).includes(normalized),
     ) ?? null
   );
@@ -3921,6 +3930,60 @@ function buildRecommendationIndex(graphDataValue: GraphData): RecommendationInde
   };
 }
 
+function buildRecommendationIndexFromCompact(
+  graphDataValue: CompactGraphData,
+): RecommendationIndex {
+  const animeList: AnimeInfo[] = [];
+  const animeByNodeId = new Map<string, AnimeInfo>();
+  const animeByAnimeId = new Map<number, AnimeInfo>();
+  const titleLookup = new Map<string, AnimeInfo[]>();
+  const adjacency = new Map<string, { otherNodeId: string; weight: number }[]>();
+
+  for (const animeEntry of graphDataValue.anime) {
+    const animeId = animeEntry[0];
+    const label = String(animeEntry[1]);
+    const nodeId = `anime:${animeId}`;
+    const anime: AnimeInfo = {
+      nodeId,
+      animeId,
+      label,
+    };
+
+    animeList.push(anime);
+    animeByNodeId.set(nodeId, anime);
+    animeByAnimeId.set(animeId, anime);
+
+    const normalizedTitle = normalizeTitle(label);
+    const existing = titleLookup.get(normalizedTitle);
+    if (!existing) {
+      titleLookup.set(normalizedTitle, [anime]);
+    } else {
+      existing.push(anime);
+    }
+  }
+
+  for (const [leftAnimeIndex, rightAnimeIndex, weight] of graphDataValue.aa) {
+    const leftAnime = graphDataValue.anime[leftAnimeIndex];
+    const rightAnime = graphDataValue.anime[rightAnimeIndex];
+    if (!leftAnime || !rightAnime || !Number.isFinite(weight)) {
+      continue;
+    }
+
+    const leftNodeId = `anime:${leftAnime[0]}`;
+    const rightNodeId = `anime:${rightAnime[0]}`;
+    pushAdjacency(adjacency, leftNodeId, rightNodeId, weight);
+    pushAdjacency(adjacency, rightNodeId, leftNodeId, weight);
+  }
+
+  return {
+    animeList,
+    animeByNodeId,
+    animeByAnimeId,
+    titleLookup,
+    adjacency,
+  };
+}
+
 function pushAdjacency(
   adjacency: Map<string, { otherNodeId: string; weight: number }[]>,
   source: string,
@@ -4002,7 +4065,7 @@ function setGraphLoadingState(loading: boolean, statusMessage: string): void {
 }
 
 function renderGraph(
-  graphDataValue: GraphData,
+  graphDataValue: LoadedGraphData,
   minAbsoluteWeight: number,
   showAnimeAnimeEdges: boolean,
   showUsers: boolean,
@@ -4015,7 +4078,7 @@ function renderGraph(
     showUsers,
   );
 
-  for (const node of graphDataValue.nodes) {
+  for (const node of getGraphNodes(graphDataValue)) {
     if (!showUsers && node.nodeType === "user") {
       continue;
     }
@@ -4104,7 +4167,7 @@ function renderGraph(
 }
 
 function selectRenderableEdges(
-  graphDataValue: GraphData,
+  graphDataValue: LoadedGraphData,
   minAbsoluteWeight: number,
   showAnimeAnimeEdges: boolean,
   showUsers: boolean,
@@ -4118,29 +4181,77 @@ function selectRenderableEdges(
   let eligibleAnimeAnimeCount = 0;
   let eligibleUserAnimeCount = 0;
 
-  for (const edge of graphDataValue.edges) {
-    if (!showUsers && edge.edgeType === "user-anime") {
-      continue;
-    }
-
-    const edgePassesTypeFilter =
-      showAnimeAnimeEdges || edge.edgeType !== "anime-anime";
-    const edgePassesWeightFilter =
-      Math.abs(edge.weight) >= minAbsoluteWeight || edge.edgeType === "user-anime";
-
-    if (!edgePassesTypeFilter || !edgePassesWeightFilter) {
-      continue;
-    }
-
-    if (edge.edgeType === "anime-anime") {
-      eligibleAnimeAnimeCount += 1;
-      if (selectedAnimeAnimeEdges.length < MAX_RENDERED_ANIME_ANIME_EDGES) {
-        selectedAnimeAnimeEdges.push(edge);
+  if (isCompactGraphData(graphDataValue)) {
+    for (const [userIndex, animeIndex, weight] of graphDataValue.ua) {
+      if (!showUsers || !Number.isFinite(weight)) {
+        continue;
       }
-    } else {
       eligibleUserAnimeCount += 1;
-      if (selectedUserAnimeEdges.length < MAX_RENDERED_USER_ANIME_EDGES) {
-        selectedUserAnimeEdges.push(edge);
+      if (selectedUserAnimeEdges.length >= MAX_RENDERED_USER_ANIME_EDGES) {
+        continue;
+      }
+      const userId = graphDataValue.userIds[userIndex];
+      const animeEntry = graphDataValue.anime[animeIndex];
+      if (!userId || !animeEntry) {
+        continue;
+      }
+      selectedUserAnimeEdges.push({
+        id: `ua:${userId}:${animeEntry[0]}`,
+        source: `user:${userId}`,
+        target: `anime:${animeEntry[0]}`,
+        edgeType: "user-anime",
+        weight,
+      });
+    }
+
+    if (showAnimeAnimeEdges) {
+      for (const [leftAnimeIndex, rightAnimeIndex, weight] of graphDataValue.aa) {
+        if (!Number.isFinite(weight) || Math.abs(weight) < minAbsoluteWeight) {
+          continue;
+        }
+        eligibleAnimeAnimeCount += 1;
+        if (selectedAnimeAnimeEdges.length >= MAX_RENDERED_ANIME_ANIME_EDGES) {
+          continue;
+        }
+        const leftAnime = graphDataValue.anime[leftAnimeIndex];
+        const rightAnime = graphDataValue.anime[rightAnimeIndex];
+        if (!leftAnime || !rightAnime) {
+          continue;
+        }
+        selectedAnimeAnimeEdges.push({
+          id: `aa:${leftAnime[0]}:${rightAnime[0]}`,
+          source: `anime:${leftAnime[0]}`,
+          target: `anime:${rightAnime[0]}`,
+          edgeType: "anime-anime",
+          weight,
+        });
+      }
+    }
+  } else {
+    for (const edge of graphDataValue.edges) {
+      if (!showUsers && edge.edgeType === "user-anime") {
+        continue;
+      }
+
+      const edgePassesTypeFilter =
+        showAnimeAnimeEdges || edge.edgeType !== "anime-anime";
+      const edgePassesWeightFilter =
+        Math.abs(edge.weight) >= minAbsoluteWeight || edge.edgeType === "user-anime";
+
+      if (!edgePassesTypeFilter || !edgePassesWeightFilter) {
+        continue;
+      }
+
+      if (edge.edgeType === "anime-anime") {
+        eligibleAnimeAnimeCount += 1;
+        if (selectedAnimeAnimeEdges.length < MAX_RENDERED_ANIME_ANIME_EDGES) {
+          selectedAnimeAnimeEdges.push(edge);
+        }
+      } else {
+        eligibleUserAnimeCount += 1;
+        if (selectedUserAnimeEdges.length < MAX_RENDERED_USER_ANIME_EDGES) {
+          selectedUserAnimeEdges.push(edge);
+        }
       }
     }
   }
@@ -4160,14 +4271,14 @@ function statLine(label: string, value: string): string {
   return `<div class="stat-row"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
-async function fetchGraph(): Promise<GraphData> {
+async function fetchGraph(): Promise<LoadedGraphData> {
   const compactData = await fetchJsonWithGzipFallback<CompactGraphData>({
     path: "./data/graph.compact.json",
     required: false,
     label: "graph.compact.json",
   });
   if (compactData && isCompactGraphData(compactData)) {
-    return expandCompactGraphData(compactData);
+    return compactData;
   }
 
   const legacyData = await fetchJsonWithGzipFallback<GraphData>({
@@ -4277,75 +4388,33 @@ function isCompactGraphData(value: unknown): value is CompactGraphData {
   return maybe.format === "graph-compact-v1";
 }
 
-function expandCompactGraphData(compact: CompactGraphData): GraphData {
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
+function getGraphNodes(graphDataValue: LoadedGraphData): GraphNode[] {
+  if (!isCompactGraphData(graphDataValue)) {
+    return graphDataValue.nodes;
+  }
 
-  const userNodeIds: string[] = [];
-  for (let i = 0; i < compact.userIds.length; i += 1) {
-    const userId = compact.userIds[i];
-    const nodeId = `user:${userId}`;
-    userNodeIds.push(nodeId);
+  const nodes: GraphNode[] = [];
+  for (let i = 0; i < graphDataValue.userIds.length; i += 1) {
+    const userId = graphDataValue.userIds[i];
     nodes.push({
-      id: nodeId,
+      id: `user:${userId}`,
       label: `User ${String(userId).slice(0, 8)}`,
       nodeType: "user",
     });
   }
 
-  const animeNodeIds: string[] = [];
-  for (let i = 0; i < compact.anime.length; i += 1) {
-    const animeEntry = compact.anime[i];
+  for (let i = 0; i < graphDataValue.anime.length; i += 1) {
+    const animeEntry = graphDataValue.anime[i];
     const animeId = animeEntry[0];
     const title = animeEntry[1];
-    const nodeId = `anime:${animeId}`;
-    animeNodeIds.push(nodeId);
     nodes.push({
-      id: nodeId,
+      id: `anime:${animeId}`,
       label: String(title),
       nodeType: "anime",
     });
   }
 
-  for (const [userIndex, animeIndex, weight] of compact.ua) {
-    const source = userNodeIds[userIndex];
-    const target = animeNodeIds[animeIndex];
-    if (!source || !target || !Number.isFinite(weight)) {
-      continue;
-    }
-    edges.push({
-      id: `ua:${compact.userIds[userIndex]}:${compact.anime[animeIndex][0]}`,
-      source,
-      target,
-      edgeType: "user-anime",
-      weight,
-    });
-  }
-
-  for (const [leftAnimeIndex, rightAnimeIndex, weight] of compact.aa) {
-    const source = animeNodeIds[leftAnimeIndex];
-    const target = animeNodeIds[rightAnimeIndex];
-    if (!source || !target || !Number.isFinite(weight)) {
-      continue;
-    }
-    edges.push({
-      id: `aa:${compact.anime[leftAnimeIndex][0]}:${compact.anime[rightAnimeIndex][0]}`,
-      source,
-      target,
-      edgeType: "anime-anime",
-      weight,
-    });
-  }
-
-  return {
-    generatedAt: compact.generatedAt,
-    userCount: compact.userCount,
-    animeCount: compact.animeCount,
-    nodeCount: nodes.length,
-    edgeCount: edges.length,
-    nodes,
-    edges,
-  };
+  return nodes;
 }
 
 function isCompactModelRecommendationData(
@@ -5222,21 +5291,32 @@ function countNodesByType(graph: Graph, type: NodeType): number {
 }
 
 function getDefaultMinAnimeAnimeWeight(
-  graphDataValue: GraphData,
+  graphDataValue: LoadedGraphData,
   input: HTMLInputElement,
 ): number {
   let sumAbsWeight = 0;
   let count = 0;
 
-  for (const edge of graphDataValue.edges) {
-    if (edge.edgeType !== "anime-anime") {
-      continue;
+  if (isCompactGraphData(graphDataValue)) {
+    for (const edge of graphDataValue.aa) {
+      const weight = edge[2];
+      if (!Number.isFinite(weight)) {
+        continue;
+      }
+      sumAbsWeight += Math.abs(weight);
+      count += 1;
     }
-    if (!Number.isFinite(edge.weight)) {
-      continue;
+  } else {
+    for (const edge of graphDataValue.edges) {
+      if (edge.edgeType !== "anime-anime") {
+        continue;
+      }
+      if (!Number.isFinite(edge.weight)) {
+        continue;
+      }
+      sumAbsWeight += Math.abs(edge.weight);
+      count += 1;
     }
-    sumAbsWeight += Math.abs(edge.weight);
-    count += 1;
   }
 
   const min = Number.parseFloat(input.min || "0");
