@@ -160,8 +160,19 @@ npm run data:fetch:release
 
 Publish/update data release assets from your local `data/*.compact.json` files:
 
-- Run workflow: `.github/workflows/publish-data-release.yml`
-- Default release tag: `data-latest`
+```bash
+npm run data:publish:release
+```
+
+This packages the local ignored compact data files and uploads them to the
+`data-latest` release by default.
+
+The workflow `.github/workflows/publish-data-release.yml` is still useful when
+you want to publish from:
+
+- checked-in repo data (`source_mode=repo`)
+- a previous workflow artifact (`source_mode=artifact`)
+- the existing release payload (`source_mode=release`)
 
 ## 4) Build Static Site for GitHub Pages
 

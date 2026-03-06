@@ -17,6 +17,7 @@ web/public/data/*.json.gz
 !web/public/data/.gitkeep
 desktop/target/
 models/
+release-data/
 __pycache__/
 *.pyc
 

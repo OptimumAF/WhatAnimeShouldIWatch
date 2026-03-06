@@ -15,6 +15,15 @@ These files are intentionally not tracked in git. Use one of:
 npm run data:fetch:release
 ```
 
-To publish/update release assets from local files, run the workflow:
+To publish/update release assets from local files, use:
 
-- `.github/workflows/publish-data-release.yml`
+```bash
+npm run data:publish:release
+```
+
+The GitHub workflow `.github/workflows/publish-data-release.yml` is still available,
+but it is meant for:
+
+1. Republish from checked-in repo data (`source_mode=repo`)
+2. Publish from a prior workflow artifact (`source_mode=artifact`)
+3. Refresh metadata from the current release payload (`source_mode=release`)
