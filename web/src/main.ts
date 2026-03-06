@@ -173,6 +173,8 @@ interface ModelRecommendationIndex {
 
 const FORCE_ATLAS_MAX_EDGES = 45000;
 const FORCE_ATLAS_ITERATIONS = 180;
+const MAX_RENDERED_ANIME_ANIME_EDGES = 35000;
+const MAX_RENDERED_USER_ANIME_EDGES = 12000;
 const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
 const MIN_WATCH_WEIGHT = 0.2;
@@ -3964,7 +3966,7 @@ function rerenderGraph(): void {
 
     const startedAt = performance.now();
     try {
-      renderGraph(
+      const renderResult = renderGraph(
         graphData,
         minWeight,
         showAnimeAnimeEdges,
@@ -3975,10 +3977,13 @@ function rerenderGraph(): void {
       }
       const elapsedMs = Math.max(1, Math.round(performance.now() - startedAt));
       const visibleNodes = currentGraph ? currentGraph.order : 0;
-      const visibleEdges = currentGraph ? currentGraph.size : 0;
+      const visibleEdges = renderResult.renderedEdgeCount;
+      const limitSuffix = renderResult.edgeLimitHit
+        ? `, capped from ${renderResult.totalEligibleEdgeCount.toLocaleString()} matching edges`
+        : "";
       setGraphLoadingState(
         false,
-        `Render status: ${visibleNodes.toLocaleString()} nodes, ${visibleEdges.toLocaleString()} edges (${elapsedMs} ms).`,
+        `Render status: ${visibleNodes.toLocaleString()} nodes, ${visibleEdges.toLocaleString()} edges (${elapsedMs} ms${limitSuffix}).`,
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "unknown error";
@@ -4001,8 +4006,14 @@ function renderGraph(
   minAbsoluteWeight: number,
   showAnimeAnimeEdges: boolean,
   showUsers: boolean,
-): void {
+): { renderedEdgeCount: number; totalEligibleEdgeCount: number; edgeLimitHit: boolean } {
   const graph = new Graph({ multi: true, type: "undirected" });
+  const selectedEdges = selectRenderableEdges(
+    graphDataValue,
+    minAbsoluteWeight,
+    showAnimeAnimeEdges,
+    showUsers,
+  );
 
   for (const node of graphDataValue.nodes) {
     if (!showUsers && node.nodeType === "user") {
@@ -4020,20 +4031,7 @@ function renderGraph(
     });
   }
 
-  for (const edge of graphDataValue.edges) {
-    if (!showUsers && edge.edgeType === "user-anime") {
-      continue;
-    }
-
-    const edgePassesTypeFilter =
-      showAnimeAnimeEdges || edge.edgeType !== "anime-anime";
-    const edgePassesWeightFilter =
-      Math.abs(edge.weight) >= minAbsoluteWeight || edge.edgeType === "user-anime";
-
-    if (!edgePassesTypeFilter || !edgePassesWeightFilter) {
-      continue;
-    }
-
+  for (const edge of selectedEdges.edges) {
     if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) {
       continue;
     }
@@ -4097,6 +4095,76 @@ function renderGraph(
     selectedNodeId = null;
     renderInspectPanel(null);
   }
+
+  return {
+    renderedEdgeCount: graph.size,
+    totalEligibleEdgeCount: selectedEdges.totalEligibleEdgeCount,
+    edgeLimitHit: selectedEdges.edgeLimitHit,
+  };
+}
+
+function selectRenderableEdges(
+  graphDataValue: GraphData,
+  minAbsoluteWeight: number,
+  showAnimeAnimeEdges: boolean,
+  showUsers: boolean,
+): {
+  edges: GraphEdge[];
+  totalEligibleEdgeCount: number;
+  edgeLimitHit: boolean;
+} {
+  const eligibleAnimeAnimeEdges: GraphEdge[] = [];
+  const eligibleUserAnimeEdges: GraphEdge[] = [];
+
+  for (const edge of graphDataValue.edges) {
+    if (!showUsers && edge.edgeType === "user-anime") {
+      continue;
+    }
+
+    const edgePassesTypeFilter =
+      showAnimeAnimeEdges || edge.edgeType !== "anime-anime";
+    const edgePassesWeightFilter =
+      Math.abs(edge.weight) >= minAbsoluteWeight || edge.edgeType === "user-anime";
+
+    if (!edgePassesTypeFilter || !edgePassesWeightFilter) {
+      continue;
+    }
+
+    if (edge.edgeType === "anime-anime") {
+      eligibleAnimeAnimeEdges.push(edge);
+    } else {
+      eligibleUserAnimeEdges.push(edge);
+    }
+  }
+
+  const limitedAnimeAnimeEdges = limitEdgesByAbsoluteWeight(
+    eligibleAnimeAnimeEdges,
+    MAX_RENDERED_ANIME_ANIME_EDGES,
+  );
+  const limitedUserAnimeEdges = limitEdgesByAbsoluteWeight(
+    eligibleUserAnimeEdges,
+    MAX_RENDERED_USER_ANIME_EDGES,
+  );
+  const totalEligibleEdgeCount =
+    eligibleAnimeAnimeEdges.length + eligibleUserAnimeEdges.length;
+  const renderedEdgeCount =
+    limitedAnimeAnimeEdges.length + limitedUserAnimeEdges.length;
+
+  return {
+    edges: [...limitedUserAnimeEdges, ...limitedAnimeAnimeEdges],
+    totalEligibleEdgeCount,
+    edgeLimitHit: renderedEdgeCount < totalEligibleEdgeCount,
+  };
+}
+
+function limitEdgesByAbsoluteWeight(edges: GraphEdge[], maxEdges: number): GraphEdge[] {
+  if (edges.length <= maxEdges) {
+    return edges;
+  }
+
+  return [...edges]
+    .sort((left, right) => Math.abs(right.weight) - Math.abs(left.weight))
+    .slice(0, maxEdges);
 }
 
 function statLine(label: string, value: string): string {
