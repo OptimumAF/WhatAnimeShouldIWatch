@@ -16,6 +16,17 @@ interface GitHubRelease {
   assets: GitHubAsset[];
 }
 
+interface FetchReleaseOptions {
+  owner: string;
+  repo: string;
+  tag: string;
+  outDir: string;
+  keepGzip: boolean;
+  allowLocalFallback: boolean;
+  retries: number;
+  retryDelayMs: number;
+}
+
 const repoRoot = getRepoRoot(import.meta.url);
 
 const program = new Command()
@@ -49,16 +60,19 @@ const program = new Command()
     "If release fetch fails, continue when required local files already exist",
     isTruthy(process.env.DATA_FETCH_ALLOW_LOCAL_FALLBACK),
   )
+  .option(
+    "--retries <count>",
+    "Retry attempts for transient release-asset mismatches",
+    process.env.DATA_FETCH_RETRIES ?? "6",
+  )
+  .option(
+    "--retry-delay-ms <milliseconds>",
+    "Base delay between retry attempts",
+    process.env.DATA_FETCH_RETRY_DELAY_MS ?? "3000",
+  )
   .parse(process.argv);
 
-const options = program.opts<{
-  owner: string;
-  repo: string;
-  tag: string;
-  outDir: string;
-  keepGzip: boolean;
-  allowLocalFallback: boolean;
-}>();
+const options = program.opts<FetchReleaseOptions>();
 
 const requiredAssets = [
   "graph.compact.json.gz",
@@ -71,35 +85,7 @@ const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? "";
 async function main(): Promise<void> {
   fs.mkdirSync(options.outDir, { recursive: true });
   try {
-    const release = await resolveRelease(
-      options.owner,
-      options.repo,
-      options.tag.trim(),
-      token,
-    );
-    process.stdout.write(
-      `Using release tag ${release.tag_name} from ${options.owner}/${options.repo}\n`,
-    );
-
-    const byName = new Map(release.assets.map((asset) => [asset.name, asset]));
-    for (const required of requiredAssets) {
-      const asset = byName.get(required);
-      if (!asset) {
-        throw new Error(
-          `Missing required asset "${required}" in release ${release.tag_name}`,
-        );
-      }
-      await downloadAndExtractGzip(asset, options.outDir, options.keepGzip, token);
-    }
-
-    for (const optional of optionalAssets) {
-      const asset = byName.get(optional);
-      if (!asset) {
-        process.stdout.write(`Optional asset missing: ${optional}\n`);
-        continue;
-      }
-      await downloadAndExtractGzip(asset, options.outDir, options.keepGzip, token);
-    }
+    await fetchReleaseAssetsWithRetry(options, token);
   } catch (error) {
     if (!options.allowLocalFallback) {
       throw error;
@@ -118,6 +104,71 @@ async function main(): Promise<void> {
     );
     process.stdout.write(`Reason: ${(error as Error).message}\n`);
   }
+}
+
+async function fetchReleaseAssetsWithRetry(
+  config: FetchReleaseOptions,
+  authToken: string,
+): Promise<void> {
+  const maxAttempts = Math.max(1, parseNonNegativeInt(config.retries, "retries") + 1);
+  const retryDelayMs = parseNonNegativeInt(
+    config.retryDelayMs,
+    "retry-delay-ms",
+  );
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const release = await resolveRelease(
+        config.owner,
+        config.repo,
+        config.tag.trim(),
+        authToken,
+      );
+      process.stdout.write(
+        `Using release tag ${release.tag_name} from ${config.owner}/${config.repo}\n`,
+      );
+
+      const byName = new Map(release.assets.map((asset) => [asset.name, asset]));
+      const missingRequired = requiredAssets.filter((required) => !byName.has(required));
+      if (missingRequired.length > 0) {
+        throw new Error(
+          `Missing required assets in release ${release.tag_name}: ${missingRequired.join(", ")}`,
+        );
+      }
+
+      for (const required of requiredAssets) {
+        await downloadAndExtractGzip(
+          byName.get(required)!,
+          config.outDir,
+          config.keepGzip,
+          authToken,
+        );
+      }
+
+      for (const optional of optionalAssets) {
+        const asset = byName.get(optional);
+        if (!asset) {
+          process.stdout.write(`Optional asset missing: ${optional}\n`);
+          continue;
+        }
+        await downloadAndExtractGzip(asset, config.outDir, config.keepGzip, authToken);
+      }
+      return;
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt >= maxAttempts || !isTransientReleaseError(lastError)) {
+        break;
+      }
+      const delayMs = retryDelayMs * attempt;
+      process.stdout.write(
+        `Release asset fetch retry ${attempt}/${maxAttempts - 1} after transient failure: ${lastError.message}\n`,
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError ?? new Error("Release asset fetch failed for unknown reason");
 }
 
 async function resolveRelease(
@@ -217,6 +268,32 @@ async function downloadAndExtractGzip(
   process.stdout.write(
     `Downloaded ${asset.name} -> ${jsonName} (${formatBytes(buffer.length)} -> ${formatBytes(extracted.length)})\n`,
   );
+}
+
+function isTransientReleaseError(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("missing required asset") ||
+    message.includes("missing required assets") ||
+    message.includes("asset download failed") ||
+    message.includes("502") ||
+    message.includes("503") ||
+    message.includes("504") ||
+    message.includes("secondary rate limit")
+  );
+}
+
+function parseNonNegativeInt(value: string | number, field: string): number {
+  const parsed =
+    typeof value === "number" ? value : Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${field}: ${value}`);
+  }
+  return parsed;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatBytes(value: number): string {
