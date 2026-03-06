@@ -173,8 +173,8 @@ interface ModelRecommendationIndex {
 
 const FORCE_ATLAS_MAX_EDGES = 45000;
 const FORCE_ATLAS_ITERATIONS = 180;
-const MAX_RENDERED_ANIME_ANIME_EDGES = 35000;
-const MAX_RENDERED_USER_ANIME_EDGES = 12000;
+const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
+const MAX_RENDERED_USER_ANIME_EDGES = 4000;
 const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
 const MIN_WATCH_WEIGHT = 0.2;
@@ -4113,8 +4113,10 @@ function selectRenderableEdges(
   totalEligibleEdgeCount: number;
   edgeLimitHit: boolean;
 } {
-  const eligibleAnimeAnimeEdges: GraphEdge[] = [];
-  const eligibleUserAnimeEdges: GraphEdge[] = [];
+  const selectedAnimeAnimeEdges: GraphEdge[] = [];
+  const selectedUserAnimeEdges: GraphEdge[] = [];
+  let eligibleAnimeAnimeCount = 0;
+  let eligibleUserAnimeCount = 0;
 
   for (const edge of graphDataValue.edges) {
     if (!showUsers && edge.edgeType === "user-anime") {
@@ -4131,40 +4133,27 @@ function selectRenderableEdges(
     }
 
     if (edge.edgeType === "anime-anime") {
-      eligibleAnimeAnimeEdges.push(edge);
+      eligibleAnimeAnimeCount += 1;
+      if (selectedAnimeAnimeEdges.length < MAX_RENDERED_ANIME_ANIME_EDGES) {
+        selectedAnimeAnimeEdges.push(edge);
+      }
     } else {
-      eligibleUserAnimeEdges.push(edge);
+      eligibleUserAnimeCount += 1;
+      if (selectedUserAnimeEdges.length < MAX_RENDERED_USER_ANIME_EDGES) {
+        selectedUserAnimeEdges.push(edge);
+      }
     }
   }
-
-  const limitedAnimeAnimeEdges = limitEdgesByAbsoluteWeight(
-    eligibleAnimeAnimeEdges,
-    MAX_RENDERED_ANIME_ANIME_EDGES,
-  );
-  const limitedUserAnimeEdges = limitEdgesByAbsoluteWeight(
-    eligibleUserAnimeEdges,
-    MAX_RENDERED_USER_ANIME_EDGES,
-  );
   const totalEligibleEdgeCount =
-    eligibleAnimeAnimeEdges.length + eligibleUserAnimeEdges.length;
+    eligibleAnimeAnimeCount + eligibleUserAnimeCount;
   const renderedEdgeCount =
-    limitedAnimeAnimeEdges.length + limitedUserAnimeEdges.length;
+    selectedAnimeAnimeEdges.length + selectedUserAnimeEdges.length;
 
   return {
-    edges: [...limitedUserAnimeEdges, ...limitedAnimeAnimeEdges],
+    edges: [...selectedUserAnimeEdges, ...selectedAnimeAnimeEdges],
     totalEligibleEdgeCount,
     edgeLimitHit: renderedEdgeCount < totalEligibleEdgeCount,
   };
-}
-
-function limitEdgesByAbsoluteWeight(edges: GraphEdge[], maxEdges: number): GraphEdge[] {
-  if (edges.length <= maxEdges) {
-    return edges;
-  }
-
-  return [...edges]
-    .sort((left, right) => Math.abs(right.weight) - Math.abs(left.weight))
-    .slice(0, maxEdges);
 }
 
 function statLine(label: string, value: string): string {
