@@ -6,6 +6,7 @@
   "scripts": {
     "collect": "tsx src/collect.ts",
     "expand:network": "tsx src/expand-network.ts",
+    "expand:100x": "tsx src/expand-100x.ts",
     "build:graph": "tsx src/build-graph.ts",
     "fetch:release": "tsx src/fetch-release-data.ts",
     "sync:web": "tsx src/sync-web.ts",

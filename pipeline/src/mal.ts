@@ -10,11 +10,17 @@ function sleep(ms: number): Promise<void> {
 export async function fetchMalRatings(
   username: string,
   delayMs: number,
+  maxPages = 0,
 ): Promise<MalAnimeEntry[]> {
   const ratings: MalAnimeEntry[] = [];
   let offset = 0;
+  let pageCount = 0;
 
   while (true) {
+    if (maxPages > 0 && pageCount >= maxPages) {
+      break;
+    }
+
     const url = new URL(
       `https://myanimelist.net/animelist/${encodeURIComponent(username)}/load.json`,
     );
@@ -25,6 +31,7 @@ export async function fetchMalRatings(
     if (page.length === 0) {
       break;
     }
+    pageCount += 1;
 
     for (const entry of page) {
       if (entry.score > 0) {

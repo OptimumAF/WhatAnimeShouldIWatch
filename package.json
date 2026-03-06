@@ -9,6 +9,7 @@
   "scripts": {
     "collect": "npm run collect --workspace pipeline --",
     "expand:network": "npm run expand:network --workspace pipeline --",
+    "expand:100x": "npm run expand:100x --workspace pipeline --",
     "build:graph": "npm run build:graph --workspace pipeline --",
     "build:graph:compact": "npm run build:graph --workspace pipeline -- --compact-only",
     "data:fetch:release": "npm run fetch:release --workspace pipeline --",

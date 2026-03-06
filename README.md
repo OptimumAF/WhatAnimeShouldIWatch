@@ -65,6 +65,20 @@ Useful env/config flags:
 - `--updates-pages-per-anime` (default `1`)
 - `--fallback-users-pages` (default `2`)
 - `--min-scored-anime` (default `30`)
+- `--max-mal-pages-per-user` (default `0`, unlimited)
+
+### One-Command 100x Scale-Up
+
+Automatically scales target users to `current_users * 100` (with sane crawl defaults):
+
+```bash
+npm run expand:100x
+```
+
+Optional overrides:
+
+- `--target-total-users <count>` for an explicit target
+- `--max-mal-pages-per-user <count>` to cap MAL pages per user for faster, lighter expansion
 
 ## 2) Build Dataset + Graph JSON
 

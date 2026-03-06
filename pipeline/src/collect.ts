@@ -16,6 +16,7 @@ interface CollectOptions {
   db?: string;
   salt?: string;
   delayMs?: string;
+  maxPagesPerUser?: string;
 }
 
 const repoRoot = getRepoRoot(import.meta.url);
@@ -28,7 +29,11 @@ const program = new Command()
   .option("--users <usernames>", "Comma-separated MAL usernames")
   .option("--db <path>", "Path to SQLite database")
   .option("--salt <value>", "Salt used for username anonymization")
-  .option("--delay-ms <milliseconds>", "Delay between MAL page requests per user");
+  .option("--delay-ms <milliseconds>", "Delay between MAL page requests per user")
+  .option(
+    "--max-pages-per-user <count>",
+    "Maximum MAL pages to fetch per user (0 = unlimited)",
+  );
 
 program.parse(process.argv);
 const options = program.opts<CollectOptions>();
@@ -57,6 +62,15 @@ const delayMs = Number.parseInt(options.delayMs ?? argDelayMs ?? "800", 10);
 if (Number.isNaN(delayMs) || delayMs < 0) {
   throw new Error(`Invalid delay value: ${options.delayMs ?? argDelayMs}`);
 }
+const maxPagesPerUser = Number.parseInt(
+  options.maxPagesPerUser ?? process.env.MAX_MAL_PAGES_PER_USER ?? "0",
+  10,
+);
+if (Number.isNaN(maxPagesPerUser) || maxPagesPerUser < 0) {
+  throw new Error(
+    `Invalid max-pages-per-user value: ${options.maxPagesPerUser}`,
+  );
+}
 const db = openDatabase(dbPath);
 
 const insertTx = db.transaction(
@@ -76,7 +90,7 @@ try {
   for (const username of userNames) {
     const anonymizedId = anonymizeUsername(username, salt);
     process.stdout.write(`Fetching MAL list for "${username}"... `);
-    const ratings = await fetchMalRatings(username, delayMs);
+    const ratings = await fetchMalRatings(username, delayMs, maxPagesPerUser);
     process.stdout.write(`done (${ratings.length} scored anime)\n`);
 
     insertTx(anonymizedId, ratings);

@@ -23,6 +23,7 @@ interface ExpandNetworkOptions {
   updatesPagesPerAnime?: string;
   fallbackUsersPages?: string;
   minScoredAnime?: string;
+  maxMalPagesPerUser?: string;
 }
 
 interface DiscoveryRating {
@@ -57,6 +58,10 @@ const program = new Command()
   .option(
     "--min-scored-anime <count>",
     "Minimum rated anime required to keep a user",
+  )
+  .option(
+    "--max-mal-pages-per-user <count>",
+    "Maximum MAL pages to fetch per user (0 = unlimited)",
   );
 
 program.parse(process.argv);
@@ -99,6 +104,10 @@ const fallbackUsersPages = parseNonNegativeInt(
 const minScoredAnime = parseNonNegativeInt(
   options.minScoredAnime ?? process.env.MIN_SCORED_ANIME ?? "30",
   "min-scored-anime",
+);
+const maxMalPagesPerUser = parseNonNegativeInt(
+  options.maxMalPagesPerUser ?? process.env.MAX_MAL_PAGES_PER_USER ?? "0",
+  "max-mal-pages-per-user",
 );
 
 const db = openDatabase(dbPath);
@@ -186,6 +195,8 @@ try {
   let skippedUsers = 0;
   let failedUsers = 0;
   let discoveredUsers = 0;
+  let processedCounter = 0;
+  const startedAt = Date.now();
 
   while (queue.length > 0) {
     const totalUsers = countUsersStmt.get().count;
@@ -216,7 +227,11 @@ try {
       );
     } else {
       try {
-        const ratings = await fetchMalRatings(username, malDelayMs);
+        const ratings = await fetchMalRatings(
+          username,
+          malDelayMs,
+          maxMalPagesPerUser,
+        );
         if (ratings.length < minScoredAnime) {
           skippedUsers += 1;
           process.stdout.write(
@@ -242,6 +257,13 @@ try {
         );
         continue;
       }
+    }
+    processedCounter += 1;
+    if (processedCounter % 25 === 0) {
+      const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+      process.stdout.write(
+        `[progress] processed=${processedCounter} inserted=${insertedUsers} failed=${failedUsers} queue=${queue.length} users=${countUsersStmt.get().count} elapsed=${elapsedSec}s\n`,
+      );
     }
 
     if (updatesPagesPerAnime === 0 || discoveryRatings.length === 0) {
