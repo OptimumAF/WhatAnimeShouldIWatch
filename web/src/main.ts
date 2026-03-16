@@ -4099,9 +4099,18 @@ function renderGraph(
     showAnimeAnimeEdges,
     showUsers,
   );
+  const activeNodeIds = new Set<string>();
+
+  for (const edge of selectedEdges.edges) {
+    activeNodeIds.add(edge.source);
+    activeNodeIds.add(edge.target);
+  }
 
   for (const node of getGraphNodes(graphDataValue)) {
     if (!showUsers && node.nodeType === "user") {
+      continue;
+    }
+    if (!activeNodeIds.has(node.id)) {
       continue;
     }
 
