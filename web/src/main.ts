@@ -1,5 +1,4 @@
 ﻿import Graph from "graphology";
-import forceAtlas2 from "graphology-layout-forceatlas2";
 import Sigma from "sigma";
 import "./style.css";
 
@@ -173,8 +172,6 @@ interface ModelRecommendationIndex {
   animeByAnimeId: Map<number, ModelRecommendationAnime>;
 }
 
-const FORCE_ATLAS_MAX_EDGES = 45000;
-const FORCE_ATLAS_ITERATIONS = 180;
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
 const INSPECT_MAX_ITEMS = 250;
@@ -4550,14 +4547,7 @@ function applyLayout(graph: Graph): void {
   }
 
   try {
-    if (graph.size > FORCE_ATLAS_MAX_EDGES) {
-      assignRingLayout(graph);
-    } else {
-      forceAtlas2.assign(graph, {
-        iterations: FORCE_ATLAS_ITERATIONS,
-        settings: forceAtlas2.inferSettings(graph),
-      });
-    }
+    assignRingLayout(graph);
   } catch (error) {
     console.warn("Graph layout failed; using fallback ring layout.", error);
     assignRingLayout(graph);
