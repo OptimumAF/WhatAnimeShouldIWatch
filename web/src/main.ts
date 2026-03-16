@@ -253,12 +253,19 @@ if (!app) {
   throw new Error("Missing #app container");
 }
 
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
+if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register("./sw.js", { scope: "./" })
+      .getRegistrations()
+      .then((registrations) =>
+        Promise.all(
+          registrations
+            .filter((registration) => registration.scope.startsWith(window.location.origin))
+            .map((registration) => registration.unregister()),
+        ),
+      )
       .catch((error) => {
-        console.warn("Service worker registration failed.", error);
+        console.warn("Service worker cleanup failed.", error);
       });
   });
 }
