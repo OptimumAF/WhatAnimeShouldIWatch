@@ -1468,11 +1468,12 @@ button:hover,
 
 .graph-svg circle {
   cursor: pointer;
-  transition: transform 120ms ease, opacity 120ms ease;
+  transition: opacity 120ms ease, stroke 120ms ease, stroke-width 120ms ease;
 }
 
 .graph-svg circle:hover {
-  transform: scale(1.08);
+  stroke: color-mix(in srgb, var(--accent) 72%, white);
+  stroke-width: 2px;
 }
 
 .graph-svg text {
