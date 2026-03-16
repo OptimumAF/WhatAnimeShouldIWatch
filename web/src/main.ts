@@ -1,5 +1,4 @@
 ﻿import Graph from "graphology";
-import Sigma from "sigma";
 import "./style.css";
 
 type NodeType = "user" | "anime";
@@ -203,6 +202,7 @@ const COMMAND_HISTORY_STORAGE_KEY = "wasiw.commandHistory.v1";
 const COMMAND_HISTORY_LIMIT = 6;
 const COMMAND_PINNED_STORAGE_KEY = "wasiw.commandPinned.v1";
 const COMMAND_PINNED_LIMIT = 8;
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 interface StoredRecommendationState {
   version: number;
@@ -689,7 +689,6 @@ const inspectValuesEl = mustElement<HTMLDivElement>("#inspect-values");
 const inspectListEl = mustElement<HTMLUListElement>("#inspect-list");
 const clearSelectionBtn = mustElement<HTMLButtonElement>("#clear-selection");
 
-let renderer: Sigma | null = null;
 let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
 let explorerGraphData: LoadedGraphData | null = null;
@@ -1238,8 +1237,8 @@ clearSelectionBtn.addEventListener("click", () => {
   selectedNodeId = null;
   networkSearchMessage.textContent = "";
   renderInspectPanel(null);
-  if (renderer) {
-    renderer.refresh();
+  if (currentGraph) {
+    renderSvgGraph(currentGraph);
   }
 });
 
@@ -3877,22 +3876,20 @@ function selectNodeAndFocus(nodeId: string): void {
 }
 
 function focusNodeInRenderer(nodeId: string): void {
-  if (!currentGraph || !renderer || !currentGraph.hasNode(nodeId)) {
+  if (!currentGraph || !currentGraph.hasNode(nodeId)) {
     return;
   }
+  selectedNodeId = nodeId;
   renderInspectPanel(nodeId);
-
-  const attrs = currentGraph.getNodeAttributes(nodeId) as Record<string, unknown>;
-  const x = Number(attrs.x);
-  const y = Number(attrs.y);
-  if (Number.isFinite(x) && Number.isFinite(y)) {
-    const camera = renderer.getCamera();
-    camera.animate(
-      { x, y, ratio: 0.32 },
-      { duration: prefersReducedMotion() ? 0 : 360 },
-    );
-  }
-  renderer.refresh();
+  renderSvgGraph(currentGraph);
+  const target = graphContainer.querySelector<SVGElement>(
+    `[data-node-id="${cssEscapeAttributeValue(nodeId)}"]`,
+  );
+  target?.scrollIntoView({
+    block: "center",
+    inline: "center",
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+  });
 }
 
 function buildRecommendationIndex(graphDataValue: GraphData): RecommendationIndex {
@@ -4138,35 +4135,7 @@ function renderGraph(
 
   applyLayout(graph);
   currentGraph = graph;
-
-  if (renderer) {
-    renderer.kill();
-  }
-
-  renderer = new Sigma(graph, graphContainer, {
-    renderEdgeLabels: false,
-    labelRenderedSizeThreshold: 14,
-    allowInvalidContainer: false,
-  });
-  applySelectionReducers();
-
-  renderer.on("clickNode", (event) => {
-    selectedNodeId = event.node;
-    renderInspectPanel(event.node);
-    networkSearchMessage.textContent = `Focused: ${event.node}`;
-    if (renderer) {
-      renderer.refresh();
-    }
-  });
-
-  renderer.on("clickStage", () => {
-    selectedNodeId = null;
-    networkSearchMessage.textContent = "";
-    renderInspectPanel(null);
-    if (renderer) {
-      renderer.refresh();
-    }
-  });
+  renderSvgGraph(graph);
 
   const visibleUsers = countNodesByType(graph, "user");
   const visibleAnime = graph.order - visibleUsers;
@@ -4556,60 +4525,160 @@ function applyLayout(graph: Graph): void {
   sanitizeCoordinates(graph);
 }
 
-function applySelectionReducers(): void {
-  if (!renderer || !currentGraph) {
+function renderSvgGraph(graph: Graph): void {
+  graphContainer.replaceChildren();
+  if (graph.order === 0) {
     return;
   }
 
-  renderer.setSetting("nodeReducer", (node, data) => {
-    if (!selectedNodeId || !currentGraph || !currentGraph.hasNode(selectedNodeId)) {
-      return data;
-    }
+  const width = 1200;
+  const height = 900;
+  const padding = 56;
+  const coords = new Map<string, { x: number; y: number }>();
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
 
-    const selected = selectedNodeId;
-    if (node === selected) {
-      return {
-        ...data,
-        zIndex: 2,
-        size: ((data.size as number) ?? 1) * 1.35,
-        color: "#ffd166",
-      };
-    }
-
-    const connected =
-      currentGraph.hasEdge(node, selected) || currentGraph.hasEdge(selected, node);
-    if (connected) {
-      return {
-        ...data,
-        zIndex: 1,
-      };
-    }
-
-    return {
-      ...data,
-      color: "#4f607388",
-      label: "",
-    };
+  graph.forEachNode((node, attributes) => {
+    const x = Number(attributes.x);
+    const y = Number(attributes.y);
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+    coords.set(node, { x, y });
   });
 
-  renderer.setSetting("edgeReducer", (edge, data) => {
-    if (!selectedNodeId || !currentGraph || !currentGraph.hasNode(selectedNodeId)) {
-      return data;
+  const spanX = Math.max(maxX - minX, 0.001);
+  const spanY = Math.max(maxY - minY, 0.001);
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "graph-svg");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Anime recommendation network");
+
+  const edgeLayer = document.createElementNS(SVG_NS, "g");
+  edgeLayer.setAttribute("class", "graph-edge-layer");
+  const nodeLayer = document.createElementNS(SVG_NS, "g");
+  nodeLayer.setAttribute("class", "graph-node-layer");
+  const labelLayer = document.createElementNS(SVG_NS, "g");
+  labelLayer.setAttribute("class", "graph-label-layer");
+
+  const selected = selectedNodeId;
+  const connectedToSelected = new Set<string>();
+  if (selected && graph.hasNode(selected)) {
+    graph.forEachNeighbor(selected, (neighbor) => {
+      connectedToSelected.add(neighbor);
+    });
+  }
+
+  graph.forEachEdge((_edgeKey, attributes, source, target) => {
+    const sourceCoord = coords.get(source);
+    const targetCoord = coords.get(target);
+    if (!sourceCoord || !targetCoord) {
+      return;
     }
-    const source = currentGraph.source(edge);
-    const target = currentGraph.target(edge);
-    if (source === selectedNodeId || target === selectedNodeId) {
-      return {
-        ...data,
-        color: "#ffd166bb",
-        size: ((data.size as number) ?? 1) * 1.3,
-      };
-    }
-    return {
-      ...data,
-      color: "#30415655",
-    };
+
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", String(scaleGraphCoordinate(sourceCoord.x, minX, spanX, padding, width)));
+    line.setAttribute("y1", String(scaleGraphCoordinate(sourceCoord.y, minY, spanY, padding, height)));
+    line.setAttribute("x2", String(scaleGraphCoordinate(targetCoord.x, minX, spanX, padding, width)));
+    line.setAttribute("y2", String(scaleGraphCoordinate(targetCoord.y, minY, spanY, padding, height)));
+
+    const edgeAttrs = attributes as Record<string, unknown>;
+    const baseColor =
+      typeof edgeAttrs.color === "string" ? edgeAttrs.color : "#6fffe944";
+    const baseSize = Number(edgeAttrs.size) || 1;
+    const highlighted =
+      selected !== null && (source === selected || target === selected);
+    line.setAttribute("stroke", highlighted ? "#ffd166bb" : selected ? "#30415655" : baseColor);
+    line.setAttribute("stroke-width", String(highlighted ? baseSize * 1.3 : baseSize));
+    line.setAttribute("stroke-linecap", "round");
+    edgeLayer.appendChild(line);
   });
+
+  graph.forEachNode((node, attributes) => {
+    const coord = coords.get(node);
+    if (!coord) {
+      return;
+    }
+
+    const x = scaleGraphCoordinate(coord.x, minX, spanX, padding, width);
+    const y = scaleGraphCoordinate(coord.y, minY, spanY, padding, height);
+    const nodeAttrs = attributes as Record<string, unknown>;
+    const baseColor = typeof nodeAttrs.color === "string" ? nodeAttrs.color : "#0f8b8d";
+    const baseSize = Number(nodeAttrs.size) || 3;
+    const isSelected = selected === node;
+    const isConnected = selected !== null && connectedToSelected.has(node);
+    const dimmed = selected !== null && !isSelected && !isConnected;
+
+    const circle = document.createElementNS(SVG_NS, "circle");
+    circle.setAttribute("cx", String(x));
+    circle.setAttribute("cy", String(y));
+    circle.setAttribute("r", String(isSelected ? baseSize * 1.5 : baseSize));
+    circle.setAttribute("fill", isSelected ? "#ffd166" : dimmed ? "#4f607388" : baseColor);
+    circle.setAttribute("data-node-id", node);
+    circle.setAttribute("tabindex", "0");
+    circle.setAttribute("role", "button");
+    circle.setAttribute("aria-label", String(nodeAttrs.label ?? node));
+    circle.addEventListener("click", () => {
+      selectedNodeId = node;
+      networkSearchMessage.textContent = `Focused: ${node}`;
+      renderInspectPanel(node);
+      renderSvgGraph(graph);
+    });
+    circle.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectedNodeId = node;
+        networkSearchMessage.textContent = `Focused: ${node}`;
+        renderInspectPanel(node);
+        renderSvgGraph(graph);
+      }
+    });
+    nodeLayer.appendChild(circle);
+
+    if (isSelected || graph.order <= 180) {
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("x", String(x + 8));
+      label.setAttribute("y", String(y - 8));
+      label.setAttribute("fill", dimmed ? "#6d7b8c" : "#f5f7fa");
+      label.setAttribute("font-size", isSelected ? "18" : "12");
+      label.setAttribute("font-family", "IBM Plex Mono, monospace");
+      label.textContent = String(nodeAttrs.label ?? node);
+      labelLayer.appendChild(label);
+    }
+  });
+
+  svg.addEventListener("click", (event) => {
+    if (event.target === svg || event.target === edgeLayer) {
+      selectedNodeId = null;
+      networkSearchMessage.textContent = "";
+      renderInspectPanel(null);
+      renderSvgGraph(graph);
+    }
+  });
+
+  svg.append(edgeLayer, nodeLayer, labelLayer);
+  graphContainer.appendChild(svg);
+}
+
+function scaleGraphCoordinate(
+  value: number,
+  min: number,
+  span: number,
+  padding: number,
+  extent: number,
+): number {
+  return padding + ((value - min) / span) * (extent - padding * 2);
+}
+
+function cssEscapeAttributeValue(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
 function assignRingLayout(graph: Graph): void {
