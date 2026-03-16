@@ -1423,6 +1423,10 @@ button:hover,
   z-index: 5;
 }
 
+.graph-loading[hidden] {
+  display: none;
+}
+
 .graph-loading p {
   margin: 0;
   color: var(--accent-soft);
