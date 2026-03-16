@@ -688,6 +688,8 @@ const clearSelectionBtn = mustElement<HTMLButtonElement>("#clear-selection");
 let renderer: Sigma | null = null;
 let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
+let explorerGraphData: LoadedGraphData | null = null;
+let explorerGraphDataPromise: Promise<LoadedGraphData> | null = null;
 let activeView: AppView = "recommendations";
 let recommendationMode: RecommendationMode = "graph";
 let modelBlendWeight = 0.5;
@@ -1290,9 +1292,21 @@ function setActiveView(view: AppView, fromHash: boolean): void {
   }
 
   if (view === "network") {
-    window.requestAnimationFrame(() => {
-      rerenderGraph();
-    });
+    setGraphLoadingState(true, "Render status: loading explorer data...");
+    void ensureExplorerGraphData()
+      .then(() => {
+        window.requestAnimationFrame(() => {
+          rerenderGraph();
+        });
+      })
+      .catch((error) => {
+        const errorMessage = error instanceof Error ? error.message : "unknown error";
+        setGraphLoadingState(
+          false,
+          `Render status: failed to load explorer data (${errorMessage}).`,
+        );
+        console.error("Explorer graph load failed.", error);
+      });
   } else {
     graphRenderRunId += 1;
     setGraphLoadingState(false, "Render status: ready.");
@@ -4014,6 +4028,7 @@ function rerenderGraph(): void {
   const showAnimeAnimeEdges = toggleAnimeEdges.checked;
   const showUsers = toggleUsers.checked;
   const runId = ++graphRenderRunId;
+  const renderSource = explorerGraphData ?? graphData;
 
   setGraphLoadingState(true, "Render status: rendering network...");
 
@@ -4030,7 +4045,7 @@ function rerenderGraph(): void {
     const startedAt = performance.now();
     try {
       const renderResult = renderGraph(
-        graphData,
+        renderSource,
         minWeight,
         showAnimeAnimeEdges,
         showUsers,
@@ -4290,6 +4305,29 @@ async function fetchGraph(): Promise<LoadedGraphData> {
     throw new Error("Unable to load required graph data.");
   }
   return legacyData;
+}
+
+async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
+  if (explorerGraphData) {
+    return explorerGraphData;
+  }
+  if (!explorerGraphDataPromise) {
+    explorerGraphDataPromise = fetchExplorerGraph();
+  }
+  explorerGraphData = await explorerGraphDataPromise;
+  return explorerGraphData;
+}
+
+async function fetchExplorerGraph(): Promise<LoadedGraphData> {
+  const explorerCompactData = await fetchJsonWithGzipFallback<CompactGraphData>({
+    path: "./data/graph-explorer.compact.json",
+    required: false,
+    label: "graph-explorer.compact.json",
+  });
+  if (explorerCompactData && isCompactGraphData(explorerCompactData)) {
+    return explorerCompactData;
+  }
+  return graphData;
 }
 
 async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
