@@ -70,7 +70,7 @@ test("persistence uses injected storage, prefix, and clock while migrating legac
   assert.equal(fake.values.has("wasiw.demo.recommendationState.v4"), true);
   assert.deepEqual(persistence.loadRecommendationState(), {
     mode: "hybrid", selected: state.selected, modelBlendWeight: 0.35,
-    includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"],
+    includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"], history: [],
   });
 
   fake.values.set("wasiw.demo.recommendationProfiles.v1", JSON.stringify([
@@ -109,7 +109,7 @@ test("denied browser storage has deterministic fallbacks without DOM setup", () 
   try {
     assert.deepEqual(persistence.loadRecommendationState(), {
       mode: "graph", selected: [], modelBlendWeight: 0.5,
-      includeCandidates: [], excludeCandidates: [],
+      includeCandidates: [], excludeCandidates: [], history: [],
     });
     assert.equal(persistence.loadThemeModePreference(() => true), "light");
     assert.deepEqual(persistence.loadRecommendationProfiles(), new Map());
@@ -135,8 +135,10 @@ test("provider imports and metadata use only mocked direct transport and seeded 
     if (parsed.hostname === "graphql.anilist.co") {
       assert.equal(init?.method, "POST");
       assert.equal(JSON.parse(String(init?.body)).variables.userName, "fixture-user");
-      return jsonResponse({ data: { MediaListCollection: { lists: [
-        { entries: [{ score: 9, media: { idMal: 101 } }] },
+      return jsonResponse({ data: { User: { mediaListOptions: { scoreFormat: "POINT_10_DECIMAL" } },
+        MediaListCollection: { lists: [
+        { entries: [{ score: 9, status: "COMPLETED", progress: 12,
+          media: { id: 501, idMal: 101, title: { romaji: "Copper Comet" } } }] },
       ] } } });
     }
     if (parsed.pathname === "/v4/anime/102/full") {
@@ -154,8 +156,13 @@ test("provider imports and metadata use only mocked direct transport and seeded 
   const provider = createProviderAdapter(fake.runtime);
   const mal = await provider.fetchMalUsernameImport("fixture-user", index);
   assert.deepEqual(mal.entries.map((entry) => [entry.anime.animeId, entry.weight]), [[102, 1.6]]);
+  assert.deepEqual([mal.history[0].provider, mal.history[0].sourceId, mal.history[0].scoreScale],
+    ["mal", "102", "mal-10"]);
   const anilist = await provider.fetchAniListUsernameImport("fixture-user", index);
   assert.deepEqual(anilist.entries.map((entry) => [entry.anime.animeId, entry.weight]), [[101, 1.8]]);
+  assert.deepEqual([anilist.history[0].sourceId, anilist.history[0].status,
+    anilist.history[0].progressEpisodes, anilist.history[0].scoreScale],
+  ["501", "completed", 12, "POINT_10_DECIMAL"]);
   const metadata = await provider.fetchAnimeMetadataFromJikan(102);
   assert.equal(metadata.state, "ready");
   if (metadata.state === "ready") {
@@ -179,6 +186,85 @@ test("a provider rejection is testable without the page and never uses a proxy",
   assert.equal(fake.requests.length, 1);
   assert.equal(new URL(fake.requests[0].url).hostname, "myanimelist.net");
   assert.deepEqual(fake.sleeps, []);
+});
+
+test("mocked username imports keep status, progress, unscored and unmapped provider identities", async () => {
+  const fake = fakeRuntime((url) => new URL(url).hostname === "myanimelist.net"
+    ? jsonResponse([
+      { anime_id: 101, anime_title: "Copper Comet", score: 8, status: 2, num_watched_episodes: 12 },
+      { anime_id: 102, anime_title: "Moonlit Workshop", score: 0, status: 1, num_watched_episodes: 3 },
+      { anime_id: 99999, anime_title: "Unknown Fixture", score: 0, status: 6, num_watched_episodes: 0 },
+      { anime_id: 101, anime_title: "Copper Comet", score: 9, status: 2, num_watched_episodes: 12 },
+    ]) : jsonResponse({ data: { User: { mediaListOptions: { scoreFormat: "POINT_10_DECIMAL" } },
+      MediaListCollection: { lists: [
+      { entries: [
+        { score: 0, status: "PLANNING", progress: 0,
+          media: { id: 777, idMal: null, title: { romaji: "Invented Unmapped" } } },
+        { score: 8.5, status: "CURRENT", progress: 4,
+          media: { id: 778, idMal: 102, title: { romaji: "Moonlit Workshop" } } },
+      ] },
+    ] } } }));
+  const adapter = createProviderAdapter(fake.runtime);
+  const mal = await adapter.fetchMalUsernameImport("fixture-user", index);
+  assert.equal(mal.duplicateCount, 1);
+  assert.deepEqual(mal.history.map((entry) => [entry.sourceId, entry.status,
+    entry.progressEpisodes, entry.score]), [
+    ["101", "completed", 12, 9], ["102", "watching", 3, null],
+    ["99999", "plan_to_watch", 0, null],
+  ]);
+  assert.equal(mal.ratedCount, 1);
+  const anilist = await adapter.fetchAniListUsernameImport("fixture-user", index);
+  assert.deepEqual(anilist.history.map((entry) => [entry.sourceId, entry.animeId,
+    entry.status, entry.progressEpisodes, entry.score, entry.scoreScale]), [
+    ["777", null, "plan_to_watch", 0, null, "POINT_10_DECIMAL"],
+    ["778", 102, "watching", 4, 8.5, "POINT_10_DECIMAL"],
+  ]);
+  assert.deepEqual(fake.requests.map((request) => new URL(request.url).hostname),
+    ["myanimelist.net", "graphql.anilist.co"]);
+});
+
+test("AniList import retains native score formats before provisional preference conversion", async () => {
+  const cases = [
+    { scale: "POINT_100", score: 80, weight: 1.6 },
+    { scale: "POINT_10_DECIMAL", score: 8.5, weight: 1.7 },
+    { scale: "POINT_10", score: 8, weight: 1.6 },
+    { scale: "POINT_5", score: 4, weight: 1.6 },
+    { scale: "POINT_3", score: 3, weight: 2 },
+    { scale: "POINT_3", score: 1, weight: null },
+  ];
+  for (const { scale, score, weight } of cases) {
+    const fake = fakeRuntime((_url, init) => {
+      const query = JSON.parse(String(init?.body)).query as string;
+      assert.match(query, /User\(name: \$userName\).*scoreFormat/s);
+      assert.match(query, /\bscore\s*\n/);
+      assert.doesNotMatch(query, /score\(format:/);
+      return jsonResponse({ data: {
+        User: { mediaListOptions: { scoreFormat: scale } },
+        MediaListCollection: { lists: [{ entries: [
+          { score, status: "COMPLETED", progress: 12,
+            media: { id: 501, idMal: 101, title: { romaji: "Copper Comet" } } },
+        ] }] },
+      } });
+    });
+    const result = await createProviderAdapter(fake.runtime)
+      .fetchAniListUsernameImport("fixture-user", index);
+    assert.deepEqual([result.history[0].score, result.history[0].scoreScale], [score, scale]);
+    assert.deepEqual(result.entries.map((entry) => entry.weight), weight === null ? [] : [weight]);
+  }
+});
+
+test("AniList import rejects missing or inconsistent score scale", async () => {
+  for (const scale of [undefined, "POINT_5", "NOT_A_SCALE"]) {
+    const fake = fakeRuntime(() => jsonResponse({ data: {
+      User: { mediaListOptions: { scoreFormat: scale } },
+      MediaListCollection: { lists: [{ entries: [
+        { score: 8, status: "COMPLETED", progress: 1,
+          media: { id: 501, idMal: 101, title: { romaji: "Copper Comet" } } },
+      ] }] },
+    } }));
+    await assert.rejects(createProviderAdapter(fake.runtime)
+      .fetchAniListUsernameImport("fixture-user", index), /score format|invalid list score/);
+  }
 });
 
 test("metadata and seasonal reads share one Jikan quota in the browser adapter", async () => {
@@ -254,7 +340,8 @@ test("AniList distinguishes a returned empty list from an unavailable collection
   const empty = fakeRuntime(() => jsonResponse({ data: { MediaListCollection: { lists: [] } } }));
   const emptyResult = await createProviderAdapter(empty.runtime)
     .fetchAniListUsernameImport("fixture-user", index);
-  assert.deepEqual(emptyResult, { entries: [], ratedCount: 0, unmappedCount: 0 });
+  assert.deepEqual(emptyResult, { entries: [], history: [], duplicateCount: 0,
+    ratedCount: 0, unmappedCount: 0 });
 
   const unavailable = fakeRuntime(() => jsonResponse({ data: { MediaListCollection: null } }));
   await assert.rejects(

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createPersistenceAdapter } from "../src/persistence.ts";
+import { parseTextHistory } from "../src/import-history.ts";
 import type { RuntimePorts, StoragePort } from "../src/runtime.ts";
 
 function storageRuntime() {
@@ -44,20 +45,21 @@ test("legacy state and named profiles migrate with exact raw backups and unknown
   assert.deepEqual(persistence.loadRecommendationState(), {
     mode: "hybrid", selected: oldState.selected, modelBlendWeight: 0.35,
     includeCandidates: oldState.includeCandidates, excludeCandidates: oldState.excludeCandidates,
+    history: [],
   });
   assert.deepEqual(persistence.loadRecommendationProfiles().get("Fixture Profile")?.state, {
-    ...oldState, version: 4,
+    ...oldState, version: 4, history: [],
   });
   assert.equal(fake.values.get("wasiw.demo.recommendationState.v1.backup"), stateRaw);
   assert.equal(fake.values.get("wasiw.demo.recommendationProfiles.v1.backup"), profilesRaw);
   assert.equal(fake.values.get("wasiw.demo.recommendationState.v1"), stateRaw);
   assert.equal(fake.values.get("wasiw.demo.recommendationProfiles.v1"), profilesRaw);
   assert.deepEqual(JSON.parse(fake.values.get("wasiw.demo.recommendationState.v4") ?? "null"), {
-    ...oldState, version: 4,
+    ...oldState, version: 4, history: [],
   });
   assert.deepEqual(JSON.parse(fake.values.get("wasiw.demo.recommendationProfiles.v4") ?? "null"), {
     version: 4,
-    profiles: [{ name: "Fixture Profile", updatedAt: "2026-01-01T00:00:00Z", state: { ...oldState, version: 4 } }],
+    profiles: [{ name: "Fixture Profile", updatedAt: "2026-01-01T00:00:00Z", state: { ...oldState, version: 4, history: [] } }],
   });
   assert.deepEqual(persistence.getStorageWarnings(), []);
 
@@ -76,9 +78,33 @@ test("v1 and v2 state defaults migrate without dropping watched weights", () => 
     const state = createPersistenceAdapter(fake.runtime, "wasiw.demo").loadRecommendationState();
     assert.deepEqual(state, {
       mode: "model", selected: [{ nodeId: "anime:999", weight: 2.2 }],
-      modelBlendWeight: 0.5, includeCandidates: [], excludeCandidates: [],
+      modelBlendWeight: 0.5, includeCandidates: [], excludeCandidates: [], history: [],
     });
   }
+});
+
+test("full imported history survives state and profile reload without dropping unknown identities", () => {
+  const fake = storageRuntime();
+  const history = parseTextHistory("101, 9, Completed, 12\n99999, 0, Plan to Watch, 0").entries;
+  const persistence = createPersistenceAdapter(fake.runtime, "wasiw.demo");
+  const state = {
+    version: 4, mode: "graph" as const,
+    selected: [{ nodeId: "anime:101", weight: 1.8 }],
+    history,
+  };
+  assert.equal(persistence.persistRecommendationState(state), true);
+  const profile = new Map([["Fixture history", {
+    name: "Fixture history", updatedAt: "2026-09-25T00:00:00.000Z", state,
+  }]]);
+  assert.equal(persistence.persistRecommendationProfiles(profile), true);
+
+  const reopened = createPersistenceAdapter(fake.runtime, "wasiw.demo");
+  assert.deepEqual(reopened.loadRecommendationState().history, history);
+  assert.deepEqual(reopened.loadRecommendationProfiles().get("Fixture history")?.state.history, history);
+  const raw = fake.values.get("wasiw.demo.recommendationState.v4");
+  assert.ok(raw);
+  assert.equal(reopened.persistRecommendationState({ ...state, history: [...history, history[0]] }), false);
+  assert.equal(fake.values.get("wasiw.demo.recommendationState.v4"), raw);
 });
 
 test("corrupt current state and profiles recover from valid backups without overwriting them", () => {

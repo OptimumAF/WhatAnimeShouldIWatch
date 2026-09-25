@@ -80,7 +80,7 @@ test("legacy profiles keep catalog-missing selections and overrides through load
     stateBackup: localStorage.getItem("wasiw.demo.recommendationState.v1.backup"),
     profileBackup: localStorage.getItem("wasiw.demo.recommendationProfiles.v1.backup"),
   }));
-  expect(migrated.state).toEqual({ ...legacy, version: 4 });
+  expect(migrated.state).toEqual({ ...legacy, version: 4, history: [] });
   expect(migrated.stateBackup).toBe(JSON.stringify(legacy));
   expect(migrated.profileBackup).toContain("Fixture Profile");
 
