@@ -101,6 +101,18 @@ body {
   grid-template-rows: auto 1fr;
 }
 
+.demo-banner {
+  display: inline-block;
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.7rem;
+  border: 2px solid var(--accent);
+  border-radius: 0.35rem;
+  color: var(--text);
+  background: var(--surface-active);
+  font: 700 0.78rem "IBM Plex Mono", monospace;
+  letter-spacing: 0.02em;
+}
+
 .topbar {
   position: sticky;
   top: 0;

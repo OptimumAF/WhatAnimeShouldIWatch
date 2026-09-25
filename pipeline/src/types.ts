@@ -50,6 +50,7 @@ export interface GraphEdge {
   target: string;
   edgeType: "user-anime" | "anime-anime";
   weight: number;
+  support?: number;
 }
 
 export interface GraphData {
@@ -71,6 +72,7 @@ export type CompactAnimeAnimeEdge = [
   leftAnimeIndex: number,
   rightAnimeIndex: number,
   weight: number,
+  support?: number,
 ];
 
 export interface CompactGraphData {

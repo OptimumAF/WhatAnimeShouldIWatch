@@ -9,7 +9,7 @@ interface CompactGraphData {
   userIds: string[];
   anime: [number, string][];
   ua: [number, number, number][];
-  aa: [number, number, number][];
+  aa: [number, number, number, number?][];
   userCount: number;
   animeCount: number;
   nodeCount: number;
@@ -179,7 +179,7 @@ function buildExplorerGraph(graph: CompactGraphData): CompactGraphData {
   };
 
   const ua: [number, number, number][] = [];
-  const aa: [number, number, number][] = [];
+  const aa: [number, number, number, number?][] = [];
 
   for (const [userIndex, animeIndex, weight] of selectedUa) {
     if (!graph.userIds[userIndex] || !graph.anime[animeIndex]) {
@@ -188,11 +188,13 @@ function buildExplorerGraph(graph: CompactGraphData): CompactGraphData {
     ua.push([remapUser(userIndex), remapAnime(animeIndex), weight]);
   }
 
-  for (const [leftAnimeIndex, rightAnimeIndex, weight] of selectedAa) {
+  for (const [leftAnimeIndex, rightAnimeIndex, weight, support] of selectedAa) {
     if (!graph.anime[leftAnimeIndex] || !graph.anime[rightAnimeIndex]) {
       continue;
     }
-    aa.push([remapAnime(leftAnimeIndex), remapAnime(rightAnimeIndex), weight]);
+    aa.push(support === undefined
+      ? [remapAnime(leftAnimeIndex), remapAnime(rightAnimeIndex), weight]
+      : [remapAnime(leftAnimeIndex), remapAnime(rightAnimeIndex), weight, support]);
   }
 
   return {
@@ -210,9 +212,9 @@ function buildExplorerGraph(graph: CompactGraphData): CompactGraphData {
 }
 
 function selectTopEdges(
-  edges: [number, number, number][],
+  edges: [number, number, number, number?][],
   limit: number,
-): [number, number, number][] {
+): [number, number, number, number?][] {
   if (edges.length <= limit) {
     return edges;
   }

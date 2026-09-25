@@ -15,6 +15,10 @@ web/dist/
 web/public/data/*.json
 web/public/data/*.json.gz
 !web/public/data/.gitkeep
+web/public/demo-data/
+.playwright-cli/
+web/test-results/
+web/playwright-report/
 desktop/target/
 models/
 release-data/

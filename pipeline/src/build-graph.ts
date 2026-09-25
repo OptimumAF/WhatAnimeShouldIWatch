@@ -3,6 +3,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { loadDatasetFromDb, openDatabase } from "./db.js";
 import { getRepoRoot } from "./paths.js";
+import { aggregateAnimePairs } from "./core/pair-aggregation.js";
 import type {
   CompactAnonymizedDataset,
   CompactGraphData,
@@ -216,8 +217,6 @@ function createGraph(
 } {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
-  const animePairEdgeWeights = new Map<string, number>();
-  let skippedNewAnimeAnimePairs = 0;
 
   for (const user of dataset.users) {
     const userNodeId = `user:${user.userId}`;
@@ -250,39 +249,18 @@ function createGraph(
         weight: roundWeight(rating.normalizedScore),
       });
     }
-
-    for (let i = 0; i < userRatings.length; i += 1) {
-      const left = userRatings[i];
-      for (let j = i + 1; j < userRatings.length; j += 1) {
-        const right = userRatings[j];
-        const low = Math.min(left.animeId, right.animeId);
-        const high = Math.max(left.animeId, right.animeId);
-        const key = `${low}:${high}`;
-        const userPairScore = (left.normalizedScore + right.normalizedScore) / 2;
-        const current = animePairEdgeWeights.get(key);
-        if (
-          current === undefined &&
-          maxAnimeAnimeEdges > 0 &&
-          animePairEdgeWeights.size >= maxAnimeAnimeEdges
-        ) {
-          skippedNewAnimeAnimePairs += 1;
-          continue;
-        }
-        const next =
-          current === undefined ? userPairScore : (current + userPairScore) / 2;
-        animePairEdgeWeights.set(key, next);
-      }
-    }
   }
 
-  for (const [pair, weight] of animePairEdgeWeights.entries()) {
+  const pairResult = aggregateAnimePairs(dataset.users, maxRatingsPerUser, maxAnimeAnimeEdges);
+  for (const [pair, aggregate] of pairResult.pairs.entries()) {
     const [low, high] = pair.split(":");
     edges.push({
       id: `aa:${pair}`,
       source: `anime:${low}`,
       target: `anime:${high}`,
       edgeType: "anime-anime",
-      weight: roundWeight(weight),
+      weight: roundWeight(aggregate.weight),
+      support: aggregate.support,
     });
   }
 
@@ -300,7 +278,7 @@ function createGraph(
       nodes: nodeList,
       edges,
     },
-    skippedNewAnimeAnimePairs,
+    skippedNewAnimeAnimePairs: pairResult.skippedNewPairs,
     maxAnimeAnimeEdges,
   };
 }
@@ -390,7 +368,7 @@ function createCompactGraph(graph: GraphData): CompactGraphData {
   }
 
   const ua: [number, number, number][] = [];
-  const aa: [number, number, number][] = [];
+  const aa: CompactGraphData["aa"] = [];
 
   for (const edge of graph.edges) {
     if (edge.edgeType === "user-anime") {
@@ -412,7 +390,9 @@ function createCompactGraph(graph: GraphData): CompactGraphData {
     if (left === undefined || right === undefined) {
       continue;
     }
-    aa.push([left, right, edge.weight]);
+    aa.push(edge.support === undefined
+      ? [left, right, edge.weight]
+      : [left, right, edge.weight, edge.support]);
   }
 
   return {
