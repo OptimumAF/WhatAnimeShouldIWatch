@@ -146,3 +146,21 @@
 **Plan revisions and reasons:** Checked M1.1 after all stated rejection cases and valid legacy/compact browser paths passed. An existing compact file with invalid content now fails visibly instead of falling through to legacy; an absent compact file still falls back. This makes unsupported versions explicit without changing the stored format versions. M1.2 remains the pure-scoring extraction task.
 
 **Single next task:** M1.2 — extract graph, model, and hybrid scoring plus eligibility and explanations into pure typed functions, preserving characterized behavior before any intentional ranking change.
+
+## Session 2026-09-24 — M1.2
+
+**Branch / starting commit:** `codex/pure-recommendations` from clean `ae92652` on draft PR #6. Inspected the active plan, latest handoff, `AGENTS.md`, branch/commit, graph/model scoring, candidate and metadata filters, explanation rendering, synthetic fixtures, and baseline browser tests before editing.
+
+**Completed:** M1.2. Moved compact/legacy recommendation index construction, graph and model scoring, hybrid blending, weight clamps, include/exclude eligibility, metadata filters, and contributor explanation selection/text into the DOM-free typed `web/src/recommendations.ts`. The UI passes its selected items, model index, filters, and metadata cache explicitly, then escapes plain explanation text when rendering. The existing TypeScript/Python/Rust stacks and features remain intact.
+
+**Verification commands and actual results:** `npm run data:fixture` generated 7 invented users, 8 anime, and 11 pairs. The new browser characterization first passed against the old implementation, fixing exact graph/model/hybrid card order, displayed scores, and explanation text; it passed again after extraction. `npm run data:fixture:check` verified the fixture; `npm run typecheck` passed pipeline and web; `npm test` passed 4 pipeline and 11 web unit tests; `npm run test:python` passed 2; `python -m unittest discover -s scripts/tests -v` passed 5 workflow gate tests; `npm run build:web` passed; `npm run test:e2e` passed all 13 browser tests. The new direct unit cases cover legacy/compact index equivalence, watched exclusion and weight clamping, model and blend scores, include/exclude precedence, metadata filtering/missing counts, signed evidence, and plain explanation text. An invented markup label remained text in the browser. `git diff --check` passed.
+
+**Files changed:** `web/src/recommendations.ts`, `web/src/main.ts`, `web/test/recommendations.test.ts`, `web/tests/recommendations-characterization.spec.ts`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
+
+**Commit / PR and CI:** Implementation commit `b6c07a9` in draft [PR #7](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/7), stacked on PR #6. [Fixture and fast checks run 36094091753](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36094091753) passed from a fresh PR checkout, including fixture generation/check, TypeScript/Python/workflow tests, web build, and all 13 browser tests; GitGuardian passed.
+
+**Checks not run / blockers:** No real username/history, provider request, production data regeneration, model experiment, release publication, or deployment. No production-scale browser benchmark or desktop run; those are outside M1.2. Graph negative evidence still depends on watched selection order: a negative edge is included in the explanation only after a positive candidate exists, while its score remains unchanged. Min-max hybrid blending still drops the minimum component score, including at a zero endpoint. Both are characterized as existing behavior for M3.4/M4.6 to decide. M1.3–M1.5, M1.7, and M1's exit gate remain open; provider permissions and public-asset remedies are also unresolved.
+
+**Plan revisions and reasons:** Checked M1.2 only after the original UI outputs and the pure-function tests passed. Added the known negative-evidence and blend-endpoint behavior to the change log without changing M3.4 or M4.6 acceptance criteria. Merged module/test guidance into the existing `AGENTS.md`.
+
+**Single next task:** M1.3 — extract provider and persistence adapters with injectable storage, transport, clock, and random behavior, starting from the current mocked import and metadata paths.
