@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -263,9 +264,101 @@ def load_anime_graph_edges(
     min_abs_weight: float,
 ) -> np.ndarray:
     raw = json.loads(graph_path.read_text(encoding="utf-8"))
-    if raw.get("format") == "graph-compact-v1":
+    if not isinstance(raw, dict):
+        raise ValueError("Graph artifact root must be an object")
+    graph_format = raw.get("format")
+    if graph_format in ("graph-compact-v2", "graph-legacy-v2"):
+        _validate_v2_graph_for_training(raw)
+    elif graph_format not in (None, "graph-compact-v1"):
+        raise ValueError("Unsupported graph format for training")
+    elif any(field in raw for field in ("role", "graphId", "dataset", "semantics", "config", "truncation")):
+        raise ValueError("V2 graph metadata requires a v2 graph format for training")
+    if graph_format in ("graph-compact-v1", "graph-compact-v2"):
         return load_anime_graph_edges_compact(raw, anime_id_to_idx, min_abs_weight)
     return load_anime_graph_edges_legacy(raw, anime_id_to_idx, min_abs_weight)
+
+
+def _validate_v2_graph_for_training(raw: Dict[str, object]) -> None:
+    if "version" in raw:
+        raise ValueError("Unsupported v2 graph version field")
+    if raw.get("role") != "recommendation":
+        raise ValueError("Graph role must be recommendation for training")
+    dataset = raw.get("dataset")
+    if not isinstance(dataset, dict) or not re.fullmatch(r"[0-9a-f]{64}", str(dataset.get("sha256", ""))):
+        raise ValueError("V2 graph dataset SHA-256 is missing or invalid")
+    if dataset.get("scope") != "anonymized-ratings-content-v1":
+        raise ValueError("Unsupported v2 graph dataset identity scope")
+    semantics = raw.get("semantics")
+    if not isinstance(semantics, dict) or semantics.get("pairWeight") != "centered-pair-preference-mean-v1" or \
+            semantics.get("support") != "co-raters-after-selection-v1" or \
+            semantics.get("recommendationUse") != "positive-only-v1":
+        raise ValueError("Unsupported v2 graph semantics")
+    config = raw.get("config")
+    truncation = raw.get("truncation")
+    if not isinstance(config, dict) or not isinstance(truncation, dict):
+        raise ValueError("V2 graph configuration or truncation is missing")
+    for field, minimum in (("seed", 0), ("maxRatingsPerUser", 0),
+                           ("maxAnimeAnimeEdges", 0), ("maxPairVisits", 1),
+                           ("maxPairCandidates", 1), ("minPairSupport", 1),
+                           ("maxNeighborsPerAnime", 0)):
+        value = config.get(field)
+        if type(value) is not int or value < minimum or value > (2**32 - 1 if field == "seed" else 2**53 - 1):
+            raise ValueError(f"Invalid v2 graph config.{field}")
+    expected_policy = "sha256-bottom-k-v1" if config["maxRatingsPerUser"] else "all-ratings"
+    if config.get("ratingSelectionPolicy") != expected_policy:
+        raise ValueError("Unsupported v2 graph config.ratingSelectionPolicy")
+    for field in ("inputRatings", "selectedRatings", "ratingsSkipped",
+                  "potentialPairVisits", "pairVisits", "pairVisitsSkipped",
+                  "candidatePairs", "eligiblePairs", "selectedPairs",
+                  "excludedBySupport", "excludedByNeighborLimit", "excludedByOutputLimit"):
+        value = truncation.get(field)
+        if type(value) is not int or value < 0 or value > 2**53 - 1:
+            raise ValueError(f"Invalid v2 graph truncation.{field}")
+    if truncation["selectedRatings"] + truncation["ratingsSkipped"] != truncation["inputRatings"] or \
+            truncation["pairVisits"] + truncation["pairVisitsSkipped"] != truncation["potentialPairVisits"] or \
+            truncation["candidatePairs"] - truncation["excludedBySupport"] != truncation["eligiblePairs"] or \
+            truncation["eligiblePairs"] - truncation["excludedByNeighborLimit"] - truncation["excludedByOutputLimit"] != truncation["selectedPairs"]:
+        raise ValueError("V2 graph truncation counts do not reconcile")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(raw.get("graphId", ""))):
+        raise ValueError("V2 graph identity is missing or invalid")
+    if raw.get("format") == "graph-compact-v2":
+        anime = raw.get("anime")
+        pairs = raw.get("aa")
+        users = raw.get("ua")
+        if not isinstance(anime, list) or not isinstance(pairs, list) or not isinstance(users, list):
+            raise ValueError("V2 compact graph anime, ua, and aa arrays are required")
+        if len(pairs) != truncation["selectedPairs"] or len(users) != truncation["selectedRatings"]:
+            raise ValueError("V2 compact graph edge counts do not match truncation")
+        for index, edge in enumerate(pairs):
+            if not isinstance(edge, list) or len(edge) != 4 or type(edge[3]) is not int or edge[3] < 1:
+                raise ValueError(f"V2 compact aa[{index}] pair support is required")
+            if any(type(edge[side]) is not int or edge[side] < 0 or edge[side] >= len(anime) for side in (0, 1)) or \
+                    not isinstance(edge[2], (int, float)) or not math.isfinite(float(edge[2])):
+                raise ValueError(f"V2 compact aa[{index}] has an invalid reference or weight")
+    else:
+        edges = raw.get("edges")
+        if not isinstance(edges, list):
+            raise ValueError("V2 legacy graph edges array is required")
+        pairs = [edge for edge in edges if isinstance(edge, dict) and edge.get("edgeType") == "anime-anime"]
+        if len(pairs) != truncation["selectedPairs"]:
+            raise ValueError("V2 legacy graph pair count does not match truncation")
+        if any(type(edge.get("support")) is not int or edge["support"] < 1 for edge in pairs):
+            raise ValueError("V2 legacy pair support is required")
+
+
+def verify_graph_dataset_identity(graph_path: Path, ratings_path: Path) -> None:
+    graph = json.loads(graph_path.read_text(encoding="utf-8"))
+    if not isinstance(graph, dict):
+        raise ValueError("Graph artifact root must be an object")
+    if graph.get("format") not in ("graph-compact-v2", "graph-legacy-v2"):
+        return
+    ratings = json.loads(ratings_path.read_text(encoding="utf-8"))
+    dataset = graph.get("dataset")
+    if not isinstance(dataset, dict) or not isinstance(ratings, dict):
+        raise ValueError("V2 graph dataset identity does not match ratings artifact")
+    graph_sha = dataset.get("sha256")
+    if not isinstance(graph_sha, str) or ratings.get("datasetSha256") != graph_sha:
+        raise ValueError("V2 graph dataset identity does not match ratings artifact")
 
 
 def load_anime_graph_edges_legacy(
@@ -640,6 +733,7 @@ def main() -> None:
     )
 
     print("Loading anime-anime graph edges...")
+    verify_graph_dataset_identity(graph_path, ratings_path)
     graph_edges = load_anime_graph_edges(
         graph_path=graph_path,
         anime_id_to_idx=anime_id_to_idx,

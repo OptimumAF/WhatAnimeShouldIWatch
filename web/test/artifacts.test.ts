@@ -14,6 +14,12 @@ const fixtureRoot = new URL("../public/demo-data/", import.meta.url);
 const fixture = (name: string): any => JSON.parse(readFileSync(new URL(name, fixtureRoot), "utf8"));
 const copy = <T>(value: T): T => structuredClone(value);
 
+function compactV1(): any {
+  const { role, graphId, sourceGraphId, dataset, semantics, config, truncation, visualization, ...graph } =
+    fixture("graph.compact.json");
+  return { ...graph, format: "graph-compact-v1" };
+}
+
 function legacyGraph(): any {
   const compact = fixture("graph.compact.json");
   const nodes = [
@@ -46,19 +52,33 @@ function legacyModel(): any {
 
 test("accepts current synthetic compact and legacy contracts, including three-value pair tuples", () => {
   const graph = fixture("graph.compact.json");
+  const explorer = fixture("graph-explorer.compact.json");
   const model = fixture("model-mf-web.compact.json");
   assert.equal(parseCompactGraph(graph, "graph fixture"), graph);
+  assert.equal(parseCompactGraph(explorer, "explorer fixture", "visualization"), explorer);
   assert.equal(parseDemoCatalog(fixture("catalog.json"), "catalog fixture").length, 8);
   assert.equal(parseCompactModel(model, "model fixture"), model);
   assert.equal(parseLegacyGraph(legacyGraph(), "legacy graph").edgeCount, graph.edgeCount);
+  const v2Legacy = { ...legacyGraph(), format: "graph-legacy-v2", role: "recommendation",
+    graphId: graph.graphId, dataset: graph.dataset, semantics: graph.semantics,
+    config: graph.config, truncation: graph.truncation };
+  assert.equal(parseLegacyGraph(v2Legacy, "v2 legacy graph").edgeCount, graph.edgeCount);
+  const missingSupport = copy(v2Legacy);
+  delete missingSupport.edges.find((edge: { edgeType: string }) => edge.edgeType === "anime-anime").support;
+  assert.throws(() => parseLegacyGraph(missingSupport, "v2 legacy graph"), /support/);
+  assert.throws(() => parseLegacyGraph({ ...v2Legacy, version: 2 }, "v2 legacy graph"), /version.*unsupported/);
+  const mislabeledCompact = { ...graph, format: "graph-compact-v1" };
+  assert.throws(() => parseCompactGraph(mislabeledCompact, "mislabeled graph"), /role.*requires a v2/);
+  assert.throws(() => parseLegacyGraph({ ...legacyGraph(), role: "recommendation" }, "mislabeled legacy"),
+    /role.*requires a v2/);
   assert.equal(parseLegacyModel(legacyModel(), "legacy model").anime.length, model.animeIds.length);
-  const oldPairs = copy(graph);
+  const oldPairs = compactV1();
   oldPairs.aa = oldPairs.aa.map(([left, right, weight]: [number, number, number]) => [left, right, weight]);
   assert.equal(parseCompactGraph(oldPairs, "three-value graph"), oldPairs);
 });
 
 test("v1 contracts accept selected user-rating and pair subsets with matching counts", () => {
-  const compact = fixture("graph.compact.json");
+  const compact = compactV1();
   compact.ua = compact.ua.slice(0, -1);
   compact.aa = [compact.aa[0]];
   compact.edgeCount = compact.ua.length + 1;
@@ -75,11 +95,11 @@ test("v1 contracts accept selected user-rating and pair subsets with matching co
 test("rejects unsupported versions, malformed tuples, duplicate IDs, and broken graph references", () => {
   const original = fixture("graph.compact.json");
   const cases: [string, (value: any) => void, RegExp][] = [
-    ["format", (v) => { v.format = "graph-compact-v2"; }, /format.*unsupported/],
+    ["format", (v) => { v.format = "graph-compact-v3"; }, /format.*unsupported/],
     ["extra version", (v) => { v.version = 2; }, /version.*unsupported/],
     ["anime tuple", (v) => { v.anime[0].push("extra"); }, /anime\[0\].*exactly 2/],
     ["ua tuple", (v) => { v.ua[0].pop(); }, /ua\[0\].*exactly 3/],
-    ["aa tuple", (v) => { v.aa[0].push(2); }, /aa\[0\].*3 values or 4/],
+    ["aa tuple", (v) => { v.aa[0].push(2); }, /aa\[0\].*exactly 4/],
     ["user ID", (v) => { v.userIds[1] = v.userIds[0]; }, /userIds\[1\].*duplicates/],
     ["anime ID", (v) => { v.anime[1][0] = v.anime[0][0]; }, /anime\[1\]\[0\].*duplicates/],
     ["user reference", (v) => { v.ua[0][0] = 999; }, /ua\[0\]\[0\].*outside/],
@@ -92,6 +112,25 @@ test("rejects unsupported versions, malformed tuples, duplicate IDs, and broken 
     mutate(graph);
     assert.throws(() => parseCompactGraph(graph, "graph fixture"), message, name);
   }
+});
+
+test("v2 rejects changed semantics, missing support, mismatched counts, and wrong roles", () => {
+  const original = fixture("graph.compact.json");
+  const cases: [string, (value: any) => void, RegExp][] = [
+    ["missing digest", (v) => { delete v.dataset.sha256; }, /dataset.sha256.*SHA-256/],
+    ["semantic drift", (v) => { v.semantics.pairWeight = "item-cosine"; }, /semantics.pairWeight.*unsupported/],
+    ["missing support", (v) => { v.aa[0].pop(); }, /aa\[0\].*exactly 4/],
+    ["false truncation", (v) => { v.truncation.selectedPairs -= 1; }, /truncation.selectedPairs.*reconcile/],
+    ["wrong role", (v) => { v.role = "visualization"; }, /role.*recommendation/],
+  ];
+  for (const [name, mutate, message] of cases) {
+    const graph = copy(original);
+    mutate(graph);
+    assert.throws(() => parseCompactGraph(graph, "v2 recommendation", "recommendation"), message, name);
+  }
+  const explorer = fixture("graph-explorer.compact.json");
+  assert.throws(() => parseCompactGraph(explorer, "v2 explorer", "recommendation"), /role.*recommendation/);
+  assert.throws(() => parseCompactGraph(original, "v2 recommendation", "visualization"), /role.*visualization/);
 });
 
 test("rejects non-finite graph weights and duplicate or missing legacy graph identities", () => {

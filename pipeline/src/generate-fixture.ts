@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { datasetIdentity, recommendationGraphId, recommendationMetadata } from "./core/graph-contract.js";
+import { buildExplorerGraph } from "./core/explorer-graph.js";
 import { aggregateAnimePairs } from "./core/pair-aggregation.js";
 import { getRepoRoot } from "./paths.js";
-import type { CompactGraphData } from "./types.js";
+import type { CompactGraphDataV2 } from "./types.js";
 
 interface FixtureAnime {
   animeId: number;
@@ -62,6 +64,8 @@ const users = input.users.map((user) => {
     userId: user.userId,
     ratings: [...ratingsById].sort(([left], [right]) => left - right).map(([animeId, score]) => ({
       animeId,
+      title: catalogById.get(animeId)!.title,
+      rawScore: score,
       normalizedScore: score - mean,
     })),
   };
@@ -77,7 +81,7 @@ if (duplicateRatings === 0 || unknownRatings === 0 ||
 
 const anime = input.anime.map((item): [number, string] => [item.animeId, item.title]);
 const animeIndex = new Map(anime.map(([animeId], index) => [animeId, index]));
-const ua: CompactGraphData["ua"] = [];
+const ua: CompactGraphDataV2["ua"] = [];
 for (let userIndex = 0; userIndex < users.length; userIndex += 1) {
   for (const rating of users[userIndex].ratings) {
     const index = animeIndex.get(rating.animeId);
@@ -86,7 +90,7 @@ for (let userIndex = 0; userIndex < users.length; userIndex += 1) {
   }
 }
 const pairResult = aggregateAnimePairs(users, 0, 0);
-const aa: CompactGraphData["aa"] = [...pairResult.pairs].map(([key, pair]) => {
+const aa: CompactGraphDataV2["aa"] = [...pairResult.pairs].map(([key, pair]) => {
   const [low, high] = key.split(":").map(Number);
   const left = animeIndex.get(low);
   const right = animeIndex.get(high);
@@ -94,8 +98,20 @@ const aa: CompactGraphData["aa"] = [...pairResult.pairs].map(([key, pair]) => {
   return [left, right, roundWeight(pair.weight), pair.support];
 });
 
-const graph: CompactGraphData = {
-  format: "graph-compact-v1",
+const dataset = { generatedAt, source: "synthetic-fixture", users };
+const metadata = recommendationMetadata(datasetIdentity(dataset), {
+  seed: 0,
+  maxRatingsPerUser: 0,
+  maxAnimeAnimeEdges: 0,
+  maxPairVisits: 20_000_000,
+  maxPairCandidates: 2_500_000,
+  minPairSupport: 1,
+  maxNeighborsPerAnime: 0,
+}, pairResult.stats);
+const graphWithoutId: Omit<CompactGraphDataV2, "graphId"> = {
+  format: "graph-compact-v2",
+  role: "recommendation",
+  ...metadata,
   generatedAt,
   userIds: users.map((user) => user.userId),
   anime,
@@ -106,6 +122,11 @@ const graph: CompactGraphData = {
   nodeCount: users.length + anime.length,
   edgeCount: ua.length + aa.length,
 };
+const graph: CompactGraphDataV2 = {
+  ...graphWithoutId,
+  graphId: recommendationGraphId(graphWithoutId),
+};
+const explorerGraph = buildExplorerGraph(graph, 10, 10);
 const catalog = {
   format: "demo-catalog-v1",
   generatedAt,
@@ -127,6 +148,7 @@ const model = {
 
 const outputs = new Map<string, unknown>([
   ["graph.compact.json", graph],
+  ["graph-explorer.compact.json", explorerGraph],
   ["catalog.json", catalog],
   ["model-mf-web.compact.json", model],
 ]);

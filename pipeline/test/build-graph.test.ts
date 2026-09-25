@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { openDatabase, upsertAnime, upsertRating, upsertUser } from "../src/db.js";
+import { buildExplorerGraph, compactFromLegacyGraph } from "../src/core/explorer-graph.js";
 import type { CompactGraphData, GraphData } from "../src/types.js";
 
 test("the graph CLI exports the three-user mean and true pair support in both formats", () => {
@@ -42,21 +43,65 @@ test("the graph CLI exports the three-user mean and true pair support in both fo
     assert.equal(command.status, 0, `${command.stdout}\n${command.stderr}`);
 
     const graph = JSON.parse(fs.readFileSync(graphPath, "utf8")) as GraphData;
+    assert.equal(graph.format, "graph-legacy-v2");
+    assert.equal(graph.role, "recommendation");
+    assert.equal(graph.semantics.pairWeight, "centered-pair-preference-mean-v1");
     assert.deepEqual(
       graph.edges.find((edge) => edge.id === "aa:1:2"),
       { id: "aa:1:2", source: "anime:1", target: "anime:2", edgeType: "anime-anime", weight: 2, support: 3 },
     );
     const compact = JSON.parse(fs.readFileSync(compactPath, "utf8")) as CompactGraphData;
+    assert.equal(compact.format, "graph-compact-v2");
+    assert.equal(compact.role, "recommendation");
+    assert.equal(compact.graphId, graph.graphId);
+    assert.equal(compact.dataset.sha256, graph.dataset.sha256);
+    assert.equal(compact.truncation.selectedPairs, 3);
+    assert.deepEqual(compactFromLegacyGraph(graph), compact);
+    const legacyExplorer = buildExplorerGraph(compactFromLegacyGraph(graph), 1, 2);
+    assert.equal(legacyExplorer.format, "graph-compact-v2");
+    assert.equal(legacyExplorer.role, "visualization");
+    assert.equal(legacyExplorer.sourceGraphId, graph.graphId);
+    assert.equal(legacyExplorer.aa.length, 1);
+    assert.equal(legacyExplorer.ua.length, 2);
     const left = compact.anime.findIndex(([id]) => id === 1);
     const right = compact.anime.findIndex(([id]) => id === 2);
     assert.deepEqual(compact.aa.find(([a, b]) => a === left && b === right), [left, right, 2, 3]);
     const report = JSON.parse(fs.readFileSync(`${graphPath}.report.json`, "utf8"));
+    assert.equal(report.graphId, graph.graphId);
+    assert.equal(report.datasetSha256, graph.dataset.sha256);
     assert.equal(report.selection.policy, "all-ratings");
     assert.equal(report.selection.seed, 0);
     assert.equal(report.coverage.approximationLevel, "exact-input");
     assert.equal(report.coverage.pairVisitsSkipped, 0);
     assert.equal(report.coverage.pairKeyRecall, 1);
     assert.equal(report.coverage.outputTruncated, false);
+
+    const syncedDir = path.join(dir, "synced-compact");
+    const sync = spawnSync(process.execPath, ["--import", "tsx", "src/sync-web.ts"], {
+      cwd: path.resolve("."), encoding: "utf8",
+      env: { ...process.env, SYNC_WEB_SOURCE_DIR: dir, SYNC_WEB_TARGET_DIR: syncedDir,
+        SYNC_WEB_KEEP_JSON: "1", SYNC_WEB_INCLUDE_DATASET: "0" },
+    });
+    assert.equal(sync.status, 0, `${sync.stdout}\n${sync.stderr}`);
+    const syncedExplorer = JSON.parse(fs.readFileSync(path.join(syncedDir, "graph-explorer.compact.json"), "utf8"));
+    assert.equal(syncedExplorer.role, "visualization");
+    assert.equal(syncedExplorer.sourceGraphId, graph.graphId);
+    assert.equal(fs.existsSync(path.join(syncedDir, "graph-explorer.compact.json.gz")), true);
+
+    const staleSource = path.join(dir, "stale-source");
+    const staleTarget = path.join(dir, "stale-target");
+    fs.mkdirSync(staleSource);
+    fs.copyFileSync(graphPath, path.join(staleSource, "graph.json"));
+    fs.writeFileSync(path.join(staleSource, "graph.compact.json"),
+      JSON.stringify({ ...compact, graphId: "0".repeat(64) }));
+    const staleSync = spawnSync(process.execPath, ["--import", "tsx", "src/sync-web.ts"], {
+      cwd: path.resolve("."), encoding: "utf8",
+      env: { ...process.env, SYNC_WEB_SOURCE_DIR: staleSource, SYNC_WEB_TARGET_DIR: staleTarget,
+        SYNC_WEB_KEEP_JSON: "1", SYNC_WEB_INCLUDE_DATASET: "0" },
+    });
+    assert.notEqual(staleSync.status, 0);
+    assert.match(staleSync.stderr, /mixed versions or mismatched identities/);
+    assert.equal(fs.existsSync(path.join(staleTarget, "graph.compact.json.gz")), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -218,6 +263,38 @@ test("a seeded cap uses one selected subset for both graph edge types and record
     assert.equal(fs.existsSync(path.join(dir, "only.graph.json")), false);
     assert.equal(fs.existsSync(compactOnlyPath), true);
     assert.equal(JSON.parse(fs.readFileSync(`${compactOnlyPath}.report.json`, "utf8")).selection.seed, 17);
+
+    const legacyOnlyPath = path.join(dir, "legacy-only.graph.json");
+    const legacyOnly = spawnSync(process.execPath, [
+      "--import", "tsx", "src/build-graph.ts",
+      "--db", dbPath,
+      "--out-dataset", path.join(dir, "legacy-only.ratings.json"),
+      "--out-graph", legacyOnlyPath,
+      "--out-graph-compact", path.join(dir, "legacy-only.compact.json"),
+      "--no-compact",
+      "--max-ratings-per-user", "3",
+      "--pair-selection-seed", "17",
+    ], { cwd: path.resolve("."), encoding: "utf8" });
+    assert.equal(legacyOnly.status, 0, `${legacyOnly.stdout}\n${legacyOnly.stderr}`);
+    assert.equal(fs.existsSync(path.join(dir, "legacy-only.compact.json")), false);
+    const legacyOnlyGraph = JSON.parse(fs.readFileSync(legacyOnlyPath, "utf8")) as GraphData;
+    const explorer = buildExplorerGraph(compactFromLegacyGraph(legacyOnlyGraph), 1, 2);
+    assert.equal(explorer.role, "visualization");
+    assert.equal(explorer.sourceGraphId, legacyOnlyGraph.graphId);
+    const legacySource = path.join(dir, "legacy-source");
+    const legacyTarget = path.join(dir, "synced-legacy");
+    fs.mkdirSync(legacySource);
+    fs.copyFileSync(legacyOnlyPath, path.join(legacySource, "graph.json"));
+    const syncLegacy = spawnSync(process.execPath, ["--import", "tsx", "src/sync-web.ts"], {
+      cwd: path.resolve("."), encoding: "utf8",
+      env: { ...process.env, SYNC_WEB_SOURCE_DIR: legacySource, SYNC_WEB_TARGET_DIR: legacyTarget,
+        SYNC_WEB_KEEP_JSON: "1", SYNC_WEB_INCLUDE_DATASET: "0" },
+    });
+    assert.equal(syncLegacy.status, 0, `${syncLegacy.stdout}\n${syncLegacy.stderr}`);
+    const syncedLegacyExplorer = JSON.parse(fs.readFileSync(path.join(legacyTarget, "graph-explorer.compact.json"), "utf8"));
+    assert.equal(syncedLegacyExplorer.role, "visualization");
+    assert.equal(syncedLegacyExplorer.sourceGraphId, legacyOnlyGraph.graphId);
+    assert.equal(fs.existsSync(path.join(legacyTarget, "graph-explorer.compact.json.gz")), true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

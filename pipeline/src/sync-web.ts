@@ -1,26 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import { buildExplorerGraph, compactFromLegacyGraph } from "./core/explorer-graph.js";
 import { getRepoRoot } from "./paths.js";
-
-interface CompactGraphData {
-  format: "graph-compact-v1";
-  generatedAt: string;
-  userIds: string[];
-  anime: [number, string][];
-  ua: [number, number, number][];
-  aa: [number, number, number, number?][];
-  userCount: number;
-  animeCount: number;
-  nodeCount: number;
-  edgeCount: number;
-}
+import type { CompactGraphData, GraphData } from "./types.js";
 
 const repoRoot = getRepoRoot(import.meta.url);
-const sourceDir = path.resolve(repoRoot, "data");
-const targetDir = path.resolve(repoRoot, "web", "public", "data");
-const EXPLORER_AA_LIMIT = 8000;
-const EXPLORER_UA_LIMIT = 2500;
+const sourceDir = path.resolve(process.env.SYNC_WEB_SOURCE_DIR ?? path.join(repoRoot, "data"));
+const targetDir = path.resolve(process.env.SYNC_WEB_TARGET_DIR ?? path.join(repoRoot, "web", "public", "data"));
 
 const includeDataset = isTruthy(process.env.SYNC_WEB_INCLUDE_DATASET);
 const keepPlainJson = isTruthy(process.env.SYNC_WEB_KEEP_JSON);
@@ -46,6 +33,10 @@ if (includeDataset) {
 syncOptionalWithFallback(["model-mf-web.compact.json", "model-mf-web.json"]);
 
 function syncRequiredWithFallback(candidates: string[]): void {
+  if (candidates[0] === "graph.compact.json" &&
+      candidates.every((filename) => fs.existsSync(path.join(sourceDir, filename)))) {
+    assertSourceGraphsCompatible();
+  }
   const selected = candidates.find((filename) =>
     fs.existsSync(path.join(sourceDir, filename)),
   );
@@ -105,7 +96,14 @@ function syncFileOutputs(filename: string, sourcePath: string): void {
   if (filename === "graph.compact.json") {
     syncExplorerGraphOutputs(sourceBuffer);
   } else if (filename === "graph.json") {
-    removeSyncedOutputs("graph-explorer.compact.json");
+    const legacy = JSON.parse(sourceBuffer.toString("utf8")) as GraphData;
+    if (legacy.format === "graph-legacy-v2") {
+      writeExplorerGraph(buildExplorerGraph(compactFromLegacyGraph(legacy)));
+    } else if (!("format" in legacy)) {
+      removeSyncedOutputs("graph-explorer.compact.json");
+    } else {
+      throw new Error("Unsupported legacy graph format for explorer export.");
+    }
   }
 }
 
@@ -123,12 +121,26 @@ function removeIfExists(filepath: string): void {
 
 function syncExplorerGraphOutputs(sourceBuffer: Buffer): void {
   const compactGraph = JSON.parse(sourceBuffer.toString("utf8")) as CompactGraphData;
-  if (compactGraph.format !== "graph-compact-v1") {
-    removeSyncedOutputs("graph-explorer.compact.json");
-    return;
+  if (compactGraph.format !== "graph-compact-v1" && compactGraph.format !== "graph-compact-v2") {
+    throw new Error("Unsupported compact graph format for explorer export.");
   }
 
-  const explorerGraph = buildExplorerGraph(compactGraph);
+  writeExplorerGraph(buildExplorerGraph(compactGraph));
+}
+
+function assertSourceGraphsCompatible(): void {
+  const compact = JSON.parse(fs.readFileSync(path.join(sourceDir, "graph.compact.json"), "utf8")) as CompactGraphData;
+  const legacy = JSON.parse(fs.readFileSync(path.join(sourceDir, "graph.json"), "utf8")) as GraphData;
+  const compactV2 = compact.format === "graph-compact-v2";
+  const legacyV2 = legacy.format === "graph-legacy-v2";
+  if (compactV2 !== legacyV2 ||
+      (compactV2 && legacyV2 &&
+        (compact.graphId !== legacy.graphId || compact.dataset.sha256 !== legacy.dataset.sha256))) {
+    throw new Error("Compact and legacy graph sources have mixed versions or mismatched identities. Rebuild both or remove the stale source.");
+  }
+}
+
+function writeExplorerGraph(explorerGraph: CompactGraphData): void {
   const explorerJson = Buffer.from(JSON.stringify(explorerGraph), "utf8");
   const targetPath = path.join(targetDir, "graph-explorer.compact.json");
   const gzipBuffer = zlib.gzipSync(explorerJson, { level: gzipLevel });
@@ -144,86 +156,6 @@ function syncExplorerGraphOutputs(sourceBuffer: Buffer): void {
   } else {
     removeIfExists(targetPath);
   }
-}
-
-function buildExplorerGraph(graph: CompactGraphData): CompactGraphData {
-  const selectedUa = selectTopEdges(graph.ua, EXPLORER_UA_LIMIT);
-  const selectedAa = selectTopEdges(graph.aa, EXPLORER_AA_LIMIT);
-  const animeIndexMap = new Map<number, number>();
-  const userIndexMap = new Map<number, number>();
-  const anime: [number, string][] = [];
-  const userIds: string[] = [];
-
-  const remapAnime = (sourceIndex: number): number => {
-    const existing = animeIndexMap.get(sourceIndex);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const entry = graph.anime[sourceIndex];
-    const nextIndex = anime.length;
-    animeIndexMap.set(sourceIndex, nextIndex);
-    anime.push(entry);
-    return nextIndex;
-  };
-
-  const remapUser = (sourceIndex: number): number => {
-    const existing = userIndexMap.get(sourceIndex);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const userId = graph.userIds[sourceIndex];
-    const nextIndex = userIds.length;
-    userIndexMap.set(sourceIndex, nextIndex);
-    userIds.push(userId);
-    return nextIndex;
-  };
-
-  const ua: [number, number, number][] = [];
-  const aa: [number, number, number, number?][] = [];
-
-  for (const [userIndex, animeIndex, weight] of selectedUa) {
-    if (!graph.userIds[userIndex] || !graph.anime[animeIndex]) {
-      continue;
-    }
-    ua.push([remapUser(userIndex), remapAnime(animeIndex), weight]);
-  }
-
-  for (const [leftAnimeIndex, rightAnimeIndex, weight, support] of selectedAa) {
-    if (!graph.anime[leftAnimeIndex] || !graph.anime[rightAnimeIndex]) {
-      continue;
-    }
-    aa.push(support === undefined
-      ? [remapAnime(leftAnimeIndex), remapAnime(rightAnimeIndex), weight]
-      : [remapAnime(leftAnimeIndex), remapAnime(rightAnimeIndex), weight, support]);
-  }
-
-  return {
-    format: "graph-compact-v1",
-    generatedAt: graph.generatedAt,
-    userIds,
-    anime,
-    ua,
-    aa,
-    userCount: userIds.length,
-    animeCount: anime.length,
-    nodeCount: userIds.length + anime.length,
-    edgeCount: ua.length + aa.length,
-  };
-}
-
-function selectTopEdges(
-  edges: [number, number, number, number?][],
-  limit: number,
-): [number, number, number, number?][] {
-  if (edges.length <= limit) {
-    return edges;
-  }
-
-  const top = [...edges]
-    .sort((left, right) => Math.abs(right[2]) - Math.abs(left[2]))
-    .slice(0, limit);
-
-  return top;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
