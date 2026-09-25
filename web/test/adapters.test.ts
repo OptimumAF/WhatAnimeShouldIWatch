@@ -353,6 +353,7 @@ test("AniList distinguishes a returned empty list from an unavailable collection
 test("artifact loader validates synthetic files through injected local transport", async () => {
   const data = new Map<string, unknown>([
     ["./demo-data/graph.compact.json", fixture("graph.compact.json")],
+    ["./demo-data/graph-explorer.compact.json", fixture("graph-explorer.compact.json")],
     ["./demo-data/catalog.json", fixture("catalog.json")],
     ["./demo-data/model-mf-web.compact.json", fixture("model-mf-web.compact.json")],
   ]);
@@ -363,14 +364,60 @@ test("artifact loader validates synthetic files through injected local transport
   const loader = createArtifactLoader(fake.runtime, true);
   const graph = await loader.fetchGraph();
   assert.equal(graph.animeCount, 8);
-  assert.equal(await loader.fetchExplorerGraph(graph), graph);
+  const explorer = await loader.fetchExplorerGraph(graph);
+  assert.notEqual(explorer, graph);
+  assert.equal(explorer.edgeCount < graph.edgeCount, true);
   assert.equal((await loader.fetchModelRecommendationIndex())?.factors, 2);
   assert.equal((await loader.fetchDemoCatalog()).length, 8);
   assert.deepEqual(fake.requests.map((request) => request.url), [
     "./demo-data/graph.compact.json",
+    "./demo-data/graph-explorer.compact.json",
     "./demo-data/model-mf-web.compact.json",
     "./demo-data/catalog.json",
   ]);
+});
+
+test("v2 explorer loading rejects missing and mismatched provenance", async () => {
+  const main = fixture("graph.compact.json");
+  const explorer = fixture("graph-explorer.compact.json") as Record<string, unknown>;
+  for (const [sample, expected] of [
+    [null, /Unable to load graph-explorer.compact.json/],
+    [{ ...explorer, sourceGraphId: "0".repeat(64) }, /sourceGraphId or graph provenance/],
+    [{ ...explorer, dataset: { ...(explorer.dataset as object), sha256: "0".repeat(64) } }, /sourceGraphId or graph provenance/],
+  ] as const) {
+    const fake = fakeRuntime((url) => {
+      if (url === "./data/graph.compact.json") return jsonResponse(main);
+      if (url === "./data/graph-explorer.compact.json" && sample) return jsonResponse(sample);
+      return new Response("", { status: 404 });
+    });
+    const loader = createArtifactLoader(fake.runtime, false);
+    const graph = await loader.fetchGraph();
+    await assert.rejects(loader.fetchExplorerGraph(graph), expected);
+  }
+  const reordered = { ...explorer,
+    semantics: Object.fromEntries(Object.entries(explorer.semantics as object).reverse()),
+    config: Object.fromEntries(Object.entries(explorer.config as object).reverse()) };
+  const fake = fakeRuntime((url) => {
+    if (url === "./data/graph.compact.json") return jsonResponse(main);
+    if (url === "./data/graph-explorer.compact.json") return jsonResponse(reordered);
+    return new Response("", { status: 404 });
+  });
+  const loader = createArtifactLoader(fake.runtime, false);
+  const graph = await loader.fetchGraph();
+  assert.equal((await loader.fetchExplorerGraph(graph)).edgeCount, explorer.edgeCount);
+});
+
+test("v1 recommendation loading rejects a mixed v2 explorer", async () => {
+  const compact = fixture("graph.compact.json") as Record<string, unknown>;
+  const { role, graphId, dataset, semantics, config, truncation, ...v1 } = compact;
+  const fake = fakeRuntime((url) => {
+    if (url === "./data/graph.compact.json") return jsonResponse({ ...v1, format: "graph-compact-v1" });
+    if (url === "./data/graph-explorer.compact.json") return jsonResponse(fixture("graph-explorer.compact.json"));
+    return new Response("", { status: 404 });
+  });
+  const loader = createArtifactLoader(fake.runtime, false);
+  const graph = await loader.fetchGraph();
+  await assert.rejects(loader.fetchExplorerGraph(graph), /v2 explorer requires a v2 recommendation graph/);
 });
 
 test("artifact transport keeps the missing compact to legacy fallback deliberate", async () => {

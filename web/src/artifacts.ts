@@ -19,7 +19,7 @@ export interface GraphEdge {
   support?: number;
 }
 
-export interface GraphData {
+export interface GraphDataV1 {
   generatedAt: string;
   userCount: number;
   animeCount: number;
@@ -30,6 +30,56 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+export interface GraphV2Metadata {
+  role: "recommendation" | "visualization";
+  graphId: string;
+  sourceGraphId?: string;
+  dataset: { sha256: string; scope: "anonymized-ratings-content-v1"; source: string };
+  semantics: {
+    pairWeight: "centered-pair-preference-mean-v1";
+    support: "co-raters-after-selection-v1";
+    recommendationUse: "positive-only-v1";
+  };
+  config: {
+    ratingSelectionPolicy: "all-ratings" | "sha256-bottom-k-v1";
+    seed: number;
+    maxRatingsPerUser: number;
+    maxAnimeAnimeEdges: number;
+    maxPairVisits: number;
+    maxPairCandidates: number;
+    minPairSupport: number;
+    maxNeighborsPerAnime: number;
+  };
+  truncation: {
+    inputRatings: number;
+    selectedRatings: number;
+    ratingsSkipped: number;
+    potentialPairVisits: number;
+    pairVisits: number;
+    pairVisitsSkipped: number;
+    candidatePairs: number;
+    eligiblePairs: number;
+    selectedPairs: number;
+    excludedBySupport: number;
+    excludedByNeighborLimit: number;
+    excludedByOutputLimit: number;
+  };
+  visualization?: {
+    policy: "abs-weight-top-k-v1";
+    maxUserAnimeEdges: number;
+    maxAnimeAnimeEdges: number;
+    excludedUserAnimeEdges: number;
+    excludedAnimeAnimeEdges: number;
+  };
+}
+
+export interface GraphDataV2 extends GraphDataV1, GraphV2Metadata {
+  format: "graph-legacy-v2";
+  role: "recommendation";
+}
+
+export type GraphData = GraphDataV1 | GraphDataV2;
+
 export type CompactAnimeEntry = [animeId: number, title: string];
 export type CompactUserAnimeEdge = [userIndex: number, animeIndex: number, weight: number];
 export type CompactAnimeAnimeEdge = [
@@ -39,7 +89,7 @@ export type CompactAnimeAnimeEdge = [
   support?: number, // co-raters in processed rows, not proof that all pair keys were exported
 ];
 
-export interface CompactGraphData {
+export interface CompactGraphDataV1 {
   format: "graph-compact-v1";
   generatedAt: string;
   userIds: string[];
@@ -52,6 +102,13 @@ export interface CompactGraphData {
   nodeCount: number;
   edgeCount: number;
 }
+
+export interface CompactGraphDataV2 extends Omit<CompactGraphDataV1, "format" | "aa">, GraphV2Metadata {
+  format: "graph-compact-v2";
+  aa: [leftAnimeIndex: number, rightAnimeIndex: number, weight: number, support: number][];
+}
+
+export type CompactGraphData = CompactGraphDataV1 | CompactGraphDataV2;
 
 export type LoadedGraphData = GraphData | CompactGraphData;
 
@@ -172,6 +229,14 @@ function expectLegacyFormat(value: Record<string, unknown>, label: string): void
   }
 }
 
+function rejectV2MetadataOnV1(value: Record<string, unknown>, label: string): void {
+  for (const field of ["role", "graphId", "sourceGraphId", "dataset", "semantics", "config", "truncation", "visualization"]) {
+    if (Object.hasOwn(value, field)) {
+      invalid(label, field, "requires a v2 graph format");
+    }
+  }
+}
+
 function checkCounts(
   value: Record<string, unknown>, label: string, users: number, anime: number, edges: number,
 ): void {
@@ -203,9 +268,119 @@ function relationshipKey(left: number, right: number, width: number, label: stri
   return key;
 }
 
-export function parseCompactGraph(value: unknown, label: string): CompactGraphData {
+function sha256(value: unknown, label: string, location: string): void {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
+    invalid(label, location, "must be a lowercase SHA-256 digest");
+  }
+}
+
+function validateV2Metadata(
+  graph: Record<string, unknown>, label: string,
+  expectedRole?: "recommendation" | "visualization",
+): "recommendation" | "visualization" {
+  const role = graph.role;
+  if (role !== "recommendation" && role !== "visualization") {
+    invalid(label, "role", "must be recommendation or visualization");
+  }
+  if (expectedRole && role !== expectedRole) {
+    invalid(label, "role", `must be ${expectedRole} for this artifact`);
+  }
+  sha256(graph.graphId, label, "graphId");
+  const dataset = record(graph.dataset, label, "dataset");
+  sha256(dataset.sha256, label, "dataset.sha256");
+  if (dataset.scope !== "anonymized-ratings-content-v1") {
+    invalid(label, "dataset.scope", "is unsupported");
+  }
+  nonemptyText(dataset.source, label, "dataset.source");
+  const semantics = record(graph.semantics, label, "semantics");
+  for (const [field, expected] of [
+    ["pairWeight", "centered-pair-preference-mean-v1"],
+    ["support", "co-raters-after-selection-v1"],
+    ["recommendationUse", "positive-only-v1"],
+  ] as const) {
+    if (semantics[field] !== expected) invalid(label, `semantics.${field}`, "is unsupported");
+  }
+  const config = record(graph.config, label, "config");
+  const maxRatings = safeInteger(config.maxRatingsPerUser, label, "config.maxRatingsPerUser", 0);
+  const policy = maxRatings > 0 ? "sha256-bottom-k-v1" : "all-ratings";
+  if (config.ratingSelectionPolicy !== policy) {
+    invalid(label, "config.ratingSelectionPolicy", `must be ${policy}`);
+  }
+  const seed = safeInteger(config.seed, label, "config.seed", 0);
+  if (seed > 0xffffffff) invalid(label, "config.seed", "must be an unsigned 32-bit integer");
+  for (const [field, minimum] of [
+    ["maxAnimeAnimeEdges", 0], ["maxPairVisits", 1], ["maxPairCandidates", 1],
+    ["minPairSupport", 1], ["maxNeighborsPerAnime", 0],
+  ] as const) safeInteger(config[field], label, `config.${field}`, minimum);
+  const truncation = record(graph.truncation, label, "truncation");
+  const counts = new Map<string, number>();
+  for (const field of [
+    "inputRatings", "selectedRatings", "ratingsSkipped", "potentialPairVisits",
+    "pairVisits", "pairVisitsSkipped", "candidatePairs", "eligiblePairs",
+    "selectedPairs", "excludedBySupport", "excludedByNeighborLimit", "excludedByOutputLimit",
+  ]) {
+    counts.set(field, safeInteger(truncation[field], label, `truncation.${field}`, 0));
+  }
+  const count = (field: string): number => counts.get(field)!;
+  if (count("selectedRatings") + count("ratingsSkipped") !== count("inputRatings")) {
+    invalid(label, "truncation.ratingsSkipped", "does not reconcile with input ratings");
+  }
+  if (count("pairVisits") + count("pairVisitsSkipped") !== count("potentialPairVisits")) {
+    invalid(label, "truncation.pairVisitsSkipped", "does not reconcile with potential visits");
+  }
+  if (count("candidatePairs") - count("excludedBySupport") !== count("eligiblePairs") ||
+      count("eligiblePairs") - count("excludedByNeighborLimit") - count("excludedByOutputLimit") !== count("selectedPairs")) {
+    invalid(label, "truncation.selectedPairs", "does not reconcile with candidate exclusions");
+  }
+  if (role === "recommendation") {
+    if (Object.hasOwn(graph, "sourceGraphId") || Object.hasOwn(graph, "visualization")) {
+      invalid(label, "role", "recommendation graphs cannot carry visualization provenance");
+    }
+  } else {
+    sha256(graph.sourceGraphId, label, "sourceGraphId");
+    const visualization = record(graph.visualization, label, "visualization");
+    if (visualization.policy !== "abs-weight-top-k-v1") {
+      invalid(label, "visualization.policy", "is unsupported");
+    }
+    for (const field of [
+      "maxUserAnimeEdges", "maxAnimeAnimeEdges", "excludedUserAnimeEdges", "excludedAnimeAnimeEdges",
+    ]) safeInteger(visualization[field], label, `visualization.${field}`, 0);
+  }
+  return role;
+}
+
+function validateV2EdgeCounts(
+  graph: Record<string, unknown>, label: string, role: "recommendation" | "visualization",
+  userAnimeCount: number, animeAnimeCount: number,
+): void {
+  const truncation = graph.truncation as Record<string, number>;
+  if (role === "recommendation") {
+    if (truncation.selectedRatings !== userAnimeCount || truncation.selectedPairs !== animeAnimeCount) {
+      invalid(label, "truncation", "must match recommendation edge counts");
+    }
+  } else {
+    const visualization = graph.visualization as Record<string, number>;
+    if (userAnimeCount > visualization.maxUserAnimeEdges || animeAnimeCount > visualization.maxAnimeAnimeEdges ||
+        truncation.selectedRatings - userAnimeCount !== visualization.excludedUserAnimeEdges ||
+        truncation.selectedPairs - animeAnimeCount !== visualization.excludedAnimeAnimeEdges) {
+      invalid(label, "visualization", "must match its sampled edge counts");
+    }
+  }
+}
+
+export function parseCompactGraph(
+  value: unknown, label: string, expectedRole?: "recommendation" | "visualization",
+): CompactGraphData {
   const graph = record(value, label, "root");
-  expectFormat(graph, "graph-compact-v1", label);
+  if (graph.format !== "graph-compact-v1" && graph.format !== "graph-compact-v2") {
+    invalid(label, "format", "is unsupported; expected graph-compact-v1 or graph-compact-v2");
+  }
+  if (Object.hasOwn(graph, "version")) {
+    invalid(label, "version", "is unsupported; use the declared format version");
+  }
+  if (graph.format === "graph-compact-v1") rejectV2MetadataOnV1(graph, label);
+  const role = graph.format === "graph-compact-v2"
+    ? validateV2Metadata(graph, label, expectedRole) : null;
   generatedAt(graph.generatedAt, label);
   const userIds = list(graph.userIds, label, "userIds");
   const anime = list(graph.anime, label, "anime");
@@ -236,8 +411,9 @@ export function parseCompactGraph(value: unknown, label: string): CompactGraphDa
   const aaSet = new Set<string | number>();
   aa.forEach((value, i) => {
     const entry = list(value, label, `aa[${i}]`);
-    if (entry.length !== 3 && entry.length !== 4) {
-      invalid(label, `aa[${i}]`, "must have 3 values or 4 with support");
+    if (graph.format === "graph-compact-v2" ? entry.length !== 4 : entry.length !== 3 && entry.length !== 4) {
+      invalid(label, `aa[${i}]`, graph.format === "graph-compact-v2"
+        ? "must have exactly 4 values with support" : "must have 3 values or 4 with support");
     }
     const left = index(entry[0], anime.length, label, `aa[${i}][0]`);
     const right = index(entry[1], anime.length, label, `aa[${i}][1]`);
@@ -250,12 +426,22 @@ export function parseCompactGraph(value: unknown, label: string): CompactGraphDa
     );
   });
   checkCounts(graph, label, userIds.length, anime.length, ua.length + aa.length);
+  if (role) validateV2EdgeCounts(graph, label, role, ua.length, aa.length);
   return value as CompactGraphData;
 }
 
 export function parseLegacyGraph(value: unknown, label: string): GraphData {
   const graph = record(value, label, "root");
-  expectLegacyFormat(graph, label);
+  const v2 = graph.format === "graph-legacy-v2";
+  if (v2) {
+    if (Object.hasOwn(graph, "version")) {
+      invalid(label, "version", "is unsupported; use the declared format version");
+    }
+    validateV2Metadata(graph, label, "recommendation");
+  } else {
+    expectLegacyFormat(graph, label);
+    rejectV2MetadataOnV1(graph, label);
+  }
   generatedAt(graph.generatedAt, label);
   const nodes = list(graph.nodes, label, "nodes");
   const edges = list(graph.edges, label, "edges");
@@ -303,14 +489,21 @@ export function parseLegacyGraph(value: unknown, label: string): GraphData {
       invalid(label, `edges[${i}].edgeType`, "is unsupported");
     }
     finite(edge.weight, label, `edges[${i}].weight`);
+    if (edge.edgeType === "anime-anime" && v2 && !Object.hasOwn(edge, "support")) {
+      invalid(label, `edges[${i}].support`, "is required for v2 pair edges");
+    }
     if (Object.hasOwn(edge, "support")) safeInteger(edge.support, label, `edges[${i}].support`, 1);
   });
   checkCounts(graph, label, users, anime, edges.length);
+  if (v2) validateV2EdgeCounts(graph, label, "recommendation",
+    edges.filter((edge) => (edge as Record<string, unknown>).edgeType === "user-anime").length,
+    edges.filter((edge) => (edge as Record<string, unknown>).edgeType === "anime-anime").length,
+  );
   return value as GraphData;
 }
 
 export function isCompactGraphData(value: LoadedGraphData): value is CompactGraphData {
-  return "format" in value;
+  return "format" in value && (value.format === "graph-compact-v1" || value.format === "graph-compact-v2");
 }
 
 export function parseDemoCatalog(value: unknown, label: string): DemoCatalogItem[] {

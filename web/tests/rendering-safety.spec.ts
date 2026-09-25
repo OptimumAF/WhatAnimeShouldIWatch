@@ -73,12 +73,14 @@ test("mocked seasonal provider text is literal and unsafe images are omitted", a
 });
 
 test("graph labels, imported lines, and profile names remain text", async ({ page }) => {
-  await page.route("**/demo-data/graph.compact.json", async (route) => {
-    const response = await route.fetch();
-    const graph = await response.json();
-    graph.anime[0][1] = unsafeMarkup;
-    await route.fulfill({ response, json: graph });
-  });
+  for (const path of ["graph.compact.json", "graph-explorer.compact.json"]) {
+    await page.route(`**/demo-data/${path}`, async (route) => {
+      const response = await route.fetch();
+      const graph = await response.json();
+      graph.anime[0][1] = unsafeMarkup;
+      await route.fulfill({ response, json: graph });
+    });
+  }
   await page.goto("/");
   await page.locator("#anime-input").fill("101");
   await page.locator("#add-anime-form button").click();

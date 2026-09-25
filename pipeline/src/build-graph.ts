@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { Command } from "commander";
 import { loadDatasetFromDb, openDatabase } from "./db.js";
 import { getRepoRoot } from "./paths.js";
+import { datasetIdentity, recommendationGraphId, recommendationMetadata } from "./core/graph-contract.js";
 import {
   aggregateAnimePairs,
   DEFAULT_MAX_CANDIDATE_PAIRS,
@@ -15,8 +16,10 @@ import {
 } from "./core/pair-aggregation.js";
 import type {
   CompactAnonymizedDataset,
-  CompactGraphData,
+  CompactGraphDataV1,
+  CompactGraphDataV2,
   GraphData,
+  GraphDataV1,
   GraphEdge,
   GraphNode,
 } from "./types.js";
@@ -202,6 +205,8 @@ try {
       rating.normalizedScore = rating.rawScore - avg;
     }
   }
+  const identity = datasetIdentity(dataset);
+  dataset.datasetSha256 = identity.sha256;
 
   const graphResult = createGraph(
     dataset,
@@ -215,7 +220,35 @@ try {
       selectionSeed: pairSelectionSeed,
     },
   );
-  const graph = graphResult.graph;
+  const metadata = recommendationMetadata(identity, {
+    seed: pairSelectionSeed,
+    maxRatingsPerUser,
+    maxAnimeAnimeEdges,
+    maxPairVisits,
+    maxPairCandidates,
+    minPairSupport,
+    maxNeighborsPerAnime,
+  }, graphResult.pairStats);
+  const compactCore = createCompactGraph(graphResult.graph);
+  const compactWithoutId: Omit<CompactGraphDataV2, "graphId"> = {
+    ...compactCore,
+    ...metadata,
+    format: "graph-compact-v2",
+    role: "recommendation",
+    aa: compactCore.aa.map(([left, right, weight, support]) => {
+      if (support === undefined) throw new Error("V2 pair support is missing.");
+      return [left, right, weight, support];
+    }),
+  };
+  const graphId = recommendationGraphId(compactWithoutId);
+  const compactGraph: CompactGraphDataV2 = { ...compactWithoutId, graphId };
+  const graph: GraphData = {
+    ...graphResult.graph,
+    ...metadata,
+    format: "graph-legacy-v2",
+    role: "recommendation",
+    graphId,
+  };
   if (writeLegacy) {
     fs.mkdirSync(path.dirname(outDatasetPath), { recursive: true });
     fs.writeFileSync(
@@ -230,7 +263,6 @@ try {
 
   if (writeCompact) {
     const compactDataset = createCompactDataset(dataset);
-    const compactGraph = createCompactGraph(graph);
 
     fs.mkdirSync(path.dirname(outDatasetCompactPath), { recursive: true });
     fs.writeFileSync(
@@ -254,6 +286,8 @@ try {
   const peakRssBytes = maxRssKiB > 0 ? maxRssKiB * 1024 : process.memoryUsage().rss;
   const report = {
     format: "graph-build-report-v1",
+    graphId,
+    datasetSha256: identity.sha256,
     selection: {
       policy: maxRatingsPerUser > 0 ? PAIR_CAP_POLICY : "all-ratings",
       seed: pairSelectionSeed,
@@ -297,6 +331,7 @@ try {
   fs.mkdirSync(path.dirname(outReportPath), { recursive: true });
   fs.writeFileSync(outReportPath, JSON.stringify(report, null, prettyJson ? 2 : 0));
   process.stdout.write(`Graph build report written: ${outReportPath}\n`);
+  process.stdout.write(`Graph identity: ${graphId}; dataset SHA-256: ${identity.sha256}.\n`);
   process.stdout.write(
     `Pair selection: ${pairStats.pairVisits} visits, ${pairStats.candidatePairs} candidate keys, ` +
     `${pairStats.eligiblePairs} with support >= ${minPairSupport}, ${pairStats.selectedPairs} retained; ` +
@@ -320,6 +355,7 @@ try {
 
 function createGraph(
   dataset: {
+    generatedAt: string;
     users: {
       userId: string;
       ratings: {
@@ -333,7 +369,7 @@ function createGraph(
   maxAnimeAnimeEdges: number,
   pairOptions: PairSelectionOptions,
 ): {
-  graph: GraphData;
+  graph: GraphDataV1;
   pairStats: PairSelectionStats;
 } {
   const nodes = new Map<string, GraphNode>();
@@ -386,7 +422,7 @@ function createGraph(
 
   return {
     graph: {
-      generatedAt: new Date().toISOString(),
+      generatedAt: dataset.generatedAt,
       nodeCount: nodeList.length,
       edgeCount: edges.length,
       userCount,
@@ -430,6 +466,7 @@ function isTruthy(value: string | undefined): boolean {
 function createCompactDataset(dataset: {
   generatedAt: string;
   source: string;
+  datasetSha256?: string;
   users: {
     userId: string;
     ratings: {
@@ -466,12 +503,13 @@ function createCompactDataset(dataset: {
     format: "ratings-compact-v1",
     generatedAt: dataset.generatedAt,
     source: dataset.source,
+    datasetSha256: dataset.datasetSha256,
     anime,
     users,
   };
 }
 
-function createCompactGraph(graph: GraphData): CompactGraphData {
+function createCompactGraph(graph: GraphDataV1): CompactGraphDataV1 {
   const userIds: string[] = [];
   const anime: [number, string][] = [];
   const userNodeIdToIndex = new Map<string, number>();
@@ -501,7 +539,7 @@ function createCompactGraph(graph: GraphData): CompactGraphData {
   }
 
   const ua: [number, number, number][] = [];
-  const aa: CompactGraphData["aa"] = [];
+  const aa: CompactGraphDataV1["aa"] = [];
 
   for (const edge of graph.edges) {
     if (edge.edgeType === "user-anime") {

@@ -6,7 +6,7 @@ import {
   parseLegacyGraph,
   parseLegacyModel,
 } from "./artifacts";
-import type { DemoCatalogItem, LoadedGraphData, ModelRecommendationAnime } from "./artifacts";
+import type { DemoCatalogItem, GraphV2Metadata, LoadedGraphData, ModelRecommendationAnime } from "./artifacts";
 import type { ModelRecommendationIndex } from "./domain";
 import type { RuntimePorts } from "./runtime";
 
@@ -16,7 +16,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
       const graph = await fetchPlainJson(
         "./demo-data/graph.compact.json", "synthetic demo graph",
       );
-      return parseCompactGraph(graph, "synthetic demo graph");
+      return parseCompactGraph(graph, "synthetic demo graph", "recommendation");
     }
     const compactData = await fetchJsonWithGzipFallback({
       path: "./data/graph.compact.json",
@@ -24,7 +24,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
       label: "graph.compact.json",
     });
     if (compactData !== null) {
-      return parseCompactGraph(compactData.value, "graph.compact.json");
+      return parseCompactGraph(compactData.value, "graph.compact.json", "recommendation");
     }
     const legacyData = await fetchJsonWithGzipFallback({
       path: "./data/graph.json",
@@ -38,14 +38,22 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
   }
 
   async function fetchExplorerGraph(graphData: LoadedGraphData): Promise<LoadedGraphData> {
-    if (demoMode) return graphData;
+    if (demoMode) {
+      const value = await fetchPlainJson("./demo-data/graph-explorer.compact.json", "synthetic demo explorer graph");
+      const explorer = parseCompactGraph(value, "synthetic demo explorer graph", "visualization");
+      assertExplorerMatches(graphData, explorer);
+      return explorer;
+    }
+    const needsV2Explorer = isV2Graph(graphData);
     const explorerCompactData = await fetchJsonWithGzipFallback({
       path: "./data/graph-explorer.compact.json",
-      required: false,
+      required: needsV2Explorer,
       label: "graph-explorer.compact.json",
     });
     if (explorerCompactData !== null) {
-      return parseCompactGraph(explorerCompactData.value, "graph-explorer.compact.json");
+      const explorer = parseCompactGraph(explorerCompactData.value, "graph-explorer.compact.json", "visualization");
+      assertExplorerMatches(graphData, explorer);
+      return explorer;
     }
     return graphData;
   }
@@ -188,4 +196,34 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
   }
 
   return { fetchGraph, fetchExplorerGraph, fetchModelRecommendationIndex, fetchDemoCatalog };
+}
+
+function isV2Graph(graph: LoadedGraphData): graph is LoadedGraphData & GraphV2Metadata {
+  return "format" in graph &&
+    (graph.format === "graph-compact-v2" || graph.format === "graph-legacy-v2");
+}
+
+function assertExplorerMatches(main: LoadedGraphData, explorer: LoadedGraphData): void {
+  if (!isV2Graph(main)) {
+    if (isV2Graph(explorer)) {
+      throw new Error("graph-explorer.compact.json: v2 explorer requires a v2 recommendation graph.");
+    }
+    return;
+  }
+  if (!isV2Graph(explorer) || explorer.role !== "visualization" ||
+      explorer.sourceGraphId !== main.graphId ||
+      explorer.dataset.sha256 !== main.dataset.sha256 ||
+      explorer.dataset.scope !== main.dataset.scope ||
+      explorer.dataset.source !== main.dataset.source ||
+      !sameFields(explorer.semantics, main.semantics,
+        ["pairWeight", "support", "recommendationUse"]) ||
+      !sameFields(explorer.config, main.config,
+        ["ratingSelectionPolicy", "seed", "maxRatingsPerUser", "maxAnimeAnimeEdges",
+          "maxPairVisits", "maxPairCandidates", "minPairSupport", "maxNeighborsPerAnime"])) {
+    throw new Error("graph-explorer.compact.json: sourceGraphId or graph provenance does not match the recommendation graph. Rebuild both artifacts.");
+  }
+}
+
+function sameFields<T extends object>(left: T, right: T, fields: (keyof T)[]): boolean {
+  return fields.every((field) => left[field] === right[field]);
 }

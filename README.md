@@ -51,7 +51,7 @@ npm run test:e2e
 
 The Python smoke and workflow tests require NumPy and PyYAML (`python -m pip install "numpy>=2,<3" "PyYAML>=6,<7"`). The Playwright install is needed once per machine. Browser tests use the synthetic demo or a normal-mode app with mocked providers; no real usernames are queried. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
 
-The web app validates graph, demo catalog, and model JSON before scoring or rendering. It accepts the existing compact v1 and unversioned legacy graph/model formats, including three- or four-value compact anime-pair tuples. Malformed or unsupported artifacts report the artifact and field to repair; a missing optional model remains an unavailable state. `npm test` runs the pipeline tests and synthetic web artifact-contract tests.
+The web app validates graph, demo catalog, and model JSON before scoring or rendering. New graph exports use compact or legacy v2 with explicit semantics, support, build configuration, truncation counts, and dataset identity. The browser loads a separate, identified v2 explorer sample while recommendations use the recommendation graph. Existing compact v1 and unversioned legacy graphs remain readable, including three- or four-value compact anime-pair tuples; unknown or mixed formats fail with a named artifact and field. A missing optional model remains an unavailable state. See [decision 0009](docs/decisions/0009-graph-v2-contract.md) for identities and compatibility limits.
 
 ## Local watched-list import
 
@@ -141,6 +141,8 @@ Outputs:
 - `data/anonymized-ratings.json` (legacy, unless `--compact-only`)
 - `data/graph.json` (legacy, unless `--compact-only`)
 - `data/graph.json.report.json` (build selection/coverage/resource report; compact-only uses `data/graph.compact.json.report.json`)
+
+Both graph formats now carry `graphId`, a canonical `dataset.sha256`, current pair-preference semantics, selection settings, and truncation counts. The report repeats both identities. The compact and legacy v2 recommendation exports share an ID. `sync:web` writes a separate bounded `graph-explorer.compact.json.gz` for visualization from either export; it is not used for recommendation scoring. Its source ID must match the recommendation graph. Existing v1 graphs remain a deliberate read-only compatibility path. No provider-derived data or model regeneration was performed for this format change.
 
 Note:
 - JSON exports are minified by default to reduce disk size.

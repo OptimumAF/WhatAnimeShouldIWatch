@@ -75,13 +75,21 @@ test("network explorer distinguishes signed v1 pair preference without calling i
 });
 
 test("a valid selected-rating and selected-pair graph still loads recommendations and the network", async ({ page }) => {
+  let selectedLegacyCompact: Record<string, unknown> | null = null;
   await page.route("**/demo-data/graph.compact.json", async (route) => {
     const response = await route.fetch();
     const graph = await response.json();
+    for (const field of ["role", "graphId", "dataset", "semantics", "config", "truncation"]) delete graph[field];
+    graph.format = "graph-compact-v1";
     graph.ua = graph.ua.slice(0, -1);
     graph.aa = [graph.aa[0]];
     graph.edgeCount = graph.ua.length + graph.aa.length;
+    selectedLegacyCompact = graph;
     await route.fulfill({ response, json: graph });
+  });
+  await page.route("**/demo-data/graph-explorer.compact.json", async (route) => {
+    if (!selectedLegacyCompact) throw new Error("Selected graph was not loaded before the explorer.");
+    await route.fulfill({ json: selectedLegacyCompact });
   });
   await page.goto("/");
   await page.locator("#anime-input").fill("Copper Comet");
