@@ -110,3 +110,21 @@
 **Plan revisions and reasons:** Checked M2.9 after local acceptance. Required both an owner-controlled variable pair and a committed use-specific source/use approval entry so accidental variable setup alone cannot reach data access. Kept M8.4's broader model promotion criteria unchanged. Updated the source-review summary to distinguish the historical starting state from current draft PRs.
 
 **Single next task:** M1.6 — scope the origin-wide service-worker cleanup to this app and verify that another app on the origin is unaffected.
+
+## Session 2026-09-24 — M1.6
+
+**Branch / starting commit:** `codex/remove-origin-service-worker-cleanup` from `01ce2fa` on draft PR #4; worktree clean at branch creation. Inspected the current web source, Playwright setup, and repository-wide service-worker references.
+
+**Completed:** M1.6. No code in this repository registers a service worker. Removed the startup loop that called `getRegistrations()` and unregistered every registration under the same origin. Added a browser regression representing a sibling app at `/other-app/`.
+
+**Verification commands and actual results:** `rg -n 'serviceWorker|register|unregister'` found the unregister loop and no app registration. `npx playwright test tests/service-worker-cleanup.spec.ts` failed before the change with expected `0`, received `1` unregister call, then passed after removal with `0`. `npm run typecheck` and `npm run build:web` passed; `npm run test:e2e` passed all 6 tests. The test uses a mocked same-origin registration and does not install a real service worker.
+
+**Files changed:** `web/src/main.ts`, `web/tests/service-worker-cleanup.spec.ts`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
+
+**Commit / PR and CI:** Commit `14c12bc` in draft [PR #5](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/5), stacked on PR #4. [Fixture and fast checks run 36091765484](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36091765484) passed, including all 6 browser tests; GitGuardian passed.
+
+**Checks not run / blockers:** No real sibling app was installed on the origin. The test directly observes the unregister call using a mocked registration; the app has no known service-worker scope to retain. Provider-data permissions and current public assets are unchanged. M1's artifact, recommendation, adapter, migration, async-state, and rendering tasks and exit gate remain open.
+
+**Plan revisions and reasons:** Checked M1.6 after the regression, typecheck, build, and browser suite passed. Removed obsolete cleanup rather than choosing an app-specific scope without any registration code or historical scope evidence.
+
+**Single next task:** M1.1 — define and validate graph, catalog, and model artifact contracts against synthetic fixtures before extracting recommendation logic.
