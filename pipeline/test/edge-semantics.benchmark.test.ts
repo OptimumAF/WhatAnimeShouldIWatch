@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { aggregateAnimePairs, type PairUser } from "../src/core/pair-aggregation.js";
-import { scoreSupportShrunkAdjustedCosine } from "../src/core/item-similarity.js";
+import { scoreSupportShrunkAdjustedCosine, type CoRatedDeviation } from "../src/core/item-similarity.js";
 
 const fixture = JSON.parse(fs.readFileSync(
   new URL("../../fixtures/synthetic-edge-semantics.json", import.meta.url), "utf8",
-)) as { users: PairUser[] };
+)) as {
+  users: PairUser[];
+  signedCases: { label: string; observations: CoRatedDeviation[]; cosine: number | null; shrunk: number | null }[];
+  uniformRaters: { label: string; raw: number[]; centered: number[] }[];
+};
 
 function coRated(leftId: number, rightId: number, users: PairUser[] = fixture.users) {
   return users.flatMap((user) => {
@@ -62,4 +66,46 @@ test("zero magnitude and no overlap stay undefined without inventing an edge", (
     /finite centered scores/);
   assert.throws(() => scoreSupportShrunkAdjustedCosine([{ left: 1, right: 1 }], -1),
     /finite and nonnegative/);
+});
+
+test("opposition, co-dislike, neutral, constant, flat, sparse, and missing pairs keep distinct signs", () => {
+  for (const { label, observations, cosine, shrunk } of fixture.signedCases) {
+    const result = scoreSupportShrunkAdjustedCosine(observations, 2);
+    if (cosine === null || shrunk === null) {
+      assert.equal(result, null, label);
+      continue;
+    }
+    assert.ok(result, label);
+    assert.equal(result.support, observations.length, label);
+    near(result.adjustedCosine, cosine);
+    near(result.shrunkSimilarity, shrunk);
+  }
+  const disliked = fixture.signedCases.find((entry) => entry.label === "universally disliked pair")!;
+  assert.ok(disliked.observations.every(({ left, right }) => left < 0 && right < 0));
+  assert.ok(scoreSupportShrunkAdjustedCosine(disliked.observations, 2)!.shrunkSimilarity > 0);
+  const constant = fixture.signedCases.find((entry) => entry.label === "constant nonzero item vectors")!;
+  assert.ok(constant.observations.every(({ left, right }) => left === 1 && right === 1));
+  near(scoreSupportShrunkAdjustedCosine(constant.observations, 2)!.shrunkSimilarity, 1 / 2);
+});
+
+test("user centering removes high/low rater offsets and leaves flat raters undefined", () => {
+  const centered = fixture.uniformRaters.map(({ label, raw, centered: expected }) => {
+    const mean = raw.reduce((sum, score) => sum + score, 0) / raw.length;
+    const deviations = raw.map((score) => score - mean);
+    assert.deepEqual(deviations, expected, label);
+    return deviations;
+  });
+  assert.deepEqual(centered[0], centered[1]);
+  const aligned = scoreSupportShrunkAdjustedCosine(
+    centered.slice(0, 2).map((row) => ({ left: row[0], right: row[1] })), 2,
+  );
+  const opposed = scoreSupportShrunkAdjustedCosine(
+    centered.slice(0, 2).map((row) => ({ left: row[0], right: row[2] })), 2,
+  );
+  assert.ok(aligned && opposed);
+  near(aligned.shrunkSimilarity, 1 / 2);
+  near(opposed.shrunkSimilarity, -1 / 2);
+  assert.equal(scoreSupportShrunkAdjustedCosine(
+    centered.slice(2).map((row) => ({ left: row[0], right: row[1] })), 2,
+  ), null);
 });

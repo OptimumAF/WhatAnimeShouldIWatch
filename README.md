@@ -166,6 +166,14 @@ independent yet. [Decision 0005](docs/decisions/0005-graph-edge-semantics.md)
 compares this pair preference with a support-shrunk, user-centered item cosine
 on an invented fixture (`node --import tsx --test pipeline/test/edge-semantics.benchmark.test.ts`).
 The proposed similarity is not wired into v1 exports, browser ranking, or training.
+[Decision 0006](docs/decisions/0006-signed-graph-evidence.md) tests signed,
+neutral, sparse, flat-rater, and missing-overlap cases. In the v1 browser,
+nonpositive pair-preference edges are shown with their sign in the network but
+do not seed or penalize recommendations. The legacy trainer now uses positive
+v1 edges only for attractive regularization; `--graph-min-abs-weight` retains
+its CLI spelling but thresholds those positive weights. Existing model files
+were not retrained. A signed-similarity recommendation path remains gated on
+graph versioning, preference semantics, and split-first evaluation.
 
 ## 3) Run Web App
 

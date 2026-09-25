@@ -53,3 +53,23 @@ test("offline demo loads synthetic graph, catalog, and model without provider re
   expect(unexpectedRequests).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
+
+test("network explorer distinguishes signed v1 pair preference without calling it similarity", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await page.locator("#min-weight").evaluate((input: HTMLInputElement) => {
+    input.value = "0";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const positive = page.locator("#graph .graph-edge-layer line[data-edge-sign='positive']");
+  const negative = page.locator("#graph .graph-edge-layer line[data-edge-sign='negative']");
+  const neutral = page.locator("#graph .graph-edge-layer line[data-edge-sign='neutral']");
+  await expect.poll(() => positive.count()).toBeGreaterThan(0);
+  expect(await negative.count()).toBeGreaterThan(0);
+  expect(await neutral.count()).toBeGreaterThan(0);
+  expect(await positive.first().getAttribute("stroke"))
+    .not.toBe(await negative.first().getAttribute("stroke"));
+  expect(await neutral.first().getAttribute("stroke-dasharray")).toBe("3 3");
+  await expect(page.locator("#network-edge-legend")).toContainText("pair preference");
+  await expect(page.locator("#network-edge-legend")).not.toContainText("similarity");
+});

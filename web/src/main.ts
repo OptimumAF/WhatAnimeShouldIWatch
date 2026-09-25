@@ -399,7 +399,7 @@ app.innerHTML = `
           </div>
           <ul class="contextual-tip-list">
             <li>Start with anime-only edges to reduce graph noise, then add users as needed.</li>
-            <li>Raise minimum edge weight to highlight stronger similarity clusters.</li>
+            <li>Raise minimum absolute edge weight to highlight stronger pair-preference signals.</li>
             <li>Click a node to inspect top weighted neighbors and compare context.</li>
             <li>Keyboard: <strong>Alt+/</strong> jumps to graph search from anywhere.</li>
           </ul>
@@ -425,6 +425,7 @@ app.innerHTML = `
                 <input id="min-weight" type="range" min="0" max="4" value="0" step="0.05" aria-label="Minimum absolute edge weight" />
                 <output id="min-weight-value">0.00</output>
               </label>
+              <p id="network-edge-legend" class="muted">Anime edges show v1 pair preference: teal is positive, coral is negative, and dashed grey is zero. A negative pair mean does not prove opposite tastes.</p>
 
               <label class="checkbox">
                 <input id="toggle-anime-edges" type="checkbox" checked />
@@ -3241,11 +3242,17 @@ function renderGraph(
       continue;
     }
 
+    const sign = edge.weight > 0 ? "positive" : edge.weight < 0 ? "negative" : "neutral";
+    const color = sign === "neutral" ? "#aab4c088"
+      : edge.edgeType === "user-anime"
+        ? sign === "positive" ? "#f4d35eaa" : "#eaa0d6aa"
+        : sign === "positive" ? "#6fffe988" : "#ff8f7a99";
     graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
       size: edge.edgeType === "user-anime" ? 1.4 : 0.7,
-      color: edge.edgeType === "user-anime" ? "#f4d35e88" : "#6fffe988",
+      color,
       weight: Math.max(Math.abs(edge.weight), 0.01),
       signedWeight: edge.weight,
+      sign,
       edgeType: edge.edgeType,
     });
   }
@@ -3538,9 +3545,14 @@ function renderSvgGraph(graph: Graph): void {
     const baseSize = Number(edgeAttrs.size) || 1;
     const highlighted =
       selected !== null && (source === selected || target === selected);
-    line.setAttribute("stroke", highlighted ? "#ffd166bb" : selected ? "#30415655" : baseColor);
+    line.setAttribute("stroke", selected && !highlighted ? "#30415655" : baseColor);
     line.setAttribute("stroke-width", String(highlighted ? baseSize * 1.3 : baseSize));
     line.setAttribute("stroke-linecap", "round");
+    const sign = edgeAttrs.sign;
+    if (sign === "positive" || sign === "negative" || sign === "neutral") {
+      line.setAttribute("data-edge-sign", sign);
+      if (sign === "neutral") line.setAttribute("stroke-dasharray", "3 3");
+    }
     edgeLayer.appendChild(line);
   });
 
