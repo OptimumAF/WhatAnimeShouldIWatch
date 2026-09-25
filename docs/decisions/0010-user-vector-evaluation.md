@@ -1,6 +1,6 @@
 # 0010 — Browser new-user vector comparison protocol
 
-**Status:** M4.5 synthetic protocol, fixed before running the comparison on 2026-09-25. It makes no provider-data or production-model decision.
+**Status:** Complete local M4.5 decision; protocol fixed before running the comparison on 2026-09-25. It makes no provider-data or production-model decision.
 
 ## Question and inputs
 
@@ -16,3 +16,14 @@ Deduplicate a fixture user's ratings by anime ID with the last score winning, om
 - **Latency:** warm both methods, then measure p95 of 200 inference calls on a deterministic 1,000-title, 96-factor invented catalog for one and three preference signals on this host. Report the host/runtime and measured times; timing is advisory outside this host.
 
 The minimum local engineering gate for the current browser method is Hit@3 ≥ 0.50 in each slice and p95 ≤ 50 ms on the declared synthetic workload. Replace it with fold-in only if fold-in improves Hit@3 by at least 0.10 in **both** slices, does not lower reciprocal rank in either slice, and meets the same latency gate. Otherwise keep the simpler browser average if it meets its gate. If neither method meets the gate, leave M4.5 unchecked and identify the failure. A passing invented-data gate is a serving-path decision for this slice, not evidence of production ranking quality; M5's split-first, permitted-data evaluation remains required before promotion.
+
+## Result and decision
+
+The protocol above was committed as `abe3e7e` before the fixture comparison ran. `npm run eval:user-vector:fixture` verified the generated fixture, enumerated the cases, called the exact browser average scorer plus a separate ridge reference, applied the same model eligibility policy, and measured latency. The local host was Windows x64, Node 23.10.0, Intel i7-12700K. A hand-computed ridge test checks bias subtraction and a browser test exercises one and three explicit preference signals through the deployed model mode.
+
+| Observed ratings | Positive holdout cases | Average Hit@3 / MRR | Fold-in Hit@3 / MRR | Average / fold-in p95, 1,000 items × 96 factors |
+|---|---:|---:|---:|---:|
+| 1 | 29 | 20/29 = 0.690 / 0.492 | 20/29 = 0.690 / 0.528 | 0.846 / 0.657 ms |
+| 3 | 7 | 5/7 = 0.714 / 0.612 | 5/7 = 0.714 / 0.643 | 1.276 / 1.333 ms |
+
+**Decision:** Retain the current browser item-embedding average. It passed the local Hit@3 and latency gates; fold-in did not improve Hit@3 in either slice, so it failed the predeclared promotion rule. The fold-in code remains an evaluation-only reference and is not shipped in the web bundle. The cases share a tiny, hand-authored eight-title fixture, overlap within users, and cannot establish a real-world quality difference or calibrate the model scores. M5.1–M5.5 must rebuild split-first, leakage-checked new-user evaluation on permitted data before any production method or quality claim is promoted.

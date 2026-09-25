@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "typecheck:eval": "tsc --project tsconfig.eval.json",
     "test:unit": "node --import tsx --test test/*.test.ts",
     "test:e2e": "playwright test",
+    "eval:user-vector:fixture": "tsx bench/user-vector-eval.ts",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
