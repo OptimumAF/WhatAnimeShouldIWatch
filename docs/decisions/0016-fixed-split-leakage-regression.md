@@ -1,6 +1,6 @@
 # 0016 — Fixed-split leakage regression
 
-**Status:** M5.3 protocol, 2026-09-25. Results are recorded in the living plan and progress log.
+**Status:** M5.3 protocol and invented-fixture regression passed on 2026-09-25; results are recorded in the living plan and progress log.
 
 ## What must remain fixed
 

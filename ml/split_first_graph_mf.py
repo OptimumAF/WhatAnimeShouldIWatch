@@ -7,13 +7,24 @@ import argparse
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from raw_interaction_split import load_raw_snapshot, partition_snapshot, _no_duplicate_json_keys
+from raw_interaction_split import RawSnapshot, load_raw_snapshot, partition_snapshot, _no_duplicate_json_keys
 from train_graph_mf import Dataset, Split, train_graph_mf
-from train_only_preprocessing import TrainOnlyFit, fit_training_partition, load_metadata_snapshot
+from train_only_preprocessing import (MetadataSnapshot, TrainOnlyFit, fit_training_partition,
+                                      load_metadata_snapshot)
+
+
+@dataclass(frozen=True)
+class SplitFirstTraining:
+    fit: TrainOnlyFit
+    dataset: Dataset
+    split: Split
+    graph_edges: np.ndarray
+    model: dict[str, np.ndarray | float]
 
 
 def training_arrays(fit: TrainOnlyFit, min_graph_weight: float = 0.0) -> tuple[Dataset, Split, np.ndarray]:
@@ -52,6 +63,32 @@ def model_fingerprint(model: dict[str, np.ndarray | float]) -> str:
     return digest.hexdigest()
 
 
+def fit_split_first(
+    snapshot: RawSnapshot,
+    manifest: object,
+    metadata: MetadataSnapshot,
+    *,
+    factors: int,
+    epochs: int,
+    lr: float,
+    reg: float,
+    reg_bias: float,
+    graph_lambda: float,
+    graph_min_weight: float,
+    graph_sample_rate: float,
+    seed: int,
+) -> SplitFirstTraining:
+    """The file-backed CLI and leakage tests share this validated train-only path."""
+    train = partition_snapshot(snapshot, manifest).train
+    fit = fit_training_partition(train, metadata)
+    dataset, split, graph_edges = training_arrays(fit, graph_min_weight)
+    model = train_graph_mf(
+        split, len(dataset.user_ids), len(dataset.anime_ids), graph_edges,
+        factors, epochs, lr, reg, reg_bias, graph_lambda, graph_sample_rate, seed,
+    )
+    return SplitFirstTraining(fit, dataset, split, graph_edges, model)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fit MF from a validated raw train split without using holdout labels.")
     parser.add_argument("--raw-ratings", type=Path, required=True)
@@ -80,29 +117,28 @@ def main() -> None:
         snapshot = load_raw_snapshot(args.raw_ratings)
         manifest = json.loads(args.split_manifest.read_text(encoding="utf-8"),
                               object_pairs_hook=_no_duplicate_json_keys)
-        train = partition_snapshot(snapshot, manifest).train
         metadata = load_metadata_snapshot(args.metadata)
-        fit = fit_training_partition(train, metadata)
-        dataset, split, graph_edges = training_arrays(fit, args.graph_min_weight)
-        model = train_graph_mf(
-            split, len(dataset.user_ids), len(dataset.anime_ids), graph_edges,
-            args.factors, args.epochs, args.lr, args.reg, args.reg_bias,
-            args.graph_lambda, args.graph_sample_rate, args.seed,
+        result = fit_split_first(
+            snapshot, manifest, metadata,
+            factors=args.factors, epochs=args.epochs, lr=args.lr,
+            reg=args.reg, reg_bias=args.reg_bias, graph_lambda=args.graph_lambda,
+            graph_min_weight=args.graph_min_weight,
+            graph_sample_rate=args.graph_sample_rate, seed=args.seed,
         )
     except (OSError, UnicodeError, ValueError, KeyError) as exc:
         parser.exit(1, f"Split-first MF failed: {exc}\n")
     print(json.dumps({
         "format": "split-first-mf-fit-v1",
-        "trainInteractions": len(fit.rows),
-        "trainUsers": len(dataset.user_ids),
-        "metadataItems": len(dataset.anime_ids),
-        "trainPairCandidates": fit.pair_stats["candidatePairs"],
-        "trainPairEdges": len(fit.pairs),
-        "positiveRegularizationEdges": int(graph_edges.shape[0]),
-        "metadataSha256": fit.metadata.sha256,
-        "trainSha256": fit.train_sha256,
-        "fitSha256": fit.fit_sha256,
-        "modelSha256": model_fingerprint(model),
+        "trainInteractions": len(result.fit.rows),
+        "trainUsers": len(result.dataset.user_ids),
+        "metadataItems": len(result.dataset.anime_ids),
+        "trainPairCandidates": result.fit.pair_stats["candidatePairs"],
+        "trainPairEdges": len(result.fit.pairs),
+        "positiveRegularizationEdges": int(result.graph_edges.shape[0]),
+        "metadataSha256": result.fit.metadata.sha256,
+        "trainSha256": result.fit.train_sha256,
+        "fitSha256": result.fit.fit_sha256,
+        "modelSha256": model_fingerprint(result.model),
         "evaluation": "none; holdout labels were not read by preprocessing or training",
     }, sort_keys=True))
 
