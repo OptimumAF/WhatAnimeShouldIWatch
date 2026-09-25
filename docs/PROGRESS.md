@@ -4,7 +4,7 @@
 
 **Branch / starting commit:** Local workspace was an empty, unborn `master` with no remote or files. Fetched `OptimumAF/WhatAnimeShouldIWatch` at `dea9a40e87d9864a3ae991c759a193ee43addebc` (the plan's reviewed SHA), confirmed it was current remote `master`, and created `codex/m0-fixtures-graph`. The working tree was clean immediately after checkout. No repository or ancestor `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, open GitHub issues, or open PRs existed. Inspected recent commits, manifests, release-data fetch/publish scripts, `sync-web.ts`, and workflow purposes; no newer implementation to preserve was found. The exact supplied `_DEVELOPMENT/_PLAN.md` path was absent; the matching `WhatAnimeShouldIWatch_DEVELOPMENT_PLAN.md` in Downloads was saved as the canonical plan.
 
-**Tasks completed:** M0.1, M0.2, M0.3, M0.4, M0.5, M0.7, M3.1, M3.2. M0.6 has a local PR workflow, but remains unchecked until an actual pull-request run passes. M0 as a milestone remains open.
+**Tasks completed:** M0.1–M0.7, M3.1, M3.2. M0 exit gate passed: a fresh PR checkout generated and served the fixture-backed site and completed the documented fast checks without production data or provider access. M3 remains open.
 
 **Commands and actual results:**
 
@@ -18,6 +18,7 @@
 | `npm run data:fixture`; `npm run data:fixture:check` | Passed: deterministic local graph/catalog/model; 7 synthetic users, 8 invented anime, 11 pairs, 1 duplicate rating and 1 unknown ID handled. |
 | `npm run typecheck`; `npm test`; `npm run test:python`; `npm run build:web` | Passed after clean install: both TypeScript projects; 4 pipeline unit/CLI tests; 2 Python tests; Vite production build. |
 | `npx playwright install chromium`; `npm run test:e2e` | Chromium installed. Browser smoke passed: synthetic banner, manual selection, graph/model/hybrid results, local metadata filter, SVG network, and zero production-data/provider requests. Initial browser failure was a missing Chromium install; a later overly broad assertion matched the explanation's source title and was corrected. |
+| `gh run watch 36088138480 --exit-status` | Passed: PR `verify` job completed in 48 seconds on Ubuntu. `npm ci`, fixture generation/check, TypeScript typechecks, 4 pipeline tests, 2 Python tests, web build, and Playwright browser smoke all passed. [Run evidence](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36088138480). |
 
 **Baseline journey inventory (M0.7):** Expected behavior is from source inspection; only the marked demo paths were exercised in a browser.
 
@@ -32,10 +33,10 @@
 
 **Files changed:** `AGENTS.md`, `.gitignore`, `.github/workflows/ci.yml`, `README.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`, `desktop/Cargo.lock`, `fixtures/synthetic-input.json`, root and workspace package files, `pipeline/src/build-graph.ts`, `pipeline/src/core/pair-aggregation.ts`, `pipeline/src/generate-fixture.ts`, `pipeline/src/sync-web.ts`, `pipeline/src/types.ts`, `pipeline/test/`, `ml/tests/`, `web/.env.demo`, `web/playwright.config.ts`, `web/src/main.ts`, `web/src/style.css`, and `web/tests/demo.spec.ts`.
 
-**Commit / PR:** Implementation commit `7b57e60ef6cef369960ff26c9506d26ca50dd7ac`; draft PR [#1](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/1). CI result pending.
+**Commit / PR:** Implementation commit `7b57e60ef6cef369960ff26c9506d26ca50dd7ac`; draft PR [#1](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/1). PR CI [run 36088138480](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36088138480) passed.
 
-**Checks not run / blockers:** The new GitHub pull-request workflow has not reported a run yet, so M0.6 remains open. No production dataset fetch, crawl, sync, model training, release publish, deployment, live username import, or desktop UI launch was performed. Full graph cap determinism, input-work budget, semantic validity, and format versioning remain M3.3–M3.7; no production artifacts were regenerated.
+**Checks not run / blockers:** No production dataset fetch, crawl, sync, model training, release publish, deployment, live username import, or desktop UI launch was performed. Full graph cap determinism, input-work budget, semantic validity, and format versioning remain M3.3–M3.7; no production artifacts were regenerated. Live import/proxy behavior and profile migration have only source-review evidence.
 
-**Plan revisions and reasons:** Added explicit Vite demo mode with ignored generated files, separate local storage keys, and a local catalog/model so ordinary work needs no release download or contamination of normal dev preferences. Added optional fourth compact anime-pair tuple value for support while preserving three-value readers; formal format/semantic migration remains M3.7. First-encounter edge and first-N per-user caps remain M3.5–M3.6. Added PR workflow but kept M0.6 open pending an actual run.
+**Plan revisions and reasons:** Added explicit Vite demo mode with ignored generated files, separate local storage keys, and a local catalog/model so ordinary work needs no release download or contamination of normal dev preferences. Added optional fourth compact anime-pair tuple value for support while preserving three-value readers; formal format/semantic migration remains M3.7. First-encounter edge and first-N per-user caps remain M3.5–M3.6. M0.6 was checked only after its PR run passed.
 
-**Single next task:** Verify M0.6 on a pull request and address any CI-only failures; then update this record and its checkbox.
+**Single next task:** M2.3 — remove the silent MAL proxy fallback with a mocked-provider regression test and an explicit user-facing import error. This privacy fix is independent of broader M1 extraction and was elevated ahead of lower-risk refactors as allowed by the plan.

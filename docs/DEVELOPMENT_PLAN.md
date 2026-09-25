@@ -151,7 +151,7 @@ Task IDs are stable. Each task inherits the general definition of done in Sectio
 - [x] **M0.3 — Introduce a synthetic fixture dataset.** Include overlapping tastes, opposite preferences, equal scores, sparse users, an empty user, isolated items, duplicated input, unknown IDs, and non-ASCII titles. Keep it small and free of real user lists.
 - [x] **M0.4 — Add a fixture-backed development path.** Generate a demo graph/catalog/model fixture and run the web experience without crawling or downloading production data. Distinguish demo data visually. Never silently replace real-data failures with a demo.
 - [x] **M0.5 — Establish automated test entry points.** Reuse existing tests where found; otherwise add TypeScript unit/integration tests, a browser smoke test, and Python tests around parsing and ranking. Keep routine tests offline and deterministic.
-- [ ] **M0.6 — Add pull-request CI.** Run install, pipeline typecheck, web typecheck/build, synthetic-fixture validation, and fast tests without secrets or provider requests. Keep expensive training and production-data jobs separate.
+- [x] **M0.6 — Add pull-request CI.** Run install, pipeline typecheck, web typecheck/build, synthetic-fixture validation, and fast tests without secrets or provider requests. Keep expensive training and production-data jobs separate.
 - [x] **M0.7 — Capture the existing user journeys.** Record expected behavior for manual selection, graph/model/hybrid mode, imports, profile persistence, filters, and network inspection. A failing baseline is documented rather than disguised as a passing test.
 
 **Exit gate:** A fresh checkout can serve a fixture-backed site and run the documented fast checks. Missing production datasets or provider access do not block ordinary UI and recommendation development.
@@ -370,7 +370,7 @@ After a useful release, reconsider richer mood discovery, better watch-order rel
 | Area | Status | Evidence / next action |
 |---|---|---|
 | Source review | Complete for current starting state | Current remote `master` matched reviewed commit; no open issues/PRs; see `docs/PROGRESS.md` |
-| M0 | In progress | M0.1–M0.5 and M0.7 verified; M0.6 awaits an actual PR CI run. Milestone exit gate is not declared complete. |
+| M0 | Complete | M0.1–M0.7 and the exit gate passed: a fresh PR checkout generated and served the fixture site, then completed fast checks in [run 36088138480](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36088138480). |
 | M3 | In progress | M3.1–M3.2 verified on synthetic inputs; M3.3–M3.7 and milestone exit gate remain open. |
 | M1–M2, M4–M8, M10 | Pending | Follow dependencies and safety priorities; no claim of completion. |
 | M9 desktop | Pending, separate track | Decide scope after artifact contracts stabilize |
@@ -381,7 +381,8 @@ Initial plan entry: 2026-09-24 — Created from source review. Defaults to prese
 |---|---|---|---|---|---|
 | 2026-09-24 | M0.4 | Proposed fixture-backed path | Explicit Vite demo mode with generated local graph, catalog, and tiny synthetic model | Existing web loaders required release files and live Jikan metadata; browser smoke now runs without production data or provider requests | Enables M0.5, M0.6, and graph work on safe fixtures |
 | 2026-09-24 | M3.2 | Pair weight stored as recursive average, no support export | Sum/count mean with true support on legacy edges and optional fourth compact tuple value | Three observations produced 3.5 under the old formula; regression and CLI export checks now pass | M3.3 semantics, M3.5 cap policy, and M3.7 format versioning remain required |
-| 2026-09-24 | M0.6 | Pending | Workflow authored, still pending actual PR run | Local equivalents pass, but GitHub runner result is not yet evidence | M0 exit gate remains open until verified |
+| 2026-09-24 | M0.6 | Pending | Complete | PR [run 36088138480](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36088138480) passed install, fixture checks, TypeScript/Python tests, web build, and browser smoke without provider requests | M0 exit gate passed; M1 and independent safety work are dependency-ready |
+| 2026-09-24 | M2.3 | Planned after M1 provider contracts | Next isolated safety slice, still pending | Source inspection found the existing MAL username path can silently route through `r.jina.ai`; mocked-provider tests can verify removal without a broader adapter refactor | M1.3 remains open; no provider collection or external routing is authorized |
 
 ## 10. Evidence references
 
