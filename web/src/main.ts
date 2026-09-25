@@ -1,5 +1,8 @@
-﻿import Graph from "graphology";
+import Graph from "graphology";
 import "./style.css";
+
+const demoMode = import.meta.env.VITE_DEMO_MODE === "true";
+const storagePrefix = demoMode ? "wasiw.demo" : "wasiw";
 
 type NodeType = "user" | "anime";
 type EdgeType = "user-anime" | "anime-anime";
@@ -47,6 +50,7 @@ type CompactAnimeAnimeEdge = [
   leftAnimeIndex: number,
   rightAnimeIndex: number,
   weight: number,
+  support?: number,
 ];
 
 interface CompactGraphData {
@@ -110,6 +114,10 @@ interface AnimeMetadata {
   synopsis: string;
   imageUrl: string;
   season: string | null;
+}
+
+interface DemoCatalogItem extends AnimeMetadata {
+  title: string;
 }
 
 interface RecommendationFilters {
@@ -192,15 +200,15 @@ const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
 const QUICKSTART_SEASONAL_PICK_LIMIT = 3;
 const NETWORK_MOBILE_COMPACT_MAX_WIDTH = 980;
-const RECOMMENDATION_STATE_STORAGE_KEY = "wasiw.recommendationState.v1";
-const RECOMMENDATION_PROFILES_STORAGE_KEY = "wasiw.recommendationProfiles.v1";
-const THEME_STORAGE_KEY = "wasiw.theme.v1";
-const CONTRAST_STORAGE_KEY = "wasiw.contrast.v1";
-const HELP_TIPS_STORAGE_KEY = "wasiw.helpTips.v1";
+const RECOMMENDATION_STATE_STORAGE_KEY = `${storagePrefix}.recommendationState.v1`;
+const RECOMMENDATION_PROFILES_STORAGE_KEY = `${storagePrefix}.recommendationProfiles.v1`;
+const THEME_STORAGE_KEY = `${storagePrefix}.theme.v1`;
+const CONTRAST_STORAGE_KEY = `${storagePrefix}.contrast.v1`;
+const HELP_TIPS_STORAGE_KEY = `${storagePrefix}.helpTips.v1`;
 const HELP_TIPS_VERSION = 1;
-const COMMAND_HISTORY_STORAGE_KEY = "wasiw.commandHistory.v1";
+const COMMAND_HISTORY_STORAGE_KEY = `${storagePrefix}.commandHistory.v1`;
 const COMMAND_HISTORY_LIMIT = 6;
-const COMMAND_PINNED_STORAGE_KEY = "wasiw.commandPinned.v1";
+const COMMAND_PINNED_STORAGE_KEY = `${storagePrefix}.commandPinned.v1`;
 const COMMAND_PINNED_LIMIT = 8;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -273,6 +281,7 @@ app.innerHTML = `
       <div class="brand">
         <p class="eyebrow">Graph + ML Recommendation Lab</p>
         <h1>What Anime Should I Watch</h1>
+        ${demoMode ? '<p class="demo-banner" role="status">SYNTHETIC DEMO DATA · Invented titles and ratings · No live metadata requests</p>' : ""}
         <p>Recommendation-first anime discovery powered by the rating network.</p>
         <p class="shortcut-hint">Shortcuts: Alt+1 Recommendations, Alt+2 Network, Ctrl/Cmd+K Commands, Alt+/ Focus</p>
       </div>
@@ -345,7 +354,7 @@ app.innerHTML = `
             <li><strong>Step 3:</strong> Use filters and inspect recommendation reasons.</li>
           </ol>
           <div class="intro-actions">
-            <button id="quickstart-seasonal" type="button" class="primary-btn">Use 3 Seasonal Picks</button>
+            <button id="quickstart-seasonal" type="button" class="primary-btn">${demoMode ? "Use 3 Demo Picks" : "Use 3 Seasonal Picks"}</button>
             <button id="quickstart-network" type="button" class="ghost-btn">Open Network Explorer</button>
           </div>
         </section>
@@ -353,13 +362,13 @@ app.innerHTML = `
         <div class="recommend-layout">
           <section class="card">
             <h2>Find Your Next Anime</h2>
-            <p class="muted">Add anime you just watched, then rank next picks with either graph edges or the trained ML model.</p>
+            <p class="muted">${demoMode ? "Choose invented anime, then compare graph edges with a tiny synthetic model." : "Add anime you just watched, then rank next picks with either graph edges or the trained ML model."}</p>
 
             <label class="rec-engine-control" for="rec-method">
               <span>Recommendation engine</span>
               <select id="rec-method">
                 <option value="graph" selected>Graph (anime-to-anime edges)</option>
-                <option value="model">ML Model (matrix factorization)</option>
+                <option value="model">${demoMode ? "Synthetic Model" : "ML Model (matrix factorization)"}</option>
                 <option value="hybrid">Hybrid (blend graph + ML)</option>
               </select>
             </label>
@@ -400,7 +409,7 @@ app.innerHTML = `
 
               <section class="username-import">
                 <h3>Import From Username</h3>
-                <p class="muted">Load rated anime from a public AniList or MAL profile.</p>
+                <p class="muted">${demoMode ? "Username imports are unavailable in the offline demo." : "Load rated anime from a public AniList or MAL profile."}</p>
                 <form id="username-import-form" class="username-import-form">
                   <select id="username-import-provider" aria-label="Import provider">
                     <option value="anilist" selected>AniList</option>
@@ -481,7 +490,7 @@ app.innerHTML = `
                   </label>
                 </div>
                 <label class="control-inline control-inline-score" for="filter-min-score">
-                  <span>Minimum MAL score</span>
+                  <span>Minimum ${demoMode ? "demo" : "MAL"} score</span>
                   <input id="filter-min-score" type="range" min="0" max="10" step="${METADATA_SCORE_STEP}" value="0" />
                   <output id="filter-min-score-value">Any</output>
                 </label>
@@ -496,7 +505,7 @@ app.innerHTML = `
 
             <section class="seasonal">
               <div class="seasonal-head">
-                <h3>Seasonal Trending</h3>
+                <h3>${demoMode ? "Demo Suggestions" : "Seasonal Trending"}</h3>
                 <button id="refresh-seasonal" type="button" class="ghost-btn">Refresh</button>
               </div>
               <p id="seasonal-status" class="muted" role="status" aria-live="polite">Loading current season...</p>
@@ -708,6 +717,13 @@ const recommendationFilters: RecommendationFilters = {
 const animeMetadataCache = new Map<number, AnimeMetadata>();
 const animeMetadataUnavailable = new Set<number>();
 const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
+const demoCatalog = demoMode ? await fetchDemoCatalog() : null;
+if (demoCatalog) {
+  for (const item of demoCatalog) animeMetadataCache.set(item.animeId, item);
+  usernameImportProvider.disabled = true;
+  usernameImportInput.disabled = true;
+  usernameImportSubmit.disabled = true;
+}
 let seasonalItems: SeasonalAnimeItem[] = [];
 let seasonalLoadingPromise: Promise<void> | null = null;
 let activeTheme: ThemeMode = loadThemeModePreference();
@@ -2216,6 +2232,10 @@ function importWatchedFromBulkInput(): void {
 }
 
 async function importWatchedFromUsername(): Promise<void> {
+  if (demoMode) {
+    recMessageEl.textContent = "Username imports are unavailable in the offline demo.";
+    return;
+  }
   const provider = parseUsernameImportProvider(usernameImportProvider.value);
   const username = usernameImportInput.value.trim();
   if (!username) {
@@ -2958,7 +2978,7 @@ function formatRecommendationMetadataMeta(metadata: AnimeMetadata | null): strin
     parts.push(String(metadata.year));
   }
   if (metadata.score !== null) {
-    parts.push(`MAL ${metadata.score.toFixed(2)}`);
+    parts.push(`${demoMode ? "Demo" : "MAL"} ${metadata.score.toFixed(2)}`);
   }
   if (metadata.studios.length > 0) {
     parts.push(metadata.studios.slice(0, 2).join(", "));
@@ -3145,6 +3165,7 @@ async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | nul
   if (cached) {
     return cached;
   }
+  if (demoMode) return null;
   if (animeMetadataUnavailable.has(animeId)) {
     return null;
   }
@@ -3280,6 +3301,15 @@ function truncateText(value: string, maxLength: number): string {
 }
 
 async function loadSeasonalTrending(force: boolean): Promise<void> {
+  if (demoCatalog) {
+    seasonalItems = demoCatalog.slice(0, 3).map((item) => ({
+      animeId: item.animeId, title: item.title, score: item.score,
+      year: item.year, season: null, imageUrl: "",
+    }));
+    seasonalStatusEl.textContent = "Invented titles from the local demo catalog.";
+    renderSeasonalList();
+    return;
+  }
   if (seasonalLoadingPromise && !force) {
     return seasonalLoadingPromise;
   }
@@ -3368,7 +3398,7 @@ function renderSeasonalList(): void {
         subtitleParts.push(String(item.year));
       }
       if (item.score !== null) {
-        subtitleParts.push(`MAL ${item.score.toFixed(2)}`);
+        subtitleParts.push(`${demoMode ? "Demo" : "MAL"} ${item.score.toFixed(2)}`);
       }
       const subtitle = subtitleParts.length > 0 ? subtitleParts.join(" | ") : "No stats";
       const coverHtml = item.imageUrl
@@ -4269,6 +4299,15 @@ function statLine(label: string, value: string): string {
 }
 
 async function fetchGraph(): Promise<LoadedGraphData> {
+  if (demoMode) {
+    const graph = await fetchPlainJson<CompactGraphData>(
+      "./demo-data/graph.compact.json", "synthetic demo graph",
+    );
+    if (!isCompactGraphData(graph)) {
+      throw new Error("Invalid synthetic demo graph. Run npm run data:fixture.");
+    }
+    return graph;
+  }
   const compactData = await fetchJsonWithGzipFallback<CompactGraphData>({
     path: "./data/graph.compact.json",
     required: false,
@@ -4277,7 +4316,6 @@ async function fetchGraph(): Promise<LoadedGraphData> {
   if (compactData && isCompactGraphData(compactData)) {
     return compactData;
   }
-
   const legacyData = await fetchJsonWithGzipFallback<GraphData>({
     path: "./data/graph.json",
     required: true,
@@ -4301,6 +4339,7 @@ async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
 }
 
 async function fetchExplorerGraph(): Promise<LoadedGraphData> {
+  if (demoMode) return graphData;
   const explorerCompactData = await fetchJsonWithGzipFallback<CompactGraphData>({
     path: "./data/graph-explorer.compact.json",
     required: false,
@@ -4320,12 +4359,16 @@ async function ensureModelRecommendationIndex(): Promise<ModelRecommendationInde
 }
 
 async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
-  const rawCompact = await fetchJsonWithGzipFallback<CompactModelRecommendationData>({
-    path: "./data/model-mf-web.compact.json",
-    required: false,
-    label: "model-mf-web.compact.json",
-  });
-  const rawLegacy = rawCompact
+  const rawCompact = demoMode
+    ? await fetchPlainJson<CompactModelRecommendationData>(
+        "./demo-data/model-mf-web.compact.json", "synthetic demo model",
+      )
+    : await fetchJsonWithGzipFallback<CompactModelRecommendationData>({
+        path: "./data/model-mf-web.compact.json",
+        required: false,
+        label: "model-mf-web.compact.json",
+      });
+  const rawLegacy = rawCompact || demoMode
     ? null
     : await fetchJsonWithGzipFallback<ModelRecommendationData>({
         path: "./data/model-mf-web.json",
@@ -4398,6 +4441,24 @@ async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex
     globalMean,
     animeByAnimeId,
   };
+}
+
+async function fetchDemoCatalog(): Promise<DemoCatalogItem[]> {
+  const raw = await fetchPlainJson<{ format?: string; anime?: DemoCatalogItem[] }>(
+    "./demo-data/catalog.json", "synthetic demo catalog",
+  );
+  if (raw.format !== "demo-catalog-v1" || !Array.isArray(raw.anime) ||
+      raw.anime.some((item) => !Number.isSafeInteger(item.animeId) ||
+        typeof item.title !== "string" || !Array.isArray(item.genres))) {
+    throw new Error("Invalid synthetic demo catalog. Run npm run data:fixture.");
+  }
+  return raw.anime;
+}
+
+async function fetchPlainJson<T>(url: string, label: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
+  return await response.json() as T;
 }
 
 function isCompactGraphData(value: unknown): value is CompactGraphData {

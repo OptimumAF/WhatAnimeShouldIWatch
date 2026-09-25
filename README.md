@@ -22,6 +22,34 @@ End-to-end project for:
 npm install
 ```
 
+For a reproducible checkout, use `npm ci` with the committed lockfile.
+
+## Offline synthetic demo and fast checks
+
+The fixture contains invented user IDs, titles, ratings, and metadata. It covers overlapping and opposite tastes, equal scores, sparse and empty users, an isolated anime, a duplicate rating, an unknown ID, and non-ASCII titles. It does not contain a real viewing history.
+
+```bash
+npm ci
+npm run dev:demo
+```
+
+Open `http://127.0.0.1:5173/`. The banner says **SYNTHETIC DEMO DATA**. This mode generates local graph, catalog, and tiny synthetic model files in ignored `web/public/demo-data/`, uses those files for graph/model/filter views, and does not make live metadata or seasonal requests. Demo preferences use separate local storage keys, and username import is disabled. A missing fixture is an error; regular `dev:web` still requires its normal data files.
+
+Run the fast checks separately:
+
+```bash
+npm run data:fixture
+npm run data:fixture:check
+npm run typecheck
+npm test
+npm run test:python
+npm run build:web
+npx playwright install chromium
+npm run test:e2e
+```
+
+The Python smoke tests require NumPy (`python -m pip install "numpy>=2,<3"`). The Playwright install is needed once per machine. The browser smoke test starts the synthetic demo and blocks external requests. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
+
 ## 1) Collect MAL Data into Anonymized SQLite
 
 This uses public MAL lists from:
@@ -111,8 +139,16 @@ Graph rules implemented:
 - `user -> anime` edge weight = normalized score (`raw - user_avg`).
 - For each user, every rated anime pair gets an `anime <-> anime` edge with pair score:
   `(anime_a_normalized + anime_b_normalized) / 2`
-- If an anime pair edge already exists, update with:
-  `(existing_weight + pair_score) / 2`
+- For each anime pair, keep a sum and observation count. The edge weight is the
+  arithmetic mean of its users' pair scores; `support` is the observation count.
+  Legacy graph edges carry `support`, and compact anime-anime tuples can carry it
+  as a fourth value: `[leftIndex, rightIndex, weight, support]`.
+
+This is a corrected compatibility statistic, not a correlation or a validated
+similarity measure. The unique-pair cap still keeps first-encountered pairs and
+the per-user rating cap still takes the first N ratings. Their selection bias and
+work budget are tracked in M3.5–M3.6; do not treat capped graph output as order
+independent yet.
 
 ## 3) Run Web App
 

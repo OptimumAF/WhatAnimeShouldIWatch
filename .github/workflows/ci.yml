@@ -1,0 +1,41 @@
+name: Fixture and fast checks
+
+on:
+  pull_request:
+    branches: ["master"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Install fast Python test dependency
+        run: python -m pip install "numpy>=2,<3"
+      - name: Generate and verify synthetic artifacts
+        run: |
+          npm run data:fixture
+          npm run data:fixture:check
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Pipeline tests
+        run: npm test
+      - name: Python parsing and ranking tests
+        run: npm run test:python
+      - name: Build web
+        run: npm run build:web
+      - name: Install browser for smoke test
+        run: npx playwright install --with-deps chromium
+      - name: Browser smoke test
+        run: npm run test:e2e

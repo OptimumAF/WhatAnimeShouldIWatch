@@ -1,0 +1,22 @@
+{
+  "description": "Invented offline fixture. User IDs, titles, scores, and metadata are synthetic.",
+  "anime": [
+    { "animeId": 101, "title": "Copper Comet", "year": 2021, "score": 8.1, "genres": ["Adventure", "Sci-Fi"], "embedding": [0.9, 0.2], "bias": 0.1 },
+    { "animeId": 102, "title": "Moonlit Workshop", "year": 2020, "score": 7.8, "genres": ["Slice of Life", "Fantasy"], "embedding": [0.7, 0.4], "bias": 0.05 },
+    { "animeId": 103, "title": "Ashen Harbor", "year": 2019, "score": 7.2, "genres": ["Drama", "Mystery"], "embedding": [-0.6, 0.7], "bias": 0 },
+    { "animeId": 104, "title": "Glass Orchard", "year": 2022, "score": 7.4, "genres": ["Fantasy", "Drama"], "embedding": [0.3, 0.8], "bias": -0.05 },
+    { "animeId": 105, "title": "星の航路", "year": 2023, "score": 8.3, "genres": ["Adventure", "Fantasy"], "embedding": [0.8, 0.5], "bias": 0.12 },
+    { "animeId": 106, "title": "Café Nebula", "year": 2018, "score": 7.6, "genres": ["Slice of Life"], "embedding": [0.5, 0.1], "bias": 0.02 },
+    { "animeId": 107, "title": "Paper Current", "year": 2024, "score": 7.1, "genres": ["Mystery", "Sci-Fi"], "embedding": [-0.2, 0.6], "bias": -0.03 },
+    { "animeId": 108, "title": "Quiet Satellite", "year": 2025, "score": 7.9, "genres": ["Sci-Fi"], "embedding": [0.6, -0.3], "bias": 0.04 }
+  ],
+  "users": [
+    { "userId": "fixture-overlap-a", "ratings": [{ "animeId": 101, "score": 10 }, { "animeId": 102, "score": 8 }, { "animeId": 103, "score": 4 }, { "animeId": 104, "score": 2 }] },
+    { "userId": "fixture-overlap-b", "ratings": [{ "animeId": 101, "score": 8 }, { "animeId": 102, "score": 9 }, { "animeId": 103, "score": 3 }, { "animeId": 105, "score": 7 }] },
+    { "userId": "fixture-opposite", "ratings": [{ "animeId": 101, "score": 4 }, { "animeId": 102, "score": 3 }, { "animeId": 103, "score": 9 }, { "animeId": 105, "score": 10 }] },
+    { "userId": "fixture-equal", "ratings": [{ "animeId": 102, "score": 7 }, { "animeId": 104, "score": 7 }, { "animeId": 106, "score": 7 }] },
+    { "userId": "fixture-sparse", "ratings": [{ "animeId": 107, "score": 6 }] },
+    { "userId": "fixture-empty", "ratings": [] },
+    { "userId": "fixture-duplicate-unknown", "ratings": [{ "animeId": 101, "score": 5 }, { "animeId": 101, "score": 9 }, { "animeId": 105, "score": 10 }, { "animeId": 999, "score": 8 }] }
+  ]
+}
