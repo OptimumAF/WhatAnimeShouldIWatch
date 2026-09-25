@@ -23,14 +23,17 @@ test("offline demo loads synthetic graph, catalog, and model without provider re
   await expect(page.getByText("SYNTHETIC DEMO DATA")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Demo Suggestions" })).toBeVisible();
   await expect(page.locator("#username-import-submit")).toBeDisabled();
+  await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "demo");
+  await expect(page.locator("#seasonal-status")).toHaveAttribute("data-state", "demo");
 
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-anime-form button").click();
   await expect(page.locator("#rec-results")).toContainText("Moonlit Workshop");
   await expect(page.locator("#rec-results .rec-title").filter({ hasText: "Copper Comet" })).toHaveCount(0);
   await expect(page.locator("#metadata-status")).toContainText("2/2");
+  await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", "demo");
   expect(await page.evaluate(() => Object.keys(window.localStorage)))
-    .toContain("wasiw.demo.recommendationState.v1");
+    .toContain("wasiw.demo.recommendationState.v4");
 
   await page.locator("#filter-genre").selectOption("slice of life");
   await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop"]);

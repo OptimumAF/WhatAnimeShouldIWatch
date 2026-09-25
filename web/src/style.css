@@ -859,6 +859,23 @@ button:hover,
   font-size: 0.75rem;
 }
 
+#username-import-status:not(:empty),
+#bulk-import-status:not(:empty) {
+  margin: 0.45rem 0 0;
+}
+
+#username-import-status[data-state="failed"],
+#username-import-status[data-state="unavailable"],
+#username-import-status[data-state="stale"],
+#bulk-import-status[data-state="failed"],
+#bulk-import-status[data-state="stale"],
+.metadata-status[data-state="failed"],
+.metadata-status[data-state="unavailable"],
+#seasonal-status[data-state="failed"],
+#seasonal-status[data-state="unavailable"] {
+  color: var(--accent-soft);
+}
+
 .selected-head {
   margin-top: 0.8rem;
   display: flex;
@@ -907,6 +924,31 @@ button:hover,
   margin-top: 0.45rem;
   display: grid;
   gap: 0.45rem;
+}
+
+.storage-status:not(:empty) {
+  margin: 0.55rem 0;
+  padding: 0.7rem;
+  border: 1px solid var(--accent-soft);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.chip-missing-note {
+  display: block;
+  color: var(--accent-soft);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.bulk-import-form label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.bulk-import-form input[type="file"] {
+  color: var(--text);
+  font-size: 0.78rem;
 }
 
 .bulk-import-form textarea {

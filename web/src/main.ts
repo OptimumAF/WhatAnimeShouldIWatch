@@ -1,16 +1,71 @@
 import Graph from "graphology";
+import { isCompactGraphData } from "./artifacts";
+import type {
+  AnimeMetadata,
+  EdgeType,
+  GraphEdge,
+  GraphNode,
+  LoadedGraphData,
+  NodeType,
+} from "./artifacts";
+import type {
+  AnimeInfo,
+  ConnectedItem,
+  ImportedWatchedEntry,
+  ModelRecommendationIndex,
+  RecommendationIndex,
+  RecommendationResult,
+  SeasonalAnimeItem,
+} from "./domain";
+import {
+  MAX_MODEL_BLEND_WEIGHT,
+  MAX_WATCH_WEIGHT,
+  MIN_MODEL_BLEND_WEIGHT,
+  MIN_WATCH_WEIGHT,
+  applyRecommendationFilters,
+  buildGraphRecommendations,
+  buildModelRecommendations,
+  buildRecommendationIndex,
+  buildRecommendationIndexFromCompact,
+  clampModelBlendWeight,
+  clampWatchWeight,
+  combineHybridRecommendations,
+  explainRecommendation,
+  filterCandidateEligibility,
+  formatWeight,
+  hasActiveRecommendationFilters,
+  normalizeImportedScoreToWeight,
+  normalizeTitle,
+} from "./recommendations";
+import type { RecommendationFilters } from "./recommendations";
+import { ProviderUnavailableError, createProviderAdapter } from "./providers";
+import { createArtifactLoader } from "./artifact-loader";
+import {
+  COMMAND_HISTORY_LIMIT,
+  COMMAND_PINNED_LIMIT,
+  RECOMMENDATION_STORAGE_VERSION,
+  createPersistenceAdapter,
+} from "./persistence";
+import type {
+  ContrastMode,
+  RecommendationMode,
+  RecommendationProfileRecord,
+  StoredRecommendationState,
+  ThemeMode,
+} from "./persistence";
+import { createBrowserRuntime, isAbortError } from "./runtime";
+import { safeExternalImageUrl } from "./safe-url";
 import "./style.css";
 
+const runtime = createBrowserRuntime();
+const providerAdapter = createProviderAdapter(runtime);
 const demoMode = import.meta.env.VITE_DEMO_MODE === "true";
-const storagePrefix = demoMode ? "wasiw.demo" : "wasiw";
+const artifactLoader = createArtifactLoader(runtime, demoMode);
+const persistence = createPersistenceAdapter(runtime, demoMode ? "wasiw.demo" : "wasiw");
 
-type NodeType = "user" | "anime";
-type EdgeType = "user-anime" | "anime-anime";
 type AppView = "recommendations" | "network";
-type RecommendationMode = "graph" | "model" | "hybrid";
 type UsernameImportProvider = "anilist" | "mal";
-type ThemeMode = "dark" | "light";
-type ContrastMode = "normal" | "high";
+type AsyncUiState = "idle" | "loading" | "ready" | "empty" | "unavailable" | "failed" | "stale" | "demo";
 type CommandMatchReason =
   | "pinned"
   | "exact"
@@ -20,179 +75,12 @@ type CommandMatchReason =
   | "fuzzy"
   | "recent";
 
-interface GraphNode {
-  id: string;
-  label: string;
-  nodeType: NodeType;
-}
-
-interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-  edgeType: EdgeType;
-  weight: number;
-}
-
-interface GraphData {
-  generatedAt: string;
-  userCount: number;
-  animeCount: number;
-  nodeCount: number;
-  edgeCount: number;
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
-type CompactAnimeEntry = [animeId: number, title: string];
-type CompactUserAnimeEdge = [userIndex: number, animeIndex: number, weight: number];
-type CompactAnimeAnimeEdge = [
-  leftAnimeIndex: number,
-  rightAnimeIndex: number,
-  weight: number,
-  support?: number,
-];
-
-interface CompactGraphData {
-  format: "graph-compact-v1";
-  generatedAt: string;
-  userIds: string[];
-  anime: CompactAnimeEntry[];
-  ua: CompactUserAnimeEdge[];
-  aa: CompactAnimeAnimeEdge[];
-  userCount: number;
-  animeCount: number;
-  nodeCount: number;
-  edgeCount: number;
-}
-
-type LoadedGraphData = GraphData | CompactGraphData;
-
-interface ConnectedItem {
-  nodeId: string;
-  label: string;
-  nodeType: NodeType;
-  edgeType: EdgeType;
-  weight: number;
-}
-
-interface AnimeInfo {
-  nodeId: string;
-  animeId: number;
-  label: string;
-}
-
-interface RecommendationResult {
-  anime: AnimeInfo;
-  score: number;
-  strongest: number;
-  supportCount: number;
-  contributions: RecommendationContribution[];
-}
-
-interface RecommendationContribution {
-  watched: AnimeInfo;
-  edgeWeight: number;
-  weightFactor: number;
-  weightedScore: number;
-}
-
-interface RecommendationIndex {
-  animeList: AnimeInfo[];
-  animeByNodeId: Map<string, AnimeInfo>;
-  animeByAnimeId: Map<number, AnimeInfo>;
-  titleLookup: Map<string, AnimeInfo[]>;
-  adjacency: Map<string, { otherNodeId: string; weight: number }[]>;
-}
-
-interface AnimeMetadata {
-  animeId: number;
-  year: number | null;
-  score: number | null;
-  genres: string[];
-  studios: string[];
-  synopsis: string;
-  imageUrl: string;
-  season: string | null;
-}
-
-interface DemoCatalogItem extends AnimeMetadata {
-  title: string;
-}
-
-interface RecommendationFilters {
-  genre: string;
-  minYear: number | null;
-  maxYear: number | null;
-  minScore: number | null;
-}
-
-interface SeasonalAnimeItem {
-  animeId: number;
-  title: string;
-  score: number | null;
-  year: number | null;
-  season: string | null;
-  imageUrl: string;
-}
-
-interface ImportedWatchedEntry {
-  anime: AnimeInfo;
-  weight: number;
-}
-
-interface UsernameImportResult {
-  entries: ImportedWatchedEntry[];
-  ratedCount: number;
-  unmappedCount: number;
-}
-
-interface ModelRecommendationAnime {
-  animeId: number;
-  title: string;
-  bias: number;
-  embedding: number[];
-}
-
-interface ModelRecommendationData {
-  generatedAt: string;
-  globalMean: number;
-  factors: number;
-  anime: ModelRecommendationAnime[];
-}
-
-interface CompactModelRecommendationData {
-  format: "model-mf-compact-v1";
-  generatedAt: string;
-  globalMean: number;
-  factors: number;
-  animeIds: number[];
-  titles: string[];
-  biases: number[];
-  embeddings: number[][];
-}
-
-interface ModelRecommendationIndex {
-  generatedAt: string;
-  factors: number;
-  globalMean: number;
-  animeByAnimeId: Map<number, ModelRecommendationAnime>;
-}
-
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
 const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
-const MIN_WATCH_WEIGHT = 0.2;
-const MAX_WATCH_WEIGHT = 3;
 const WATCH_WEIGHT_STEP = 0.1;
-const MIN_MODEL_BLEND_WEIGHT = 0;
-const MAX_MODEL_BLEND_WEIGHT = 1;
 const MODEL_BLEND_WEIGHT_STEP = 0.05;
-const USERNAME_IMPORT_MAX_RETRIES = 3;
-const USERNAME_IMPORT_PAGE_SIZE = 300;
-const USERNAME_IMPORT_PAGE_DELAY_MS = 350;
-const METADATA_MAX_RETRIES = 2;
 const METADATA_PREFETCH_LIMIT = 100;
 const METADATA_PREFETCH_WITH_FILTER_LIMIT = 30;
 const METADATA_PREFETCH_CONCURRENCY = 3;
@@ -200,37 +88,7 @@ const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
 const QUICKSTART_SEASONAL_PICK_LIMIT = 3;
 const NETWORK_MOBILE_COMPACT_MAX_WIDTH = 980;
-const RECOMMENDATION_STATE_STORAGE_KEY = `${storagePrefix}.recommendationState.v1`;
-const RECOMMENDATION_PROFILES_STORAGE_KEY = `${storagePrefix}.recommendationProfiles.v1`;
-const THEME_STORAGE_KEY = `${storagePrefix}.theme.v1`;
-const CONTRAST_STORAGE_KEY = `${storagePrefix}.contrast.v1`;
-const HELP_TIPS_STORAGE_KEY = `${storagePrefix}.helpTips.v1`;
-const HELP_TIPS_VERSION = 1;
-const COMMAND_HISTORY_STORAGE_KEY = `${storagePrefix}.commandHistory.v1`;
-const COMMAND_HISTORY_LIMIT = 6;
-const COMMAND_PINNED_STORAGE_KEY = `${storagePrefix}.commandPinned.v1`;
-const COMMAND_PINNED_LIMIT = 8;
 const SVG_NS = "http://www.w3.org/2000/svg";
-
-interface StoredRecommendationState {
-  version: number;
-  mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
-  modelBlendWeight?: number;
-  includeCandidates?: string[];
-  excludeCandidates?: string[];
-}
-
-interface RecommendationProfileRecord {
-  name: string;
-  updatedAt: string;
-  state: StoredRecommendationState;
-}
-
-interface StoredHelpTipsState {
-  version: number;
-  dismissed: boolean;
-}
 
 type CommandGroup = "Navigation" | "Display" | "Utilities";
 
@@ -256,23 +114,6 @@ interface CommandTokenMatch {
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app container");
-}
-
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .getRegistrations()
-      .then((registrations) =>
-        Promise.all(
-          registrations
-            .filter((registration) => registration.scope.startsWith(window.location.origin))
-            .map((registration) => registration.unregister()),
-        ),
-      )
-      .catch((error) => {
-        console.warn("Service worker cleanup failed.", error);
-      });
-  });
 }
 
 app.innerHTML = `
@@ -386,6 +227,7 @@ app.innerHTML = `
             <datalist id="anime-options"></datalist>
 
             <p id="rec-message" class="rec-message" role="status" aria-live="polite"></p>
+            <p id="storage-status" class="storage-status" role="alert" aria-live="assertive"></p>
 
             <div class="selected-head">
               <h3>Watched List <span id="watched-count" class="count-pill">0</span></h3>
@@ -396,24 +238,27 @@ app.innerHTML = `
             <details class="accordion">
               <summary>Import & Profiles</summary>
               <section class="bulk-import">
-                <h3>Bulk Import</h3>
-                <p class="muted">One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>.</p>
+                <h3>Import From Local File or Text (Recommended)</h3>
+                <p class="muted">Choose a local plain-text file or paste entries below. One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>. The file is read in this browser; review the entries before importing.</p>
                 <form id="bulk-import-form" class="bulk-import-form">
+                  <label for="bulk-import-file">Local .txt file (up to 128 KiB)</label>
+                  <input id="bulk-import-file" type="file" accept=".txt,text/plain" />
                   <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
                   <button type="submit">
                     <span class="icon icon-import" aria-hidden="true"></span>
                     <span>Import Watched Entries</span>
                   </button>
                 </form>
+                <p id="bulk-import-status" class="muted" role="status" aria-live="polite" data-state="idle"></p>
               </section>
 
               <section class="username-import">
                 <h3>Import From Username</h3>
-                <p class="muted">${demoMode ? "Username imports are unavailable in the offline demo." : "Load rated anime from a public AniList or MAL profile."}</p>
+                <p class="muted">${demoMode ? "Username imports are unavailable in the offline demo." : "Your entered username is sent directly to the selected provider to read its public rated anime list. MAL may block browser requests; no third-party proxy is used. The local file or text import above needs no provider username."}</p>
                 <form id="username-import-form" class="username-import-form">
                   <select id="username-import-provider" aria-label="Import provider">
                     <option value="anilist" selected>AniList</option>
-                    <option value="mal">MyAnimeList (MAL)</option>
+                    <option value="mal">MyAnimeList (MAL, direct)</option>
                   </select>
                   <input id="username-import-input" type="text" autocomplete="off" placeholder="Enter username" />
                   <button id="username-import-submit" type="submit">
@@ -421,6 +266,7 @@ app.innerHTML = `
                     <span id="username-import-submit-label">Import User List</span>
                   </button>
                 </form>
+                <p id="username-import-status" class="muted" role="status" aria-live="polite" data-state="idle"></p>
               </section>
 
               <section class="profiles">
@@ -496,7 +342,7 @@ app.innerHTML = `
                 </label>
                 <div class="rec-filter-actions">
                   <button id="clear-rec-filters" type="button" class="ghost-btn">Clear Filters</button>
-                  <span id="metadata-status" class="metadata-status" role="status" aria-live="polite">Metadata: idle</span>
+                  <span id="metadata-status" class="metadata-status" role="status" aria-live="polite" data-state="idle">Metadata: idle</span>
                 </div>
               </section>
             </details>
@@ -508,7 +354,7 @@ app.innerHTML = `
                 <h3>${demoMode ? "Demo Suggestions" : "Seasonal Trending"}</h3>
                 <button id="refresh-seasonal" type="button" class="ghost-btn">Refresh</button>
               </div>
-              <p id="seasonal-status" class="muted" role="status" aria-live="polite">Loading current season...</p>
+              <p id="seasonal-status" class="muted" role="status" aria-live="polite" data-state="idle">Seasonal data: idle.</p>
               <ul id="seasonal-list" class="seasonal-list"></ul>
             </section>
           </section>
@@ -637,16 +483,20 @@ const recBlendInput = mustElement<HTMLInputElement>("#rec-blend");
 const recBlendValueEl = mustElement<HTMLOutputElement>("#rec-blend-value");
 const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status");
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
+const storageStatusEl = mustElement<HTMLParagraphElement>("#storage-status");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const watchedCountEl = mustElement<HTMLSpanElement>("#watched-count");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
 const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
+const bulkImportFile = mustElement<HTMLInputElement>("#bulk-import-file");
 const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
+const bulkImportStatusEl = mustElement<HTMLParagraphElement>("#bulk-import-status");
 const usernameImportForm = mustElement<HTMLFormElement>("#username-import-form");
 const usernameImportProvider = mustElement<HTMLSelectElement>("#username-import-provider");
 const usernameImportInput = mustElement<HTMLInputElement>("#username-import-input");
 const usernameImportSubmit = mustElement<HTMLButtonElement>("#username-import-submit");
 const usernameImportSubmitLabel = mustElement<HTMLSpanElement>("#username-import-submit-label");
+const usernameImportStatusEl = mustElement<HTMLParagraphElement>("#username-import-status");
 const profileSaveForm = mustElement<HTMLFormElement>("#profile-save-form");
 const profileNameInput = mustElement<HTMLInputElement>("#profile-name-input");
 const profileSelect = mustElement<HTMLSelectElement>("#profile-select");
@@ -706,8 +556,13 @@ let activeView: AppView = "recommendations";
 let recommendationMode: RecommendationMode = "graph";
 let modelBlendWeight = 0.5;
 let recommendationRunId = 0;
+let recommendationController: AbortController | null = null;
+let activeUsernameImport: { controller: AbortController; provider: UsernameImportProvider } | null = null;
+let bulkFileLoadId = 0;
+let activeBulkFileLoadId: number | null = null;
 let graphRenderRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
+let modelLoadError: string | null = null;
 const recommendationFilters: RecommendationFilters = {
   genre: "",
   minYear: null,
@@ -716,25 +571,29 @@ const recommendationFilters: RecommendationFilters = {
 };
 const animeMetadataCache = new Map<number, AnimeMetadata>();
 const animeMetadataUnavailable = new Set<number>();
-const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
-const demoCatalog = demoMode ? await fetchDemoCatalog() : null;
+const animeMetadataFailed = new Set<number>();
+const demoCatalog = demoMode ? await loadRequiredArtifact(artifactLoader.fetchDemoCatalog()) : null;
 if (demoCatalog) {
   for (const item of demoCatalog) animeMetadataCache.set(item.animeId, item);
   usernameImportProvider.disabled = true;
   usernameImportInput.disabled = true;
   usernameImportSubmit.disabled = true;
+  setAsyncStatus(usernameImportStatusEl, "demo", "Username imports are unavailable in the offline demo.");
 }
 let seasonalItems: SeasonalAnimeItem[] = [];
 let seasonalLoadingPromise: Promise<void> | null = null;
-let activeTheme: ThemeMode = loadThemeModePreference();
-let activeContrast: ContrastMode = loadContrastModePreference();
-let helpTipsDismissed = loadHelpTipsDismissed();
+let seasonalController: AbortController | null = null;
+let activeTheme: ThemeMode = persistence.loadThemeModePreference(
+  () => window.matchMedia("(prefers-color-scheme: light)").matches,
+);
+let activeContrast: ContrastMode = persistence.loadContrastModePreference();
+let helpTipsDismissed = persistence.loadHelpTipsDismissed();
 let commandPaletteOpen = false;
 let commandSelectionIndex = 0;
 let commandFilteredActions: CommandAction[] = [];
 let commandMatchReasons = new Map<string, CommandMatchReason[]>();
-let commandPinnedIds = loadCommandPinnedIds();
-let commandHistoryIds = loadCommandHistoryIds();
+let commandPinnedIds = persistence.loadCommandPinnedIds();
+let commandHistoryIds = persistence.loadCommandHistoryIds();
 let draggedPinnedCommandId: string | null = null;
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
@@ -745,7 +604,7 @@ let networkControlsHiddenOnMobile = true;
 applyTheme(activeTheme);
 applyContrast(activeContrast);
 
-const graphData = await fetchGraph();
+const graphData = await loadRequiredArtifact(artifactLoader.fetchGraph());
 const graphNodes = getGraphNodes(graphData);
 const recommendationIndex = isCompactGraphData(graphData)
   ? buildRecommendationIndexFromCompact(graphData)
@@ -754,8 +613,8 @@ const selectedAnimeNodeIds: string[] = [];
 const selectedAnimeWeights = new Map<string, number>();
 const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
-const persistedState = loadRecommendationState(recommendationIndex);
-const savedProfiles = loadRecommendationProfiles();
+const persistedState = persistence.loadRecommendationState();
+const savedProfiles = persistence.loadRecommendationProfiles();
 const commandActions = buildCommandActions();
 
 for (const entry of persistedState.selected) {
@@ -781,6 +640,7 @@ renderSelectedAnime();
 renderIncludeCandidates();
 renderExcludeCandidates();
 renderProfileOptions(savedProfiles);
+renderStorageWarnings();
 renderFilterControls();
 renderSeasonalList();
 renderContextualTips();
@@ -989,13 +849,13 @@ quickstartSeasonalBtn.addEventListener("click", () => {
 themeToggleBtn.addEventListener("click", () => {
   activeTheme = activeTheme === "dark" ? "light" : "dark";
   applyTheme(activeTheme);
-  persistThemeModePreference(activeTheme);
+  persistence.persistThemeModePreference(activeTheme);
 });
 
 contrastToggleBtn.addEventListener("click", () => {
   activeContrast = activeContrast === "normal" ? "high" : "normal";
   applyContrast(activeContrast);
-  persistContrastModePreference(activeContrast);
+  persistence.persistContrastModePreference(activeContrast);
 });
 
 networkMobileToggleBtn.addEventListener("click", () => {
@@ -1015,19 +875,19 @@ onMediaQueryChange(networkCompactMediaQuery, () => {
 
 tipsToggleBtn.addEventListener("click", () => {
   helpTipsDismissed = !helpTipsDismissed;
-  persistHelpTipsDismissed(helpTipsDismissed);
+  persistence.persistHelpTipsDismissed(helpTipsDismissed);
   renderContextualTips();
 });
 
 tipsDismissRecommendationsBtn.addEventListener("click", () => {
   helpTipsDismissed = true;
-  persistHelpTipsDismissed(helpTipsDismissed);
+  persistence.persistHelpTipsDismissed(helpTipsDismissed);
   renderContextualTips();
 });
 
 tipsDismissNetworkBtn.addEventListener("click", () => {
   helpTipsDismissed = true;
-  persistHelpTipsDismissed(helpTipsDismissed);
+  persistence.persistHelpTipsDismissed(helpTipsDismissed);
   renderContextualTips();
 });
 
@@ -1039,6 +899,14 @@ addAnimeForm.addEventListener("submit", (event) => {
 bulkImportForm.addEventListener("submit", (event) => {
   event.preventDefault();
   importWatchedFromBulkInput();
+});
+
+bulkImportFile.addEventListener("change", () => {
+  void loadBulkImportFile();
+});
+
+bulkImportInput.addEventListener("input", () => {
+  cancelBulkFileLoad();
 });
 
 usernameImportForm.addEventListener("submit", (event) => {
@@ -1233,7 +1101,7 @@ clearExcludeBtn.addEventListener("click", () => {
 });
 
 recMethodSelect.addEventListener("change", () => {
-  recommendationMode = parseRecommendationMode(recMethodSelect.value);
+  recommendationMode = persistence.parseRecommendationMode(recMethodSelect.value);
   setBlendControlVisibility();
   persistRecommendationState();
   void updateRecommendations();
@@ -1314,7 +1182,7 @@ function setActiveView(view: AppView, fromHash: boolean): void {
     setGraphLoadingState(true, "Render status: loading explorer data...");
     void ensureExplorerGraphData()
       .then(() => {
-        window.requestAnimationFrame(() => {
+        runtime.frame(() => {
           rerenderGraph();
         });
       })
@@ -1542,7 +1410,7 @@ function openCommandPalette(): void {
   commandSelectionIndex = 0;
   renderCommandPaletteList();
   document.body.classList.add("palette-open");
-  window.requestAnimationFrame(() => {
+  runtime.frame(() => {
     commandInput.focus();
   });
 }
@@ -1941,33 +1809,6 @@ function groupCommandActions(
     }));
 }
 
-function loadCommandPinnedIds(): string[] {
-  try {
-    const raw = window.localStorage.getItem(COMMAND_PINNED_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-      .slice(0, COMMAND_PINNED_LIMIT);
-  } catch (error) {
-    console.warn("Unable to load pinned commands.", error);
-    return [];
-  }
-}
-
-function persistCommandPinnedIds(ids: string[]): void {
-  try {
-    window.localStorage.setItem(COMMAND_PINNED_STORAGE_KEY, JSON.stringify(ids));
-  } catch (error) {
-    console.warn("Unable to persist pinned commands.", error);
-  }
-}
-
 function isCommandPinned(commandId: string): boolean {
   return commandPinnedIds.includes(commandId);
 }
@@ -1978,7 +1819,7 @@ function toggleCommandPinned(commandId: string): void {
   } else {
     commandPinnedIds = [commandId, ...commandPinnedIds].slice(0, COMMAND_PINNED_LIMIT);
   }
-  persistCommandPinnedIds(commandPinnedIds);
+  persistence.persistCommandPinnedIds(commandPinnedIds);
 }
 
 function movePinnedCommandBefore(draggedId: string, targetId: string): void {
@@ -1997,7 +1838,7 @@ function movePinnedCommandBefore(draggedId: string, targetId: string): void {
   }
   withoutDragged.splice(targetIndex, 0, draggedId);
   commandPinnedIds = withoutDragged.slice(0, COMMAND_PINNED_LIMIT);
-  persistCommandPinnedIds(commandPinnedIds);
+  persistence.persistCommandPinnedIds(commandPinnedIds);
 }
 
 function clearCommandDragOverState(): void {
@@ -2014,39 +1855,12 @@ function clearCommandDragState(): void {
     .forEach((handle) => handle.classList.remove("active"));
 }
 
-function loadCommandHistoryIds(): string[] {
-  try {
-    const raw = window.localStorage.getItem(COMMAND_HISTORY_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-      .slice(0, COMMAND_HISTORY_LIMIT);
-  } catch (error) {
-    console.warn("Unable to load command history.", error);
-    return [];
-  }
-}
-
-function persistCommandHistoryIds(history: string[]): void {
-  try {
-    window.localStorage.setItem(COMMAND_HISTORY_STORAGE_KEY, JSON.stringify(history));
-  } catch (error) {
-    console.warn("Unable to persist command history.", error);
-  }
-}
-
 function recordCommandHistory(commandId: string): void {
   commandHistoryIds = [commandId, ...commandHistoryIds.filter((id) => id !== commandId)].slice(
     0,
     COMMAND_HISTORY_LIMIT,
   );
-  persistCommandHistoryIds(commandHistoryIds);
+  persistence.persistCommandHistoryIds(commandHistoryIds);
 }
 
 function parseYearFilterValue(raw: string): number | null {
@@ -2162,7 +1976,46 @@ function addAnimeFromInput(): void {
   addAnimeToWatchedList(anime, "Added");
 }
 
+async function loadBulkImportFile(): Promise<void> {
+  const file = bulkImportFile.files?.[0];
+  if (!file) {
+    return;
+  }
+  const loadId = ++bulkFileLoadId;
+  activeBulkFileLoadId = loadId;
+  bulkImportFile.value = "";
+  if (!file.name.toLowerCase().endsWith(".txt") || file.size > 128 * 1024) {
+    activeBulkFileLoadId = null;
+    setAsyncStatus(bulkImportStatusEl, "failed", "Choose a .txt file no larger than 128 KiB.");
+    recMessageEl.textContent = "Choose a .txt file no larger than 128 KiB.";
+    return;
+  }
+  setAsyncStatus(bulkImportStatusEl, "loading", "Reading local file...");
+  try {
+    const content = await file.text();
+    if (activeBulkFileLoadId !== loadId) return;
+    activeBulkFileLoadId = null;
+    bulkImportInput.value = content;
+    if (content.trim()) {
+      setAsyncStatus(bulkImportStatusEl, "ready", "Local file loaded. Review the entries before importing.");
+      recMessageEl.textContent = `Loaded local file "${file.name}". Review the entries, then select Import Watched Entries.`;
+    } else {
+      setAsyncStatus(bulkImportStatusEl, "empty", "The local file has no entries to import.");
+      recMessageEl.textContent = `Local file "${file.name}" is empty.`;
+    }
+  } catch {
+    if (activeBulkFileLoadId !== loadId) return;
+    activeBulkFileLoadId = null;
+    setAsyncStatus(bulkImportStatusEl, "failed", "Unable to read that local file.");
+    recMessageEl.textContent = "Unable to read that local file.";
+  }
+}
+
 function importWatchedFromBulkInput(): void {
+  if (activeBulkFileLoadId !== null) {
+    recMessageEl.textContent = "Wait for the local file to finish loading before importing.";
+    return;
+  }
   const raw = bulkImportInput.value.trim();
   if (!raw) {
     recMessageEl.textContent = "Paste at least one line to import.";
@@ -2221,6 +2074,7 @@ function importWatchedFromBulkInput(): void {
   persistRecommendationState();
   renderSelectedAnime();
   void updateRecommendations();
+  setAsyncStatus(bulkImportStatusEl, "ready", "Local entries imported into this browser.");
 
   const unresolvedNote =
     unresolved > 0
@@ -2233,6 +2087,7 @@ function importWatchedFromBulkInput(): void {
 
 async function importWatchedFromUsername(): Promise<void> {
   if (demoMode) {
+    setAsyncStatus(usernameImportStatusEl, "demo", "Username imports are unavailable in the offline demo.");
     recMessageEl.textContent = "Username imports are unavailable in the offline demo.";
     return;
   }
@@ -2243,14 +2098,27 @@ async function importWatchedFromUsername(): Promise<void> {
     return;
   }
 
+  cancelActiveUsernameImport();
+  const controller = new AbortController();
+  activeUsernameImport = { controller, provider };
   setUsernameImportLoading(true, provider);
+  setAsyncStatus(usernameImportStatusEl, "loading", `Importing from ${providerLabel(provider)}...`);
   recMessageEl.textContent = `Importing rated anime from ${providerLabel(provider)} user "${username}"...`;
 
   try {
     const result =
       provider === "anilist"
-        ? await fetchAniListUsernameImport(username, recommendationIndex)
-        : await fetchMalUsernameImport(username, recommendationIndex);
+        ? await providerAdapter.fetchAniListUsernameImport(username, recommendationIndex, controller.signal)
+        : await providerAdapter.fetchMalUsernameImport(username, recommendationIndex, controller.signal);
+
+    if (controller.signal.aborted || activeUsernameImport?.controller !== controller) return;
+    activeUsernameImport = null;
+    setUsernameImportLoading(false, provider);
+    if (result.ratedCount === 0) {
+      setAsyncStatus(usernameImportStatusEl, "empty", `No rated entries returned by ${providerLabel(provider)}.`);
+      recMessageEl.textContent = `No rated entries returned by ${providerLabel(provider)}; the watched list was left intact.`;
+      return;
+    }
 
     const summary = upsertImportedWatchedEntries(result.entries);
     persistRecommendationState();
@@ -2262,13 +2130,49 @@ async function importWatchedFromUsername(): Promise<void> {
       `Rated: ${result.ratedCount}, matched in graph: ${result.entries.length}, ` +
       `added: ${summary.added}, updated: ${summary.updated}, skipped: ${summary.skipped}, ` +
       `unmapped: ${result.unmappedCount}.`;
+    setAsyncStatus(usernameImportStatusEl, "ready", `Imported ${result.ratedCount} rated entries from ${providerLabel(provider)}.`);
   } catch (error) {
+    if (controller.signal.aborted || activeUsernameImport?.controller !== controller) return;
+    if (isAbortError(error)) {
+      setAsyncStatus(usernameImportStatusEl, "stale", "Username import request was canceled.");
+      recMessageEl.textContent = "Username import request was canceled; the watched list was left intact.";
+      return;
+    }
+    setAsyncStatus(
+      usernameImportStatusEl,
+      error instanceof ProviderUnavailableError ? "unavailable" : "failed",
+      error instanceof ProviderUnavailableError ? `${providerLabel(provider)} import is unavailable.` : `${providerLabel(provider)} import failed.`,
+    );
     const message =
       error instanceof Error ? error.message : "Unable to import this username.";
     recMessageEl.textContent = `Username import failed: ${message}`;
   } finally {
-    setUsernameImportLoading(false, provider);
+    if (activeUsernameImport?.controller === controller) {
+      activeUsernameImport = null;
+      setUsernameImportLoading(false, provider);
+    }
   }
+}
+
+function setAsyncStatus(element: HTMLElement, state: AsyncUiState, message: string): void {
+  element.dataset.state = state;
+  element.textContent = message;
+}
+
+function cancelActiveUsernameImport(): void {
+  const active = activeUsernameImport;
+  if (!active) return;
+  activeUsernameImport = null;
+  active.controller.abort();
+  setUsernameImportLoading(false, active.provider);
+  setAsyncStatus(usernameImportStatusEl, "stale", "Previous username import canceled after recommendation state changed.");
+}
+
+function cancelBulkFileLoad(): void {
+  if (activeBulkFileLoadId === null) return;
+  ++bulkFileLoadId;
+  activeBulkFileLoadId = null;
+  setAsyncStatus(bulkImportStatusEl, "stale", "Previous local file read was superseded.");
 }
 
 function parseUsernameImportProvider(raw: string): UsernameImportProvider {
@@ -2292,200 +2196,6 @@ function setUsernameImportLoading(
   usernameImportSubmitLabel.textContent = loading
     ? `Importing ${providerLabel(provider)}...`
     : "Import User List";
-}
-
-async function fetchAniListUsernameImport(
-  username: string,
-  index: RecommendationIndex,
-): Promise<UsernameImportResult> {
-  const query = `
-    query ($userName: String) {
-      MediaListCollection(userName: $userName, type: ANIME) {
-        lists {
-          entries {
-            score(format: POINT_10_DECIMAL)
-            media {
-              idMal
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const payload = await fetchJsonWithRetries<{
-    data?: {
-      MediaListCollection?: {
-        lists?: Array<{
-          entries?: Array<{
-            score?: number;
-            media?: {
-              idMal?: number | null;
-            } | null;
-          }>;
-        }>;
-      } | null;
-    };
-    errors?: Array<{ message?: string }>;
-  }>("https://graphql.anilist.co", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables: { userName: username },
-    }),
-  });
-
-  if (payload.errors && payload.errors.length > 0) {
-    const message = payload.errors[0]?.message ?? "AniList API returned an error.";
-    throw new Error(message);
-  }
-
-  const lists = payload.data?.MediaListCollection?.lists ?? [];
-  if (lists.length === 0) {
-    throw new Error(
-      "No AniList anime list found for that user (private, empty, or not found).",
-    );
-  }
-
-  let ratedCount = 0;
-  let unmappedCount = 0;
-  const byNodeId = new Map<string, ImportedWatchedEntry>();
-
-  for (const list of lists) {
-    const entries = list.entries ?? [];
-    for (const entry of entries) {
-      const score = Number(entry.score ?? 0);
-      const malId = Number(entry.media?.idMal ?? 0);
-      if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(malId) || malId <= 0) {
-        continue;
-      }
-
-      ratedCount += 1;
-      const anime = index.animeByAnimeId.get(Math.trunc(malId));
-      if (!anime) {
-        unmappedCount += 1;
-        continue;
-      }
-
-      const weight = normalizeImportedScoreToWeight(score);
-      byNodeId.set(anime.nodeId, { anime, weight });
-    }
-  }
-
-  return {
-    entries: [...byNodeId.values()],
-    ratedCount,
-    unmappedCount,
-  };
-}
-
-async function fetchMalUsernameImport(
-  username: string,
-  index: RecommendationIndex,
-): Promise<UsernameImportResult> {
-  const allEntries: Array<{ anime_id?: number; score?: number }> = [];
-  let offset = 0;
-
-  while (true) {
-    const page = await fetchMalUsernamePage(username, offset);
-    if (!Array.isArray(page) || page.length === 0) {
-      break;
-    }
-
-    allEntries.push(...page);
-    if (page.length < USERNAME_IMPORT_PAGE_SIZE) {
-      break;
-    }
-
-    offset += page.length;
-    await sleep(USERNAME_IMPORT_PAGE_DELAY_MS);
-  }
-
-  if (allEntries.length === 0) {
-    throw new Error("No rated MAL entries found for that user (private, empty, or not found).");
-  }
-
-  let ratedCount = 0;
-  let unmappedCount = 0;
-  const byNodeId = new Map<string, ImportedWatchedEntry>();
-
-  for (const entry of allEntries) {
-    const score = Number(entry.score ?? 0);
-    const animeId = Number(entry.anime_id ?? 0);
-    if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(animeId) || animeId <= 0) {
-      continue;
-    }
-
-    ratedCount += 1;
-    const anime = index.animeByAnimeId.get(Math.trunc(animeId));
-    if (!anime) {
-      unmappedCount += 1;
-      continue;
-    }
-
-    const weight = normalizeImportedScoreToWeight(score);
-    byNodeId.set(anime.nodeId, { anime, weight });
-  }
-
-  return {
-    entries: [...byNodeId.values()],
-    ratedCount,
-    unmappedCount,
-  };
-}
-
-async function fetchMalUsernamePage(
-  username: string,
-  offset: number,
-): Promise<Array<{ anime_id?: number; score?: number }>> {
-  const malUrl = new URL(
-    `https://myanimelist.net/animelist/${encodeURIComponent(username)}/load.json`,
-  );
-  malUrl.searchParams.set("status", "7");
-  malUrl.searchParams.set("offset", String(offset));
-
-  try {
-    return await fetchJsonWithRetries<Array<{ anime_id?: number; score?: number }>>(
-      malUrl.toString(),
-      {
-        headers: {
-          Accept: "application/json",
-        },
-      },
-      USERNAME_IMPORT_MAX_RETRIES,
-    );
-  } catch {
-    const jinaUrl = `https://r.jina.ai/http://${malUrl.host}${malUrl.pathname}${malUrl.search}`;
-    const text = await fetchTextWithRetries(jinaUrl);
-    const parsed = parseJinaMarkdownJson<Array<{ anime_id?: number; score?: number }>>(text);
-    if (!Array.isArray(parsed)) {
-      throw new Error(
-        "Unable to read MAL list data. The profile may be private or blocked by CORS/rate limits.",
-      );
-    }
-    return parsed;
-  }
-}
-
-function parseJinaMarkdownJson<T>(content: string): T | null {
-  const marker = "Markdown Content:";
-  const markerIndex = content.indexOf(marker);
-  if (markerIndex < 0) {
-    return null;
-  }
-  const jsonText = content.slice(markerIndex + marker.length).trim();
-  if (!jsonText) {
-    return null;
-  }
-  try {
-    return JSON.parse(jsonText) as T;
-  } catch {
-    return null;
-  }
 }
 
 function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
@@ -2517,57 +2227,6 @@ function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
   }
 
   return { added, updated, skipped };
-}
-
-async function fetchJsonWithRetries<T>(
-  url: string,
-  init?: RequestInit,
-  maxRetries = USERNAME_IMPORT_MAX_RETRIES,
-): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const response = await fetch(url, init);
-    if (response.ok) {
-      return (await response.json()) as T;
-    }
-
-    if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
-      throw new Error(`Request failed (${response.status}) for ${url}`);
-    }
-
-    await sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(Math.random() * 200));
-  }
-
-  throw new Error("Request retries exhausted.");
-}
-
-async function fetchTextWithRetries(
-  url: string,
-  maxRetries = USERNAME_IMPORT_MAX_RETRIES,
-): Promise<string> {
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const response = await fetch(url, {
-      headers: { Accept: "text/plain" },
-    });
-    if (response.ok) {
-      return await response.text();
-    }
-
-    if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
-      throw new Error(`Request failed (${response.status}) for ${url}`);
-    }
-
-    await sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(Math.random() * 200));
-  }
-
-  throw new Error("Request retries exhausted.");
-}
-
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status === 425 || status === 429 || status >= 500;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function parseBulkWatchedLine(
@@ -2604,19 +2263,6 @@ function parseBulkWatchedLine(
   };
 }
 
-function normalizeImportedScoreToWeight(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 1;
-  }
-
-  if (value <= MAX_WATCH_WEIGHT) {
-    return clampWatchWeight(value);
-  }
-
-  const mapped = 1 + (value - 5) / 5;
-  return clampWatchWeight(mapped);
-}
-
 function removeSelectedAnime(nodeId: string): void {
   const index = selectedAnimeNodeIds.indexOf(nodeId);
   if (index < 0) {
@@ -2638,13 +2284,14 @@ function renderSelectedAnime(): void {
   }
 
   const html = selectedAnimeNodeIds
-    .map((nodeId) => recommendationIndex.animeByNodeId.get(nodeId))
-    .filter((anime): anime is AnimeInfo => Boolean(anime))
-    .map((anime) => {
-      const weight = clampWatchWeight(selectedAnimeWeights.get(anime.nodeId) ?? 1);
+    .map((nodeId) => {
+      const anime = recommendationIndex.animeByNodeId.get(nodeId);
+      const label = anime?.label ?? nodeId;
+      const missingNote = anime ? "" : `<span class="chip-missing-note">Unavailable in this catalog; kept in your saved list</span>`;
+      const weight = clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1);
       return `
       <div class="chip chip-weighted">
-        <span class="chip-title">${escapeHtml(anime.label)}</span>
+        <span class="chip-title">${escapeHtml(label)}${missingNote}</span>
         <label class="chip-weight-control">
           <span>Weight</span>
           <input
@@ -2653,12 +2300,12 @@ function renderSelectedAnime(): void {
             max="${MAX_WATCH_WEIGHT}"
             step="${WATCH_WEIGHT_STEP}"
             value="${weight.toFixed(1)}"
-            data-weight-node-id="${anime.nodeId}"
-            aria-label="Weight for ${escapeHtml(anime.label)}"
+            data-weight-node-id="${escapeHtml(nodeId)}"
+            aria-label="Weight for ${escapeHtml(label)}"
           />
           <output class="chip-weight-value">${weight.toFixed(1)}x</output>
         </label>
-        <button type="button" data-node-id="${anime.nodeId}" aria-label="Remove ${escapeHtml(anime.label)}">x</button>
+        <button type="button" data-node-id="${escapeHtml(nodeId)}" aria-label="Remove ${escapeHtml(label)}">x</button>
       </div>
     `;
     })
@@ -2755,21 +2402,27 @@ function renderCandidateChips(
 
   const dataAttrName = mode === "include" ? "data-include-node-id" : "data-exclude-node-id";
   const html = nodeIds
-    .map((nodeId) => recommendationIndex.animeByNodeId.get(nodeId))
-    .filter((anime): anime is AnimeInfo => Boolean(anime))
-    .map(
-      (anime) => `
+    .map((nodeId) => {
+      const anime = recommendationIndex.animeByNodeId.get(nodeId);
+      const label = anime?.label ?? nodeId;
+      const missingNote = anime ? "" : `<span class="chip-missing-note">Unavailable in this catalog; kept in your saved list</span>`;
+      return `
       <div class="chip">
-        <span class="chip-title">${escapeHtml(anime.label)}</span>
-        <button type="button" ${dataAttrName}="${anime.nodeId}" aria-label="Remove ${escapeHtml(anime.label)}">x</button>
+        <span class="chip-title">${escapeHtml(label)}${missingNote}</span>
+        <button type="button" ${dataAttrName}="${escapeHtml(nodeId)}" aria-label="Remove ${escapeHtml(label)}">x</button>
       </div>
-    `,
-    )
+    `;
+    })
     .join("");
   container.innerHTML = html;
 }
 
 async function updateRecommendations(): Promise<void> {
+  recommendationController?.abort();
+  // A later user action can retry transient metadata failures; unavailable IDs stay known.
+  animeMetadataFailed.clear();
+  const controller = new AbortController();
+  recommendationController = controller;
   const runId = ++recommendationRunId;
 
   if (selectedAnimeNodeIds.length === 0) {
@@ -2781,12 +2434,13 @@ async function updateRecommendations(): Promise<void> {
           ? "Using ML model recommendations."
           : `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model).`;
     recResultsEl.innerHTML = "";
-    setMetadataStatus("Metadata: add anime to begin.");
+    setMetadataStatus("empty", "Metadata: add anime to begin.");
     renderSelectedAnime();
     return;
   }
 
   let recommendations: RecommendationResult[] = [];
+  setMetadataStatus(demoMode ? "demo" : "loading", demoMode ? "Metadata: synthetic demo catalog." : "Metadata: loading recommendations...");
 
   if (recommendationMode === "graph") {
     recEngineStatusEl.textContent = "Using graph recommendations.";
@@ -2802,11 +2456,19 @@ async function updateRecommendations(): Promise<void> {
       return;
     }
     if (!modelIndex) {
+      if (modelLoadError) {
+        recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
+        recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
+        recResultsEl.innerHTML = "";
+        setMetadataStatus("failed", "Metadata: model artifact is invalid.");
+        return;
+      }
       recEngineStatusEl.textContent =
         "ML model data not found (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
       recSummaryEl.textContent =
         "Model recommendations are unavailable until model data is exported to the web data folder.";
       recResultsEl.innerHTML = "";
+      setMetadataStatus("unavailable", "Metadata: model artifact is unavailable.");
       return;
     }
     recEngineStatusEl.textContent = `Using ML model recommendations (${modelIndex.factors} factors).`;
@@ -2823,11 +2485,19 @@ async function updateRecommendations(): Promise<void> {
       return;
     }
     if (!modelIndex) {
+      if (modelLoadError) {
+        recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
+        recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
+        recResultsEl.innerHTML = "";
+        setMetadataStatus("failed", "Metadata: model artifact is invalid.");
+        return;
+      }
       recEngineStatusEl.textContent =
         "ML model data not found for hybrid mode (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
       recSummaryEl.textContent =
         "Hybrid mode needs model data. Export model data or switch to graph-only mode.";
       recResultsEl.innerHTML = "";
+      setMetadataStatus("unavailable", "Metadata: model artifact is unavailable.");
       return;
     }
     const graphRecommendations = buildGraphRecommendations(
@@ -2850,23 +2520,17 @@ async function updateRecommendations(): Promise<void> {
       `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph).`;
   }
 
-  const includeSet = new Set(includeCandidateNodeIds);
-  const excludeSet = new Set(excludeCandidateNodeIds);
-  recommendations = recommendations.filter((item) => {
-    if (excludeSet.has(item.anime.nodeId)) {
-      return false;
-    }
-    if (includeSet.size > 0 && !includeSet.has(item.anime.nodeId)) {
-      return false;
-    }
-    return true;
-  });
+  recommendations = filterCandidateEligibility(
+    recommendations,
+    includeCandidateNodeIds,
+    excludeCandidateNodeIds,
+  );
 
   if (recommendations.length === 0) {
     recSummaryEl.textContent =
       "No positive recommendations found from the current watched list. Try adding more anime.";
     recResultsEl.innerHTML = "";
-    setMetadataStatus("Metadata: no candidates.");
+    setMetadataStatus("empty", "Metadata: no candidates.");
     return;
   }
 
@@ -2874,28 +2538,37 @@ async function updateRecommendations(): Promise<void> {
     .slice(0, METADATA_PREFETCH_LIMIT)
     .map((item) => item.anime.animeId)
     .filter((animeId) => Number.isFinite(animeId) && animeId > 0);
-  const metadataPrefetchLimit = hasActiveRecommendationFilters()
+  const metadataPrefetchLimit = hasActiveRecommendationFilters(recommendationFilters)
     ? METADATA_PREFETCH_WITH_FILTER_LIMIT
     : Math.min(12, metadataCandidateAnimeIds.length);
   if (metadataPrefetchLimit > 0) {
-    await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit);
-    if (runId !== recommendationRunId) {
+    await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit, controller.signal);
+    if (runId !== recommendationRunId || controller.signal.aborted) {
       return;
     }
   }
 
   updateGenreFilterOptions(recommendations);
-  const filterResult = applyRecommendationFilters(recommendations);
+  const filterResult = applyRecommendationFilters(
+    recommendations,
+    recommendationFilters,
+    animeMetadataCache,
+  );
   const filteredRecommendations = filterResult.recommendations;
   if (filteredRecommendations.length === 0) {
-    recSummaryEl.textContent = hasActiveRecommendationFilters()
+    recSummaryEl.textContent = hasActiveRecommendationFilters(recommendationFilters)
       ? "No recommendations match your current metadata filters."
       : "No positive recommendations found from the current watched list.";
     recResultsEl.innerHTML = "";
-    setMetadataStatus(
-      hasActiveRecommendationFilters() && filterResult.missingMetadataCount > 0
-        ? `Metadata: ${filterResult.missingMetadataCount} candidate(s) skipped due to missing metadata.`
-        : "Metadata: no matches after filters.",
+    const metadataState: AsyncUiState = demoMode ? "demo"
+      : metadataCandidateAnimeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
+        : metadataCandidateAnimeIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "empty";
+    setMetadataStatus(metadataState,
+      metadataState === "failed" ? "Metadata request failed; some candidates could not be checked."
+        : metadataState === "unavailable" ? "Metadata is unavailable for some candidates."
+          : hasActiveRecommendationFilters(recommendationFilters) && filterResult.missingMetadataCount > 0
+            ? `Metadata: ${filterResult.missingMetadataCount} candidate(s) skipped due to missing metadata.`
+            : "Metadata: no matches after filters.",
     );
     return;
   }
@@ -2922,24 +2595,33 @@ async function updateRecommendations(): Promise<void> {
     .filter(
       (item) =>
         !animeMetadataCache.has(item.anime.animeId) &&
-        !animeMetadataUnavailable.has(item.anime.animeId),
+        !animeMetadataUnavailable.has(item.anime.animeId) &&
+        !animeMetadataFailed.has(item.anime.animeId),
     ).length;
   const missingNote =
     filterResult.missingMetadataCount > 0
       ? ` | skipped (missing metadata): ${filterResult.missingMetadataCount}`
       : "";
-  setMetadataStatus(
+  const visibleIds = filteredRecommendations.slice(0, MAX_RECOMMENDATIONS).map((item) => item.anime.animeId);
+  const metadataState: AsyncUiState = demoMode ? "demo"
+    : visibleIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
+      : visibleIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "ready";
+  const providerNote = metadataState === "failed" ? " | some metadata requests failed"
+    : metadataState === "unavailable" ? " | some metadata unavailable"
+      : metadataState === "demo" ? " | synthetic demo data" : "";
+  setMetadataStatus(metadataState,
     `Metadata loaded for ${visibleWithMetadata}/${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} visible recommendations` +
       `${visibleMissingMetadata > 0 ? ` | pending: ${visibleMissingMetadata}` : ""}` +
-      missingNote,
+      missingNote + providerNote,
   );
 }
 
 function renderRecommendationCard(item: RecommendationResult): string {
   const metadata = animeMetadataCache.get(item.anime.animeId) ?? null;
+  const imageUrl = safeExternalImageUrl(metadata?.imageUrl ?? "");
   const coverHtml =
-    metadata && metadata.imageUrl
-      ? `<img class="rec-cover" src="${escapeHtml(metadata.imageUrl)}" alt="Cover for ${escapeHtml(item.anime.label)}" loading="lazy" />`
+    imageUrl
+      ? `<img class="rec-cover" src="${escapeHtml(imageUrl)}" alt="Cover for ${escapeHtml(item.anime.label)}" loading="lazy" referrerpolicy="no-referrer" />`
       : `<div class="rec-cover rec-cover-placeholder" aria-hidden="true">No image</div>`;
   const metadataMeta = formatRecommendationMetadataMeta(metadata);
   const synopsisText =
@@ -2992,17 +2674,8 @@ function formatRecommendationMetadataMeta(metadata: AnimeMetadata | null): strin
   return parts.join(" | ");
 }
 
-function setMetadataStatus(message: string): void {
-  metadataStatusEl.textContent = message;
-}
-
-function hasActiveRecommendationFilters(): boolean {
-  return (
-    recommendationFilters.genre.length > 0 ||
-    recommendationFilters.minYear !== null ||
-    recommendationFilters.maxYear !== null ||
-    (recommendationFilters.minScore ?? 0) > 0
-  );
+function setMetadataStatus(state: AsyncUiState, message: string): void {
+  setAsyncStatus(metadataStatusEl, state, message);
 }
 
 function formatActiveFilterSummary(): string {
@@ -3020,74 +2693,6 @@ function formatActiveFilterSummary(): string {
     parts.push(`score>=${(recommendationFilters.minScore ?? 0).toFixed(1)}`);
   }
   return parts.length > 0 ? ` | filters: ${parts.join(", ")}` : "";
-}
-
-function applyRecommendationFilters(recommendations: RecommendationResult[]): {
-  recommendations: RecommendationResult[];
-  missingMetadataCount: number;
-} {
-  if (!hasActiveRecommendationFilters()) {
-    return {
-      recommendations,
-      missingMetadataCount: 0,
-    };
-  }
-
-  const minYearRaw = recommendationFilters.minYear;
-  const maxYearRaw = recommendationFilters.maxYear;
-  const lowerYear =
-    minYearRaw !== null && maxYearRaw !== null
-      ? Math.min(minYearRaw, maxYearRaw)
-      : minYearRaw;
-  const upperYear =
-    minYearRaw !== null && maxYearRaw !== null
-      ? Math.max(minYearRaw, maxYearRaw)
-      : maxYearRaw;
-  const minScore = recommendationFilters.minScore ?? 0;
-  const genreFilter = recommendationFilters.genre.trim().toLowerCase();
-
-  let missingMetadataCount = 0;
-  const filtered = recommendations.filter((item) => {
-    const metadata = animeMetadataCache.get(item.anime.animeId);
-    if (!metadata) {
-      missingMetadataCount += 1;
-      return false;
-    }
-
-    if (genreFilter) {
-      const hasGenre = metadata.genres.some(
-        (genre) => genre.trim().toLowerCase() === genreFilter,
-      );
-      if (!hasGenre) {
-        return false;
-      }
-    }
-
-    if (lowerYear !== null) {
-      if (metadata.year === null || metadata.year < lowerYear) {
-        return false;
-      }
-    }
-
-    if (upperYear !== null) {
-      if (metadata.year === null || metadata.year > upperYear) {
-        return false;
-      }
-    }
-
-    if (minScore > 0) {
-      if (metadata.score === null || metadata.score < minScore) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-
-  return {
-    recommendations: filtered,
-    missingMetadataCount,
-  };
 }
 
 function updateGenreFilterOptions(recommendations: RecommendationResult[]): void {
@@ -3126,13 +2731,15 @@ function updateGenreFilterOptions(recommendations: RecommendationResult[]): void
 async function hydrateMetadataForAnimeIds(
   animeIds: number[],
   maxToFetch: number,
+  signal: AbortSignal,
 ): Promise<void> {
   const uniqueTargets = [...new Set(animeIds)]
     .filter(
       (animeId) =>
         animeId > 0 &&
         !animeMetadataCache.has(animeId) &&
-        !animeMetadataUnavailable.has(animeId),
+        !animeMetadataUnavailable.has(animeId) &&
+        !animeMetadataFailed.has(animeId),
     )
     .slice(0, maxToFetch);
   if (uniqueTargets.length === 0) {
@@ -3146,12 +2753,12 @@ async function hydrateMetadataForAnimeIds(
   for (let i = 0; i < workerCount; i += 1) {
     workers.push(
       (async () => {
-        while (queue.length > 0) {
+        while (queue.length > 0 && !signal.aborted) {
           const animeId = queue.shift();
           if (animeId === undefined) {
             return;
           }
-          await ensureAnimeMetadata(animeId);
+          await ensureAnimeMetadata(animeId, signal);
         }
       })(),
     );
@@ -3160,7 +2767,7 @@ async function hydrateMetadataForAnimeIds(
   await Promise.all(workers);
 }
 
-async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | null> {
+async function ensureAnimeMetadata(animeId: number, signal: AbortSignal): Promise<AnimeMetadata | null> {
   const cached = animeMetadataCache.get(animeId);
   if (cached) {
     return cached;
@@ -3169,127 +2776,24 @@ async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | nul
   if (animeMetadataUnavailable.has(animeId)) {
     return null;
   }
-  const inflight = animeMetadataInFlight.get(animeId);
-  if (inflight) {
-    return inflight;
-  }
-
-  const promise = fetchAnimeMetadataFromJikan(animeId)
-    .then((metadata) => {
-      if (!metadata) {
-        animeMetadataUnavailable.add(animeId);
-        return null;
-      }
-      animeMetadataCache.set(animeId, metadata);
-      return metadata;
-    })
-    .finally(() => {
-      animeMetadataInFlight.delete(animeId);
-    });
-
-  animeMetadataInFlight.set(animeId, promise);
-  return await promise;
-}
-
-async function fetchAnimeMetadataFromJikan(
-  animeId: number,
-): Promise<AnimeMetadata | null> {
-  const url = `https://api.jikan.moe/v4/anime/${animeId}/full`;
-
-  for (let attempt = 0; attempt <= METADATA_MAX_RETRIES; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Accept: "application/json",
-        },
-      });
-      if (response.ok) {
-        const payload = (await response.json()) as {
-          data?: Record<string, unknown>;
-        };
-        return parseAnimeMetadataPayload(animeId, payload.data);
-      }
-      if (response.status === 404) {
-        return null;
-      }
-      if (!isRetryableStatus(response.status) || attempt >= METADATA_MAX_RETRIES) {
-        return null;
-      }
-    } catch {
-      if (attempt >= METADATA_MAX_RETRIES) {
-        return null;
-      }
+  if (animeMetadataFailed.has(animeId) || signal.aborted) return null;
+  try {
+    const outcome = await providerAdapter.fetchAnimeMetadataFromJikan(animeId, signal);
+    if (signal.aborted) return null;
+    if (outcome.state === "unavailable") {
+      animeMetadataUnavailable.add(animeId);
+      return null;
     }
-
-    await sleep(Math.min(800 * 2 ** attempt, 5000) + Math.floor(Math.random() * 220));
-  }
-
-  return null;
-}
-
-function parseAnimeMetadataPayload(
-  animeId: number,
-  raw: Record<string, unknown> | undefined,
-): AnimeMetadata | null {
-  if (!raw || typeof raw !== "object") {
+    if (outcome.state === "failed") {
+      animeMetadataFailed.add(animeId);
+      return null;
+    }
+    animeMetadataCache.set(animeId, outcome.metadata);
+    return outcome.metadata;
+  } catch (error) {
+    if (!signal.aborted) animeMetadataFailed.add(animeId);
     return null;
   }
-
-  const year =
-    typeof raw.year === "number" && Number.isFinite(raw.year)
-      ? Math.trunc(raw.year)
-      : null;
-  const score =
-    typeof raw.score === "number" && Number.isFinite(raw.score)
-      ? Number(raw.score)
-      : null;
-  const synopsis = typeof raw.synopsis === "string" ? raw.synopsis.trim() : "";
-  const season = typeof raw.season === "string" ? raw.season : null;
-  const genres = parseNameList(raw.genres);
-  const studios = parseNameList(raw.studios);
-
-  const images = raw.images as Record<string, unknown> | undefined;
-  const webp = images?.webp as Record<string, unknown> | undefined;
-  const jpg = images?.jpg as Record<string, unknown> | undefined;
-  const imageUrl = [
-    webp?.large_image_url,
-    webp?.image_url,
-    jpg?.large_image_url,
-    jpg?.image_url,
-  ].find((value): value is string => typeof value === "string" && value.length > 0);
-
-  return {
-    animeId,
-    year,
-    score,
-    genres,
-    studios,
-    synopsis,
-    imageUrl: imageUrl ?? "",
-    season,
-  };
-}
-
-function parseNameList(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const values: string[] = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const name = (entry as Record<string, unknown>).name;
-    if (typeof name !== "string") {
-      continue;
-    }
-    const trimmed = name.trim();
-    if (!trimmed || values.includes(trimmed)) {
-      continue;
-    }
-    values.push(trimmed);
-  }
-  return values;
 }
 
 function truncateText(value: string, maxLength: number): string {
@@ -3306,7 +2810,7 @@ async function loadSeasonalTrending(force: boolean): Promise<void> {
       animeId: item.animeId, title: item.title, score: item.score,
       year: item.year, season: null, imageUrl: "",
     }));
-    seasonalStatusEl.textContent = "Invented titles from the local demo catalog.";
+    setAsyncStatus(seasonalStatusEl, "demo", "Invented titles from the local demo catalog.");
     renderSeasonalList();
     return;
   }
@@ -3314,66 +2818,39 @@ async function loadSeasonalTrending(force: boolean): Promise<void> {
     return seasonalLoadingPromise;
   }
 
+  seasonalController?.abort();
+  const controller = new AbortController();
+  seasonalController = controller;
   refreshSeasonalBtn.disabled = true;
-  seasonalStatusEl.textContent = "Loading current season...";
+  setAsyncStatus(seasonalStatusEl, "loading", "Loading current season...");
 
   const promise = (async () => {
     try {
-      const payload = await fetchJsonWithRetries<{
-        data?: Array<Record<string, unknown>>;
-      }>(
-        `https://api.jikan.moe/v4/seasons/now?limit=${SEASONAL_LIST_LIMIT}`,
-        {
-          headers: {
-            Accept: "application/json",
-          },
-        },
-      );
-      const incoming = Array.isArray(payload.data) ? payload.data : [];
-      seasonalItems = incoming
-        .map((entry) => {
-          const animeId = Number((entry as Record<string, unknown>).mal_id ?? 0);
-          const title = String((entry as Record<string, unknown>).title ?? "").trim();
-          if (!Number.isFinite(animeId) || animeId <= 0 || !title) {
-            return null;
-          }
-          const scoreRaw = (entry as Record<string, unknown>).score;
-          const score =
-            typeof scoreRaw === "number" && Number.isFinite(scoreRaw)
-              ? scoreRaw
-              : null;
-          const yearRaw = (entry as Record<string, unknown>).year;
-          const year =
-            typeof yearRaw === "number" && Number.isFinite(yearRaw)
-              ? Math.trunc(yearRaw)
-              : null;
-          const seasonRaw = (entry as Record<string, unknown>).season;
-          const season = typeof seasonRaw === "string" ? seasonRaw : null;
-          const imageUrl = parseAnimeMetadataPayload(animeId, entry)?.imageUrl ?? "";
-
-          return {
-            animeId,
-            title,
-            score,
-            year,
-            season,
-            imageUrl,
-          } satisfies SeasonalAnimeItem;
-        })
-        .filter((entry): entry is SeasonalAnimeItem => entry !== null);
-      seasonalStatusEl.textContent =
+      const items = await providerAdapter.fetchSeasonalAnime(SEASONAL_LIST_LIMIT, controller.signal);
+      if (controller.signal.aborted || seasonalController !== controller) return;
+      seasonalItems = items;
+      setAsyncStatus(seasonalStatusEl, items.length > 0 ? "ready" : "empty",
         seasonalItems.length > 0
           ? `Loaded ${seasonalItems.length} seasonal anime from Jikan.`
-          : "No seasonal anime returned.";
+          : "No seasonal anime returned.");
       renderSeasonalList();
     } catch (error) {
+      if (controller.signal.aborted || seasonalController !== controller) return;
+      if (isAbortError(error)) {
+        setAsyncStatus(seasonalStatusEl, "stale", "Seasonal request was canceled.");
+        return;
+      }
       const message = error instanceof Error ? error.message : "Request failed.";
-      seasonalStatusEl.textContent = `Unable to load seasonal anime: ${message}`;
+      setAsyncStatus(seasonalStatusEl, error instanceof ProviderUnavailableError ? "unavailable" : "failed",
+        `Unable to load seasonal anime: ${message}`);
       seasonalItems = [];
       renderSeasonalList();
     } finally {
-      refreshSeasonalBtn.disabled = false;
-      seasonalLoadingPromise = null;
+      if (seasonalController === controller) {
+        refreshSeasonalBtn.disabled = false;
+        seasonalController = null;
+        seasonalLoadingPromise = null;
+      }
     }
   })();
 
@@ -3401,8 +2878,9 @@ function renderSeasonalList(): void {
         subtitleParts.push(`${demoMode ? "Demo" : "MAL"} ${item.score.toFixed(2)}`);
       }
       const subtitle = subtitleParts.length > 0 ? subtitleParts.join(" | ") : "No stats";
-      const coverHtml = item.imageUrl
-        ? `<img class="seasonal-cover" src="${escapeHtml(item.imageUrl)}" alt="Cover for ${escapeHtml(item.title)}" loading="lazy" />`
+      const imageUrl = safeExternalImageUrl(item.imageUrl);
+      const coverHtml = imageUrl
+        ? `<img class="seasonal-cover" src="${escapeHtml(imageUrl)}" alt="Cover for ${escapeHtml(item.title)}" loading="lazy" referrerpolicy="no-referrer" />`
         : `<div class="seasonal-cover seasonal-cover-placeholder" aria-hidden="true">No image</div>`;
       return `
         <li class="seasonal-item">
@@ -3423,367 +2901,6 @@ function renderSeasonalList(): void {
       `;
     })
     .join("");
-}
-
-function buildGraphRecommendations(
-  selectedNodeIds: string[],
-  selectedWeights: Map<string, number>,
-  index: RecommendationIndex,
-): RecommendationResult[] {
-  const selected = new Set(selectedNodeIds);
-  const scored = new Map<
-    string,
-    {
-      score: number;
-      strongest: number;
-      supportCount: number;
-      sourceMap: Map<
-        string,
-        { edgeWeight: number; weightFactor: number; weightedScore: number }
-      >;
-    }
-  >();
-
-  for (const selectedNodeId of selectedNodeIds) {
-    const weightFactor = clampWatchWeight(selectedWeights.get(selectedNodeId) ?? 1);
-    const neighbors = index.adjacency.get(selectedNodeId) ?? [];
-    for (const neighbor of neighbors) {
-      if (selected.has(neighbor.otherNodeId)) {
-        continue;
-      }
-      const weightedScore = neighbor.weight * weightFactor;
-
-      const current = scored.get(neighbor.otherNodeId);
-      if (neighbor.weight <= 0) {
-        if (current) {
-          current.sourceMap.set(selectedNodeId, {
-            edgeWeight: neighbor.weight,
-            weightFactor,
-            weightedScore,
-          });
-        }
-        continue;
-      }
-
-      if (!current) {
-        scored.set(neighbor.otherNodeId, {
-          score: weightedScore,
-          strongest: weightedScore,
-          supportCount: 1,
-          sourceMap: new Map([
-            [
-              selectedNodeId,
-              {
-                edgeWeight: neighbor.weight,
-                weightFactor,
-                weightedScore,
-              },
-            ],
-          ]),
-        });
-        continue;
-      }
-
-      current.score += weightedScore;
-      current.strongest = Math.max(current.strongest, weightedScore);
-      current.supportCount += 1;
-      current.sourceMap.set(selectedNodeId, {
-        edgeWeight: neighbor.weight,
-        weightFactor,
-        weightedScore,
-      });
-    }
-  }
-
-  return [...scored.entries()]
-    .map(([nodeId, aggregate]) => {
-      const anime = index.animeByNodeId.get(nodeId);
-      if (!anime) {
-        return null;
-      }
-      const contributions = [...aggregate.sourceMap.entries()]
-        .map(([watchedNodeId, source]) => {
-          const watched = index.animeByNodeId.get(watchedNodeId);
-          if (!watched) {
-            return null;
-          }
-          return {
-            watched,
-            edgeWeight: source.edgeWeight,
-            weightFactor: source.weightFactor,
-            weightedScore: source.weightedScore,
-          } satisfies RecommendationContribution;
-        })
-        .filter((value): value is RecommendationContribution => value !== null)
-        .sort((left, right) => right.weightedScore - left.weightedScore);
-
-      return {
-        anime,
-        score: aggregate.score,
-        strongest: aggregate.strongest,
-        supportCount: aggregate.supportCount,
-        contributions,
-      } satisfies RecommendationResult;
-    })
-    .filter((value): value is RecommendationResult => value !== null)
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
-      }
-      if (right.supportCount !== left.supportCount) {
-        return right.supportCount - left.supportCount;
-      }
-      return right.strongest - left.strongest;
-    });
-}
-
-function buildModelRecommendations(
-  selectedNodeIds: string[],
-  selectedWeights: Map<string, number>,
-  index: RecommendationIndex,
-  modelIndex: ModelRecommendationIndex,
-): RecommendationResult[] {
-  const watchedEntries = selectedNodeIds
-    .map((nodeId) => {
-      const anime = index.animeByNodeId.get(nodeId);
-      if (!anime) {
-        return null;
-      }
-      const modelAnime = modelIndex.animeByAnimeId.get(anime.animeId);
-      if (!modelAnime) {
-        return null;
-      }
-      return {
-        anime,
-        modelAnime,
-        weight: clampWatchWeight(selectedWeights.get(nodeId) ?? 1),
-      };
-    })
-    .filter(
-      (
-        value,
-      ): value is {
-        anime: AnimeInfo;
-        modelAnime: ModelRecommendationAnime;
-        weight: number;
-      } => value !== null,
-    );
-
-  if (watchedEntries.length === 0) {
-    return [];
-  }
-
-  const factors = watchedEntries[0].modelAnime.embedding.length;
-  if (factors === 0) {
-    return [];
-  }
-
-  const watchedAnimeIds = new Set(watchedEntries.map((entry) => entry.anime.animeId));
-  const userVector = new Float32Array(factors);
-  let denominator = 0;
-
-  for (const watched of watchedEntries) {
-    denominator += Math.abs(watched.weight);
-    for (let i = 0; i < factors; i += 1) {
-      userVector[i] += watched.modelAnime.embedding[i] * watched.weight;
-    }
-  }
-
-  if (denominator <= 0) {
-    denominator = watchedEntries.length;
-  }
-  for (let i = 0; i < factors; i += 1) {
-    userVector[i] /= denominator;
-  }
-
-  const scored: RecommendationResult[] = [];
-  for (const [animeId, modelAnime] of modelIndex.animeByAnimeId.entries()) {
-    if (watchedAnimeIds.has(animeId)) {
-      continue;
-    }
-    if (modelAnime.embedding.length !== factors) {
-      continue;
-    }
-
-    let score = modelAnime.bias + modelIndex.globalMean;
-    for (let i = 0; i < factors; i += 1) {
-      score += userVector[i] * modelAnime.embedding[i];
-    }
-
-    const contributions = watchedEntries
-      .map((watched) => {
-        let similarity = 0;
-        for (let i = 0; i < factors; i += 1) {
-          similarity += watched.modelAnime.embedding[i] * modelAnime.embedding[i];
-        }
-        const weightedScore = similarity * watched.weight;
-        return {
-          watched: watched.anime,
-          edgeWeight: similarity,
-          weightFactor: watched.weight,
-          weightedScore,
-        } satisfies RecommendationContribution;
-      })
-      .sort((left, right) => right.weightedScore - left.weightedScore);
-
-    const anime =
-      index.animeByAnimeId.get(animeId) ??
-      ({
-        nodeId: `anime:${animeId}`,
-        animeId,
-        label: modelAnime.title,
-      } satisfies AnimeInfo);
-
-    const strongest = contributions.length > 0 ? contributions[0].weightedScore : 0;
-    const supportCount = contributions.filter((item) => item.weightedScore > 0).length;
-
-    scored.push({
-      anime,
-      score,
-      strongest,
-      supportCount,
-      contributions,
-    });
-  }
-
-  return scored.sort((left, right) => {
-    if (right.score !== left.score) {
-      return right.score - left.score;
-    }
-    if (right.supportCount !== left.supportCount) {
-      return right.supportCount - left.supportCount;
-    }
-    return right.strongest - left.strongest;
-  });
-}
-
-function combineHybridRecommendations(
-  graphRecommendations: RecommendationResult[],
-  modelRecommendations: RecommendationResult[],
-  modelWeight: number,
-): RecommendationResult[] {
-  const clampedModelWeight = clampModelBlendWeight(modelWeight);
-  const graphWeight = 1 - clampedModelWeight;
-
-  const graphScale = createScoreScale(graphRecommendations);
-  const modelScale = createScoreScale(modelRecommendations);
-
-  const byAnime = new Map<
-    number,
-    {
-      anime: AnimeInfo;
-      score: number;
-      strongest: number;
-      supportCount: number;
-      contributions: RecommendationContribution[];
-    }
-  >();
-
-  for (const item of graphRecommendations) {
-    const normalized = graphScale(item.score);
-    const weighted = normalized * graphWeight;
-    if (weighted <= 0) {
-      continue;
-    }
-    byAnime.set(item.anime.animeId, {
-      anime: item.anime,
-      score: weighted,
-      strongest: item.strongest * graphWeight,
-      supportCount: item.supportCount,
-      contributions: scaleContributions(item.contributions, graphWeight),
-    });
-  }
-
-  for (const item of modelRecommendations) {
-    const normalized = modelScale(item.score);
-    const weighted = normalized * clampedModelWeight;
-    if (weighted <= 0) {
-      continue;
-    }
-    const current = byAnime.get(item.anime.animeId);
-    if (!current) {
-      byAnime.set(item.anime.animeId, {
-        anime: item.anime,
-        score: weighted,
-        strongest: item.strongest * clampedModelWeight,
-        supportCount: item.supportCount,
-        contributions: scaleContributions(item.contributions, clampedModelWeight),
-      });
-      continue;
-    }
-
-    current.score += weighted;
-    current.strongest = Math.max(
-      current.strongest,
-      item.strongest * clampedModelWeight,
-    );
-    current.supportCount += item.supportCount;
-    current.contributions = [...current.contributions]
-      .concat(scaleContributions(item.contributions, clampedModelWeight))
-      .sort((left, right) => right.weightedScore - left.weightedScore)
-      .slice(0, 10);
-  }
-
-  return [...byAnime.values()]
-    .map((value) => ({
-      anime: value.anime,
-      score: value.score,
-      strongest: value.strongest,
-      supportCount: value.supportCount,
-      contributions: value.contributions,
-    }))
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
-      }
-      if (right.supportCount !== left.supportCount) {
-        return right.supportCount - left.supportCount;
-      }
-      return right.strongest - left.strongest;
-    });
-}
-
-function createScoreScale(
-  recommendations: RecommendationResult[],
-): (score: number) => number {
-  if (recommendations.length === 0) {
-    return () => 0;
-  }
-  let min = recommendations[0].score;
-  let max = recommendations[0].score;
-  for (const item of recommendations) {
-    if (item.score < min) {
-      min = item.score;
-    }
-    if (item.score > max) {
-      max = item.score;
-    }
-  }
-
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
-    return (score: number) => (Number.isFinite(score) ? 1 : 0);
-  }
-
-  const denominator = max - min;
-  return (score: number) => {
-    if (!Number.isFinite(score)) {
-      return 0;
-    }
-    const normalized = (score - min) / denominator;
-    return Math.min(Math.max(normalized, 0), 1);
-  };
-}
-
-function scaleContributions(
-  contributions: RecommendationContribution[],
-  factor: number,
-): RecommendationContribution[] {
-  return contributions.map((item) => ({
-    watched: item.watched,
-    edgeWeight: item.edgeWeight,
-    weightFactor: item.weightFactor,
-    weightedScore: item.weightedScore * factor,
-  }));
 }
 
 function resolveAnimeInput(
@@ -3888,8 +3005,8 @@ function selectNodeAndFocus(nodeId: string): void {
   selectedNodeId = nodeId;
   if (activeView !== "network") {
     setActiveView("network", false);
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
+    runtime.frame(() => {
+      runtime.frame(() => {
         focusNodeInRenderer(nodeId);
       });
     });
@@ -3897,7 +3014,7 @@ function selectNodeAndFocus(nodeId: string): void {
   }
   if (!currentGraph || !currentGraph.hasNode(nodeId)) {
     rerenderGraph();
-    window.requestAnimationFrame(() => {
+    runtime.frame(() => {
       focusNodeInRenderer(nodeId);
     });
     return;
@@ -3922,137 +3039,6 @@ function focusNodeInRenderer(nodeId: string): void {
   });
 }
 
-function buildRecommendationIndex(graphDataValue: GraphData): RecommendationIndex {
-  const animeList: AnimeInfo[] = [];
-  const animeByNodeId = new Map<string, AnimeInfo>();
-  const animeByAnimeId = new Map<number, AnimeInfo>();
-  const titleLookup = new Map<string, AnimeInfo[]>();
-  const adjacency = new Map<string, { otherNodeId: string; weight: number }[]>();
-
-  for (const node of graphDataValue.nodes) {
-    if (node.nodeType !== "anime") {
-      continue;
-    }
-
-    const animeId = parseAnimeId(node.id);
-    const anime: AnimeInfo = {
-      nodeId: node.id,
-      animeId,
-      label: node.label,
-    };
-
-    animeList.push(anime);
-    animeByNodeId.set(node.id, anime);
-    animeByAnimeId.set(animeId, anime);
-
-    const normalizedTitle = normalizeTitle(node.label);
-    const existing = titleLookup.get(normalizedTitle);
-    if (!existing) {
-      titleLookup.set(normalizedTitle, [anime]);
-    } else {
-      existing.push(anime);
-    }
-  }
-
-  for (const edge of graphDataValue.edges) {
-    if (edge.edgeType !== "anime-anime") {
-      continue;
-    }
-    if (!animeByNodeId.has(edge.source) || !animeByNodeId.has(edge.target)) {
-      continue;
-    }
-
-    pushAdjacency(adjacency, edge.source, edge.target, edge.weight);
-    pushAdjacency(adjacency, edge.target, edge.source, edge.weight);
-  }
-
-  return {
-    animeList,
-    animeByNodeId,
-    animeByAnimeId,
-    titleLookup,
-    adjacency,
-  };
-}
-
-function buildRecommendationIndexFromCompact(
-  graphDataValue: CompactGraphData,
-): RecommendationIndex {
-  const animeList: AnimeInfo[] = [];
-  const animeByNodeId = new Map<string, AnimeInfo>();
-  const animeByAnimeId = new Map<number, AnimeInfo>();
-  const titleLookup = new Map<string, AnimeInfo[]>();
-  const adjacency = new Map<string, { otherNodeId: string; weight: number }[]>();
-
-  for (const animeEntry of graphDataValue.anime) {
-    const animeId = animeEntry[0];
-    const label = String(animeEntry[1]);
-    const nodeId = `anime:${animeId}`;
-    const anime: AnimeInfo = {
-      nodeId,
-      animeId,
-      label,
-    };
-
-    animeList.push(anime);
-    animeByNodeId.set(nodeId, anime);
-    animeByAnimeId.set(animeId, anime);
-
-    const normalizedTitle = normalizeTitle(label);
-    const existing = titleLookup.get(normalizedTitle);
-    if (!existing) {
-      titleLookup.set(normalizedTitle, [anime]);
-    } else {
-      existing.push(anime);
-    }
-  }
-
-  for (const [leftAnimeIndex, rightAnimeIndex, weight] of graphDataValue.aa) {
-    const leftAnime = graphDataValue.anime[leftAnimeIndex];
-    const rightAnime = graphDataValue.anime[rightAnimeIndex];
-    if (!leftAnime || !rightAnime || !Number.isFinite(weight)) {
-      continue;
-    }
-
-    const leftNodeId = `anime:${leftAnime[0]}`;
-    const rightNodeId = `anime:${rightAnime[0]}`;
-    pushAdjacency(adjacency, leftNodeId, rightNodeId, weight);
-    pushAdjacency(adjacency, rightNodeId, leftNodeId, weight);
-  }
-
-  return {
-    animeList,
-    animeByNodeId,
-    animeByAnimeId,
-    titleLookup,
-    adjacency,
-  };
-}
-
-function pushAdjacency(
-  adjacency: Map<string, { otherNodeId: string; weight: number }[]>,
-  source: string,
-  target: string,
-  weight: number,
-): void {
-  const list = adjacency.get(source);
-  if (!list) {
-    adjacency.set(source, [{ otherNodeId: target, weight }]);
-    return;
-  }
-  list.push({ otherNodeId: target, weight });
-}
-
-function parseAnimeId(nodeId: string): number {
-  const value = nodeId.startsWith("anime:") ? nodeId.slice("anime:".length) : nodeId;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? -1 : parsed;
-}
-
-function normalizeTitle(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function rerenderGraph(): void {
   const minWeight = Number.parseFloat(minWeightInput.value);
   minWeightValue.textContent = minWeight.toFixed(2);
@@ -4063,7 +3049,7 @@ function rerenderGraph(): void {
 
   setGraphLoadingState(true, "Render status: rendering network...");
 
-  window.setTimeout(() => {
+  runtime.schedule(() => {
     if (runId !== graphRenderRunId) {
       return;
     }
@@ -4073,7 +3059,7 @@ function rerenderGraph(): void {
       return;
     }
 
-    const startedAt = performance.now();
+    const startedAt = runtime.monotonicNow();
     try {
       const renderResult = renderGraph(
         renderSource,
@@ -4084,7 +3070,7 @@ function rerenderGraph(): void {
       if (runId !== graphRenderRunId) {
         return;
       }
-      const elapsedMs = Math.max(1, Math.round(performance.now() - startedAt));
+      const elapsedMs = Math.max(1, Math.round(runtime.monotonicNow() - startedAt));
       const visibleNodes = currentGraph ? currentGraph.order : 0;
       const visibleEdges = renderResult.renderedEdgeCount;
       const limitSuffix = renderResult.edgeLimitHit
@@ -4144,8 +3130,8 @@ function renderGraph(
       nodeType: node.nodeType,
       size: isUser ? 5.2 : 2.8,
       color: isUser ? "#ff8a00" : "#0f8b8d",
-      x: Math.random(),
-      y: Math.random(),
+      x: runtime.random(),
+      y: runtime.random(),
     });
   }
 
@@ -4295,36 +3281,7 @@ function selectRenderableEdges(
 }
 
 function statLine(label: string, value: string): string {
-  return `<div class="stat-row"><span>${label}</span><strong>${value}</strong></div>`;
-}
-
-async function fetchGraph(): Promise<LoadedGraphData> {
-  if (demoMode) {
-    const graph = await fetchPlainJson<CompactGraphData>(
-      "./demo-data/graph.compact.json", "synthetic demo graph",
-    );
-    if (!isCompactGraphData(graph)) {
-      throw new Error("Invalid synthetic demo graph. Run npm run data:fixture.");
-    }
-    return graph;
-  }
-  const compactData = await fetchJsonWithGzipFallback<CompactGraphData>({
-    path: "./data/graph.compact.json",
-    required: false,
-    label: "graph.compact.json",
-  });
-  if (compactData && isCompactGraphData(compactData)) {
-    return compactData;
-  }
-  const legacyData = await fetchJsonWithGzipFallback<GraphData>({
-    path: "./data/graph.json",
-    required: true,
-    label: "graph.json",
-  });
-  if (!legacyData) {
-    throw new Error("Unable to load required graph data.");
-  }
-  return legacyData;
+  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
 async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
@@ -4332,141 +3289,33 @@ async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
     return explorerGraphData;
   }
   if (!explorerGraphDataPromise) {
-    explorerGraphDataPromise = fetchExplorerGraph();
+    explorerGraphDataPromise = artifactLoader.fetchExplorerGraph(graphData);
   }
   explorerGraphData = await explorerGraphDataPromise;
   return explorerGraphData;
 }
 
-async function fetchExplorerGraph(): Promise<LoadedGraphData> {
-  if (demoMode) return graphData;
-  const explorerCompactData = await fetchJsonWithGzipFallback<CompactGraphData>({
-    path: "./data/graph-explorer.compact.json",
-    required: false,
-    label: "graph-explorer.compact.json",
-  });
-  if (explorerCompactData && isCompactGraphData(explorerCompactData)) {
-    return explorerCompactData;
-  }
-  return graphData;
-}
-
 async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
   if (!modelRecommendationIndexPromise) {
-    modelRecommendationIndexPromise = fetchModelRecommendationIndex();
+    modelRecommendationIndexPromise = artifactLoader.fetchModelRecommendationIndex().catch((error: unknown) => {
+      modelLoadError = error instanceof Error ? error.message : "unknown validation error";
+      console.error("Model artifact load failed.", error);
+      return null;
+    });
   }
   return modelRecommendationIndexPromise;
 }
 
-async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
-  const rawCompact = demoMode
-    ? await fetchPlainJson<CompactModelRecommendationData>(
-        "./demo-data/model-mf-web.compact.json", "synthetic demo model",
-      )
-    : await fetchJsonWithGzipFallback<CompactModelRecommendationData>({
-        path: "./data/model-mf-web.compact.json",
-        required: false,
-        label: "model-mf-web.compact.json",
-      });
-  const rawLegacy = rawCompact || demoMode
-    ? null
-    : await fetchJsonWithGzipFallback<ModelRecommendationData>({
-        path: "./data/model-mf-web.json",
-        required: false,
-        label: "model-mf-web.json",
-      });
-
-  const animeByAnimeId = new Map<number, ModelRecommendationAnime>();
-  let generatedAt = "";
-  let factors = 0;
-  let globalMean = 0;
-
-  if (rawCompact && isCompactModelRecommendationData(rawCompact)) {
-    generatedAt = rawCompact.generatedAt;
-    factors = rawCompact.factors;
-    globalMean = Number.isFinite(rawCompact.globalMean) ? rawCompact.globalMean : 0;
-
-    const count = Math.min(
-      rawCompact.animeIds.length,
-      rawCompact.titles.length,
-      rawCompact.biases.length,
-      rawCompact.embeddings.length,
-    );
-    for (let index = 0; index < count; index += 1) {
-      const animeId = rawCompact.animeIds[index];
-      const title = rawCompact.titles[index];
-      const bias = rawCompact.biases[index];
-      const embedding = rawCompact.embeddings[index];
-      if (!Number.isFinite(animeId) || !Number.isFinite(bias)) {
-        continue;
-      }
-      if (!Array.isArray(embedding) || embedding.length === 0) {
-        continue;
-      }
-      if (!embedding.every((value) => Number.isFinite(value))) {
-        continue;
-      }
-      animeByAnimeId.set(animeId, {
-        animeId,
-        title: String(title),
-        bias,
-        embedding,
-      });
-    }
-  } else if (rawLegacy) {
-    generatedAt = rawLegacy.generatedAt;
-    factors = rawLegacy.factors;
-    globalMean = Number.isFinite(rawLegacy.globalMean) ? rawLegacy.globalMean : 0;
-    for (const anime of rawLegacy.anime) {
-      if (!Number.isFinite(anime.animeId) || !Number.isFinite(anime.bias)) {
-        continue;
-      }
-      if (!Array.isArray(anime.embedding) || anime.embedding.length === 0) {
-        continue;
-      }
-      if (!anime.embedding.every((value) => Number.isFinite(value))) {
-        continue;
-      }
-      animeByAnimeId.set(anime.animeId, anime);
-    }
+async function loadRequiredArtifact<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown artifact error";
+    recMessageEl.textContent = `Data unavailable: ${detail}`;
+    recMessageEl.setAttribute("role", "alert");
+    recEngineStatusEl.textContent = "Recommendations unavailable until the data artifact is repaired.";
+    throw error;
   }
-
-  if (animeByAnimeId.size === 0) {
-    return null;
-  }
-
-  return {
-    generatedAt,
-    factors,
-    globalMean,
-    animeByAnimeId,
-  };
-}
-
-async function fetchDemoCatalog(): Promise<DemoCatalogItem[]> {
-  const raw = await fetchPlainJson<{ format?: string; anime?: DemoCatalogItem[] }>(
-    "./demo-data/catalog.json", "synthetic demo catalog",
-  );
-  if (raw.format !== "demo-catalog-v1" || !Array.isArray(raw.anime) ||
-      raw.anime.some((item) => !Number.isSafeInteger(item.animeId) ||
-        typeof item.title !== "string" || !Array.isArray(item.genres))) {
-    throw new Error("Invalid synthetic demo catalog. Run npm run data:fixture.");
-  }
-  return raw.anime;
-}
-
-async function fetchPlainJson<T>(url: string, label: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
-  return await response.json() as T;
-}
-
-function isCompactGraphData(value: unknown): value is CompactGraphData {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const maybe = value as Record<string, unknown>;
-  return maybe.format === "graph-compact-v1";
 }
 
 function getGraphNodes(graphDataValue: LoadedGraphData): GraphNode[] {
@@ -4496,71 +3345,6 @@ function getGraphNodes(graphDataValue: LoadedGraphData): GraphNode[] {
   }
 
   return nodes;
-}
-
-function isCompactModelRecommendationData(
-  value: unknown,
-): value is CompactModelRecommendationData {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const maybe = value as Record<string, unknown>;
-  return maybe.format === "model-mf-compact-v1";
-}
-
-async function fetchJsonWithGzipFallback<T>({
-  path,
-  required,
-  label,
-}: {
-  path: string;
-  required: boolean;
-  label: string;
-}): Promise<T | null> {
-  const gzPath = `${path}.gz`;
-  let gzStatus: number | null = null;
-
-  try {
-    const gzResponse = await fetch(gzPath);
-    gzStatus = gzResponse.status;
-    if (gzResponse.ok) {
-      try {
-        return await parseGzipJsonResponse<T>(gzResponse, label);
-      } catch (error) {
-        console.warn(`Failed to parse ${label}.gz; falling back to JSON`, error);
-      }
-    } else if (gzResponse.status !== 404) {
-      console.warn(`Unable to load ${label}.gz (${gzResponse.status})`);
-    }
-  } catch (error) {
-    console.warn(`Fetch failed for ${label}.gz`, error);
-  }
-
-  const response = await fetch(path);
-  if (!response.ok) {
-    if (!required && response.status === 404 && (gzStatus === 404 || gzStatus === null)) {
-      return null;
-    }
-    throw new Error(`Unable to load ${label} (${response.status})`);
-  }
-  return (await response.json()) as T;
-}
-
-async function parseGzipJsonResponse<T>(
-  response: Response,
-  label: string,
-): Promise<T> {
-  if (typeof DecompressionStream === "undefined") {
-    throw new Error(
-      `This browser does not support DecompressionStream for ${label}.gz`,
-    );
-  }
-  if (!response.body) {
-    throw new Error(`Missing response body for ${label}.gz`);
-  }
-  const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
-  const text = await new Response(stream).text();
-  return JSON.parse(text) as T;
 }
 
 function mustElement<T extends Element>(selector: string): T {
@@ -4937,74 +3721,16 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function formatWeight(value: number): string {
-  const normalized = Math.abs(value) < 0.0005 ? 0 : value;
-  const rounded = normalized.toFixed(3);
-  return normalized > 0 ? `+${rounded}` : rounded;
-}
-
 function formatRecommendationWhyHtml(result: RecommendationResult): string {
-  if (result.contributions.length === 0) {
+  const explanation = explainRecommendation(result);
+  if (explanation.kind === "none") {
     return `<div class="rec-why-line">Why: no direct contributing anime found.</div>`;
   }
 
-  const positives = result.contributions
-    .filter((item) => item.weightedScore > 0)
-    .sort((left, right) => right.weightedScore - left.weightedScore)
-    .slice(0, 2);
-  const negatives = result.contributions
-    .filter((item) => item.weightedScore < 0)
-    .sort((left, right) => left.weightedScore - right.weightedScore)
-    .slice(0, 2);
-
-  const positiveLine =
-    positives.length > 0
-      ? `Why+: ${positives
-          .map(
-            (item) =>
-              `${escapeHtml(item.watched.label)} (${formatWeight(item.weightedScore)})`,
-          )
-          .join(" | ")}`
-      : "Why+: no strong positive contributors.";
-
-  const negativeLine =
-    negatives.length > 0
-      ? `Why-: ${negatives
-          .map(
-            (item) =>
-              `${escapeHtml(item.watched.label)} (${formatWeight(item.weightedScore)})`,
-          )
-          .join(" | ")}`
-      : "Why-: no notable negative contributors.";
-
   return [
-    `<div class="rec-why-line rec-why-pos">${positiveLine}</div>`,
-    `<div class="rec-why-line rec-why-neg">${negativeLine}</div>`,
+    `<div class="rec-why-line rec-why-pos">${escapeHtml(explanation.positiveLine)}</div>`,
+    `<div class="rec-why-line rec-why-neg">${escapeHtml(explanation.negativeLine)}</div>`,
   ].join("");
-}
-
-function parseRecommendationMode(value: string): RecommendationMode {
-  if (value === "model") {
-    return "model";
-  }
-  if (value === "hybrid") {
-    return "hybrid";
-  }
-  return "graph";
-}
-
-function clampWatchWeight(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 1;
-  }
-  return Math.min(Math.max(value, MIN_WATCH_WEIGHT), MAX_WATCH_WEIGHT);
-}
-
-function clampModelBlendWeight(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0.5;
-  }
-  return Math.min(Math.max(value, MIN_MODEL_BLEND_WEIGHT), MAX_MODEL_BLEND_WEIGHT);
 }
 
 function renderModelBlendValue(): void {
@@ -5015,50 +3741,6 @@ function renderModelBlendValue(): void {
 
 function setBlendControlVisibility(): void {
   recBlendControl.hidden = recommendationMode !== "hybrid";
-}
-
-function loadThemeModePreference(): ThemeMode {
-  try {
-    const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (raw === "dark" || raw === "light") {
-      return raw;
-    }
-  } catch (error) {
-    console.warn("Unable to read saved theme preference.", error);
-  }
-
-  if (window.matchMedia("(prefers-color-scheme: light)").matches) {
-    return "light";
-  }
-  return "dark";
-}
-
-function loadContrastModePreference(): ContrastMode {
-  try {
-    const raw = window.localStorage.getItem(CONTRAST_STORAGE_KEY);
-    if (raw === "normal" || raw === "high") {
-      return raw;
-    }
-  } catch (error) {
-    console.warn("Unable to read saved contrast preference.", error);
-  }
-  return "normal";
-}
-
-function persistThemeModePreference(theme: ThemeMode): void {
-  try {
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-  } catch (error) {
-    console.warn("Unable to persist theme preference.", error);
-  }
-}
-
-function persistContrastModePreference(contrast: ContrastMode): void {
-  try {
-    window.localStorage.setItem(CONTRAST_STORAGE_KEY, contrast);
-  } catch (error) {
-    console.warn("Unable to persist contrast preference.", error);
-  }
 }
 
 function applyTheme(theme: ThemeMode): void {
@@ -5094,39 +3776,6 @@ function renderContextualTips(): void {
   tipsToggleLabelEl.textContent = showTips ? "Hide Tips" : "Show Tips";
 }
 
-function loadHelpTipsDismissed(): boolean {
-  try {
-    const raw = window.localStorage.getItem(HELP_TIPS_STORAGE_KEY);
-    if (!raw) {
-      return false;
-    }
-    const parsed = JSON.parse(raw) as StoredHelpTipsState | null;
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      Number(parsed.version) === HELP_TIPS_VERSION &&
-      typeof parsed.dismissed === "boolean"
-    ) {
-      return parsed.dismissed;
-    }
-  } catch (error) {
-    console.warn("Unable to load help tips preference.", error);
-  }
-  return false;
-}
-
-function persistHelpTipsDismissed(dismissed: boolean): void {
-  try {
-    const payload: StoredHelpTipsState = {
-      version: HELP_TIPS_VERSION,
-      dismissed,
-    };
-    window.localStorage.setItem(HELP_TIPS_STORAGE_KEY, JSON.stringify(payload));
-  } catch (error) {
-    console.warn("Unable to persist help tips preference.", error);
-  }
-}
-
 function prefersReducedMotion(): boolean {
   return reduceMotionMediaQuery.matches;
 }
@@ -5150,188 +3799,35 @@ function onMediaQueryChange(
   }
 }
 
-function loadRecommendationState(index: RecommendationIndex): {
-  mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
-  modelBlendWeight: number;
-  includeCandidates: string[];
-  excludeCandidates: string[];
-} {
-  const emptyState = {
-    mode: "graph" as RecommendationMode,
-    selected: [],
-    modelBlendWeight: 0.5,
-    includeCandidates: [],
-    excludeCandidates: [],
-  };
-
-  try {
-    const raw = window.localStorage.getItem(RECOMMENDATION_STATE_STORAGE_KEY);
-    if (!raw) {
-      return emptyState;
-    }
-    const parsed = JSON.parse(raw) as StoredRecommendationState;
-    return sanitizeRecommendationState(parsed, index);
-  } catch (error) {
-    console.warn("Unable to load saved recommendation state.", error);
-    return emptyState;
-  }
+function renderStorageWarnings(): void {
+  storageStatusEl.textContent = persistence.getStorageWarnings().join(" ");
 }
 
-function persistRecommendationState(): void {
-  try {
-    const payload = buildCurrentRecommendationState();
-    window.localStorage.setItem(
-      RECOMMENDATION_STATE_STORAGE_KEY,
-      JSON.stringify(payload),
-    );
-  } catch (error) {
-    console.warn("Unable to persist recommendation state.", error);
-  }
+function persistRecommendationState(): boolean {
+  cancelActiveUsernameImport();
+  cancelBulkFileLoad();
+  recommendationController?.abort();
+  ++recommendationRunId;
+  const saved = persistence.persistRecommendationState(buildCurrentRecommendationState());
+  renderStorageWarnings();
+  return saved;
 }
 
 function buildCurrentRecommendationState(): StoredRecommendationState {
   const selected = selectedAnimeNodeIds
-    .filter((nodeId) => recommendationIndex.animeByNodeId.has(nodeId))
     .map((nodeId) => ({
       nodeId,
       weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
     }));
 
   return {
-    version: 3,
+    version: RECOMMENDATION_STORAGE_VERSION,
     mode: recommendationMode,
     selected,
     modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
-    includeCandidates: includeCandidateNodeIds.filter((nodeId) =>
-      recommendationIndex.animeByNodeId.has(nodeId),
-    ),
-    excludeCandidates: excludeCandidateNodeIds.filter((nodeId) =>
-      recommendationIndex.animeByNodeId.has(nodeId),
-    ),
+    includeCandidates: [...includeCandidateNodeIds],
+    excludeCandidates: [...excludeCandidateNodeIds],
   };
-}
-
-function sanitizeRecommendationState(
-  parsed: StoredRecommendationState | null | undefined,
-  index: RecommendationIndex,
-): {
-  mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
-  modelBlendWeight: number;
-  includeCandidates: string[];
-  excludeCandidates: string[];
-} {
-  if (!parsed || (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3)) {
-    return {
-      mode: "graph",
-      selected: [],
-      modelBlendWeight: 0.5,
-      includeCandidates: [],
-      excludeCandidates: [],
-    };
-  }
-
-  const mode = parseRecommendationMode(parsed.mode);
-  const modelBlendWeight = clampModelBlendWeight(
-    Number(parsed.modelBlendWeight ?? 0.5),
-  );
-  const selected = Array.isArray(parsed.selected)
-    ? parsed.selected
-        .filter(
-          (entry) =>
-            entry &&
-            typeof entry.nodeId === "string" &&
-            index.animeByNodeId.has(entry.nodeId),
-        )
-        .map((entry) => ({
-          nodeId: entry.nodeId,
-          weight: clampWatchWeight(Number(entry.weight)),
-        }))
-    : [];
-
-  const includeCandidates = Array.isArray(parsed.includeCandidates)
-    ? parsed.includeCandidates.filter(
-        (entry) => typeof entry === "string" && index.animeByNodeId.has(entry),
-      )
-    : [];
-  const excludeCandidates = Array.isArray(parsed.excludeCandidates)
-    ? parsed.excludeCandidates.filter(
-        (entry) => typeof entry === "string" && index.animeByNodeId.has(entry),
-      )
-    : [];
-
-  return {
-    mode,
-    selected,
-    modelBlendWeight,
-    includeCandidates,
-    excludeCandidates,
-  };
-}
-
-function loadRecommendationProfiles(): Map<string, RecommendationProfileRecord> {
-  const profiles = new Map<string, RecommendationProfileRecord>();
-  try {
-    const raw = window.localStorage.getItem(RECOMMENDATION_PROFILES_STORAGE_KEY);
-    if (!raw) {
-      return profiles;
-    }
-    const parsed = JSON.parse(raw) as RecommendationProfileRecord[];
-    if (!Array.isArray(parsed)) {
-      return profiles;
-    }
-
-    for (const record of parsed) {
-      if (!record || typeof record.name !== "string" || !record.state) {
-        continue;
-      }
-      const name = record.name.trim();
-      if (!name) {
-        continue;
-      }
-      const sanitized = sanitizeRecommendationState(
-        record.state,
-        recommendationIndex,
-      );
-      profiles.set(name, {
-        name,
-        updatedAt:
-          typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
-        state: {
-          version: 3,
-          mode: sanitized.mode,
-          selected: sanitized.selected,
-          modelBlendWeight: sanitized.modelBlendWeight,
-          includeCandidates: sanitized.includeCandidates,
-          excludeCandidates: sanitized.excludeCandidates,
-        },
-      });
-    }
-  } catch (error) {
-    console.warn("Unable to load saved profiles.", error);
-  }
-  return profiles;
-}
-
-function persistRecommendationProfiles(
-  profiles: Map<string, RecommendationProfileRecord>,
-): void {
-  try {
-    const payload = [...profiles.values()]
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .map((profile) => ({
-        name: profile.name,
-        updatedAt: profile.updatedAt,
-        state: profile.state,
-      }));
-    window.localStorage.setItem(
-      RECOMMENDATION_PROFILES_STORAGE_KEY,
-      JSON.stringify(payload),
-    );
-  } catch (error) {
-    console.warn("Unable to persist saved profiles.", error);
-  }
 }
 
 function renderProfileOptions(profiles: Map<string, RecommendationProfileRecord>): void {
@@ -5360,13 +3856,21 @@ function saveCurrentProfile(): void {
   }
 
   const state = buildCurrentRecommendationState();
-  const now = new Date().toISOString();
+  const now = runtime.now().toISOString();
+  const previous = savedProfiles.get(profileName);
   savedProfiles.set(profileName, {
     name: profileName,
     updatedAt: now,
     state,
   });
-  persistRecommendationProfiles(savedProfiles);
+  if (!persistence.persistRecommendationProfiles(savedProfiles)) {
+    if (previous) savedProfiles.set(profileName, previous);
+    else savedProfiles.delete(profileName);
+    renderStorageWarnings();
+    recMessageEl.textContent = `Could not save profile "${profileName}".`;
+    return;
+  }
+  renderStorageWarnings();
   renderProfileOptions(savedProfiles);
   profileSelect.value = profileName;
   profileNameInput.value = "";
@@ -5385,14 +3889,20 @@ function loadSelectedProfile(): void {
     return;
   }
 
-  const sanitized = sanitizeRecommendationState(profile.state, recommendationIndex);
-  applyRecommendationState(sanitized);
-  persistRecommendationState();
+  applyRecommendationState({
+    ...profile.state,
+    modelBlendWeight: profile.state.modelBlendWeight ?? 0.5,
+    includeCandidates: profile.state.includeCandidates ?? [],
+    excludeCandidates: profile.state.excludeCandidates ?? [],
+  });
+  const saved = persistRecommendationState();
   renderSelectedAnime();
   renderIncludeCandidates();
   renderExcludeCandidates();
   void updateRecommendations();
-  recMessageEl.textContent = `Loaded profile "${name}".`;
+  recMessageEl.textContent = saved
+    ? `Loaded profile "${name}".`
+    : `Loaded profile "${name}" for this session; browser storage rejected the change.`;
 }
 
 function deleteSelectedProfile(): void {
@@ -5406,8 +3916,15 @@ function deleteSelectedProfile(): void {
     return;
   }
 
+  const previous = savedProfiles.get(name);
   savedProfiles.delete(name);
-  persistRecommendationProfiles(savedProfiles);
+  if (!persistence.persistRecommendationProfiles(savedProfiles)) {
+    if (previous) savedProfiles.set(name, previous);
+    renderStorageWarnings();
+    recMessageEl.textContent = `Could not delete profile "${name}".`;
+    return;
+  }
+  renderStorageWarnings();
   renderProfileOptions(savedProfiles);
   recMessageEl.textContent = `Deleted profile "${name}".`;
 }
@@ -5425,21 +3942,14 @@ function applyRecommendationState(state: {
   excludeCandidateNodeIds.splice(0, excludeCandidateNodeIds.length);
 
   for (const entry of state.selected) {
-    if (!recommendationIndex.animeByNodeId.has(entry.nodeId)) {
-      continue;
-    }
     selectedAnimeNodeIds.push(entry.nodeId);
     selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
   }
   for (const nodeId of state.includeCandidates) {
-    if (recommendationIndex.animeByNodeId.has(nodeId)) {
-      includeCandidateNodeIds.push(nodeId);
-    }
+    includeCandidateNodeIds.push(nodeId);
   }
   for (const nodeId of state.excludeCandidates) {
-    if (recommendationIndex.animeByNodeId.has(nodeId)) {
-      excludeCandidateNodeIds.push(nodeId);
-    }
+    excludeCandidateNodeIds.push(nodeId);
   }
 
   recommendationMode = state.mode;
@@ -5451,7 +3961,7 @@ function applyRecommendationState(state: {
 }
 
 function valueRow(label: string, value: string): string {
-  return `<div class="inspect-value-row"><span>${label}</span><strong>${value}</strong></div>`;
+  return `<div class="inspect-value-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
 function countNodesByType(graph: Graph, type: NodeType): number {

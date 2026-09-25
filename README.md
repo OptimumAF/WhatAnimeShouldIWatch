@@ -43,14 +43,25 @@ npm run data:fixture:check
 npm run typecheck
 npm test
 npm run test:python
+python -m unittest discover -s scripts/tests
 npm run build:web
 npx playwright install chromium
 npm run test:e2e
 ```
 
-The Python smoke tests require NumPy (`python -m pip install "numpy>=2,<3"`). The Playwright install is needed once per machine. The browser smoke test starts the synthetic demo and blocks external requests. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
+The Python smoke and workflow tests require NumPy and PyYAML (`python -m pip install "numpy>=2,<3" "PyYAML>=6,<7"`). The Playwright install is needed once per machine. Browser tests use the synthetic demo or a normal-mode app with mocked providers; no real usernames are queried. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
+
+The web app validates graph, demo catalog, and model JSON before scoring or rendering. It accepts the existing compact v1 and unversioned legacy graph/model formats, including three- or four-value compact anime-pair tuples. Malformed or unsupported artifacts report the artifact and field to repair; a missing optional model remains an unavailable state. `npm test` runs the pipeline tests and synthetic web artifact-contract tests.
+
+## Local watched-list import
+
+In **Import & Profiles**, the recommended import path accepts a local `.txt` file up to 128 KiB or pasted text. Use one graph anime ID or title per line, optionally followed by a comma and score (for example, the synthetic demo accepts `101, 9`). The browser loads a selected file into the text area for review; **Import Watched Entries** applies it. This simple format does not yet preserve provider status, progress, or unmatched entries; full export-format support is tracked in M2.8.
+
+Username import is optional. The entered username goes directly to the selected AniList or MAL provider to fetch a public rated list. If direct MAL access fails, the app reports the failure and keeps the current watched list; it does not try a proxy. The M2.1 permissions review records unresolved provider-use holds; broader import fidelity remains open in M2.8.
 
 ## 1) Collect MAL Data into Anonymized SQLite
+
+**Permission hold:** This is an existing pipeline path, not an authorized routine setup step. Review [provider data permissions](docs/decisions/0001-provider-data-permissions.md) and obtain the recorded source/use clearance before running it or the network-expansion, Jikan feature-harvesting, training, or release-publication commands below. Use the synthetic fixture commands above for development.
 
 This uses public MAL lists from:
 `https://myanimelist.net/animelist/{username}/load.json`
@@ -178,6 +189,8 @@ npm run ml:gnn:eval -- --epochs 12 --layers 3
 Scheduled model retraining workflow (weekly + manual trigger):
 
 - `.github/workflows/ml-retrain.yml`
+
+The provider-derived retrain, data-release, and Pages jobs are held by the [use-specific workflow approval gates](docs/decisions/0002-provider-workflow-gates.md). The current approval manifest is empty. These commands and workflows are reference paths, not routine development steps; use `npm run dev:demo` for fixture work.
 
 Optional `sync:web` flags:
 - `SYNC_WEB_INCLUDE_DATASET=1` to also copy anonymized ratings for web (`*.compact.json` preferred).
