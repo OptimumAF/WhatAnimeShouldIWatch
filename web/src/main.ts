@@ -1,11 +1,40 @@
 import Graph from "graphology";
+import {
+  isCompactGraphData,
+  parseCompactGraph,
+  parseCompactModel,
+  parseDemoCatalog,
+  parseLegacyGraph,
+  parseLegacyModel,
+} from "./artifacts";
+import type {
+  AnimeMetadata,
+  CompactGraphData,
+  DemoCatalogItem,
+  EdgeType,
+  GraphData,
+  GraphEdge,
+  GraphNode,
+  LoadedGraphData,
+  ModelRecommendationAnime,
+  NodeType,
+} from "./artifacts";
+import type {
+  AnimeInfo,
+  ConnectedItem,
+  ImportedWatchedEntry,
+  ModelRecommendationIndex,
+  RecommendationContribution,
+  RecommendationIndex,
+  RecommendationResult,
+  SeasonalAnimeItem,
+  UsernameImportResult,
+} from "./domain";
 import "./style.css";
 
 const demoMode = import.meta.env.VITE_DEMO_MODE === "true";
 const storagePrefix = demoMode ? "wasiw.demo" : "wasiw";
 
-type NodeType = "user" | "anime";
-type EdgeType = "user-anime" | "anime-anime";
 type AppView = "recommendations" | "network";
 type RecommendationMode = "graph" | "model" | "hybrid";
 type UsernameImportProvider = "anilist" | "mal";
@@ -20,163 +49,11 @@ type CommandMatchReason =
   | "fuzzy"
   | "recent";
 
-interface GraphNode {
-  id: string;
-  label: string;
-  nodeType: NodeType;
-}
-
-interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-  edgeType: EdgeType;
-  weight: number;
-}
-
-interface GraphData {
-  generatedAt: string;
-  userCount: number;
-  animeCount: number;
-  nodeCount: number;
-  edgeCount: number;
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
-type CompactAnimeEntry = [animeId: number, title: string];
-type CompactUserAnimeEdge = [userIndex: number, animeIndex: number, weight: number];
-type CompactAnimeAnimeEdge = [
-  leftAnimeIndex: number,
-  rightAnimeIndex: number,
-  weight: number,
-  support?: number,
-];
-
-interface CompactGraphData {
-  format: "graph-compact-v1";
-  generatedAt: string;
-  userIds: string[];
-  anime: CompactAnimeEntry[];
-  ua: CompactUserAnimeEdge[];
-  aa: CompactAnimeAnimeEdge[];
-  userCount: number;
-  animeCount: number;
-  nodeCount: number;
-  edgeCount: number;
-}
-
-type LoadedGraphData = GraphData | CompactGraphData;
-
-interface ConnectedItem {
-  nodeId: string;
-  label: string;
-  nodeType: NodeType;
-  edgeType: EdgeType;
-  weight: number;
-}
-
-interface AnimeInfo {
-  nodeId: string;
-  animeId: number;
-  label: string;
-}
-
-interface RecommendationResult {
-  anime: AnimeInfo;
-  score: number;
-  strongest: number;
-  supportCount: number;
-  contributions: RecommendationContribution[];
-}
-
-interface RecommendationContribution {
-  watched: AnimeInfo;
-  edgeWeight: number;
-  weightFactor: number;
-  weightedScore: number;
-}
-
-interface RecommendationIndex {
-  animeList: AnimeInfo[];
-  animeByNodeId: Map<string, AnimeInfo>;
-  animeByAnimeId: Map<number, AnimeInfo>;
-  titleLookup: Map<string, AnimeInfo[]>;
-  adjacency: Map<string, { otherNodeId: string; weight: number }[]>;
-}
-
-interface AnimeMetadata {
-  animeId: number;
-  year: number | null;
-  score: number | null;
-  genres: string[];
-  studios: string[];
-  synopsis: string;
-  imageUrl: string;
-  season: string | null;
-}
-
-interface DemoCatalogItem extends AnimeMetadata {
-  title: string;
-}
-
 interface RecommendationFilters {
   genre: string;
   minYear: number | null;
   maxYear: number | null;
   minScore: number | null;
-}
-
-interface SeasonalAnimeItem {
-  animeId: number;
-  title: string;
-  score: number | null;
-  year: number | null;
-  season: string | null;
-  imageUrl: string;
-}
-
-interface ImportedWatchedEntry {
-  anime: AnimeInfo;
-  weight: number;
-}
-
-interface UsernameImportResult {
-  entries: ImportedWatchedEntry[];
-  ratedCount: number;
-  unmappedCount: number;
-}
-
-interface ModelRecommendationAnime {
-  animeId: number;
-  title: string;
-  bias: number;
-  embedding: number[];
-}
-
-interface ModelRecommendationData {
-  generatedAt: string;
-  globalMean: number;
-  factors: number;
-  anime: ModelRecommendationAnime[];
-}
-
-interface CompactModelRecommendationData {
-  format: "model-mf-compact-v1";
-  generatedAt: string;
-  globalMean: number;
-  factors: number;
-  animeIds: number[];
-  titles: string[];
-  biases: number[];
-  embeddings: number[][];
-}
-
-interface ModelRecommendationIndex {
-  generatedAt: string;
-  factors: number;
-  globalMean: number;
-  animeByAnimeId: Map<number, ModelRecommendationAnime>;
 }
 
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
@@ -694,6 +571,7 @@ let modelBlendWeight = 0.5;
 let recommendationRunId = 0;
 let graphRenderRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
+let modelLoadError: string | null = null;
 const recommendationFilters: RecommendationFilters = {
   genre: "",
   minYear: null,
@@ -703,7 +581,7 @@ const recommendationFilters: RecommendationFilters = {
 const animeMetadataCache = new Map<number, AnimeMetadata>();
 const animeMetadataUnavailable = new Set<number>();
 const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
-const demoCatalog = demoMode ? await fetchDemoCatalog() : null;
+const demoCatalog = demoMode ? await loadRequiredArtifact(fetchDemoCatalog()) : null;
 if (demoCatalog) {
   for (const item of demoCatalog) animeMetadataCache.set(item.animeId, item);
   usernameImportProvider.disabled = true;
@@ -731,7 +609,7 @@ let networkControlsHiddenOnMobile = true;
 applyTheme(activeTheme);
 applyContrast(activeContrast);
 
-const graphData = await fetchGraph();
+const graphData = await loadRequiredArtifact(fetchGraph());
 const graphNodes = getGraphNodes(graphData);
 const recommendationIndex = isCompactGraphData(graphData)
   ? buildRecommendationIndexFromCompact(graphData)
@@ -2769,6 +2647,12 @@ async function updateRecommendations(): Promise<void> {
       return;
     }
     if (!modelIndex) {
+      if (modelLoadError) {
+        recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
+        recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
+        recResultsEl.innerHTML = "";
+        return;
+      }
       recEngineStatusEl.textContent =
         "ML model data not found (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
       recSummaryEl.textContent =
@@ -2790,6 +2674,12 @@ async function updateRecommendations(): Promise<void> {
       return;
     }
     if (!modelIndex) {
+      if (modelLoadError) {
+        recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
+        recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
+        recResultsEl.innerHTML = "";
+        return;
+      }
       recEngineStatusEl.textContent =
         "ML model data not found for hybrid mode (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
       recSummaryEl.textContent =
@@ -4267,23 +4157,20 @@ function statLine(label: string, value: string): string {
 
 async function fetchGraph(): Promise<LoadedGraphData> {
   if (demoMode) {
-    const graph = await fetchPlainJson<CompactGraphData>(
+    const graph = await fetchPlainJson(
       "./demo-data/graph.compact.json", "synthetic demo graph",
     );
-    if (!isCompactGraphData(graph)) {
-      throw new Error("Invalid synthetic demo graph. Run npm run data:fixture.");
-    }
-    return graph;
+    return parseCompactGraph(graph, "synthetic demo graph");
   }
-  const compactData = await fetchJsonWithGzipFallback<CompactGraphData>({
+  const compactData = await fetchJsonWithGzipFallback({
     path: "./data/graph.compact.json",
     required: false,
     label: "graph.compact.json",
   });
-  if (compactData && isCompactGraphData(compactData)) {
-    return compactData;
+  if (compactData !== null) {
+    return parseCompactGraph(compactData.value, "graph.compact.json");
   }
-  const legacyData = await fetchJsonWithGzipFallback<GraphData>({
+  const legacyData = await fetchJsonWithGzipFallback({
     path: "./data/graph.json",
     required: true,
     label: "graph.json",
@@ -4291,7 +4178,7 @@ async function fetchGraph(): Promise<LoadedGraphData> {
   if (!legacyData) {
     throw new Error("Unable to load required graph data.");
   }
-  return legacyData;
+  return parseLegacyGraph(legacyData.value, "graph.json");
 }
 
 async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
@@ -4307,37 +4194,41 @@ async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
 
 async function fetchExplorerGraph(): Promise<LoadedGraphData> {
   if (demoMode) return graphData;
-  const explorerCompactData = await fetchJsonWithGzipFallback<CompactGraphData>({
+  const explorerCompactData = await fetchJsonWithGzipFallback({
     path: "./data/graph-explorer.compact.json",
     required: false,
     label: "graph-explorer.compact.json",
   });
-  if (explorerCompactData && isCompactGraphData(explorerCompactData)) {
-    return explorerCompactData;
+  if (explorerCompactData !== null) {
+    return parseCompactGraph(explorerCompactData.value, "graph-explorer.compact.json");
   }
   return graphData;
 }
 
 async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
   if (!modelRecommendationIndexPromise) {
-    modelRecommendationIndexPromise = fetchModelRecommendationIndex();
+    modelRecommendationIndexPromise = fetchModelRecommendationIndex().catch((error: unknown) => {
+      modelLoadError = error instanceof Error ? error.message : "unknown validation error";
+      console.error("Model artifact load failed.", error);
+      return null;
+    });
   }
   return modelRecommendationIndexPromise;
 }
 
 async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
   const rawCompact = demoMode
-    ? await fetchPlainJson<CompactModelRecommendationData>(
+    ? { value: await fetchPlainJson(
         "./demo-data/model-mf-web.compact.json", "synthetic demo model",
-      )
-    : await fetchJsonWithGzipFallback<CompactModelRecommendationData>({
+      ) }
+    : await fetchJsonWithGzipFallback({
         path: "./data/model-mf-web.compact.json",
         required: false,
         label: "model-mf-web.compact.json",
       });
-  const rawLegacy = rawCompact || demoMode
+  const rawLegacy = rawCompact !== null || demoMode
     ? null
-    : await fetchJsonWithGzipFallback<ModelRecommendationData>({
+    : await fetchJsonWithGzipFallback({
         path: "./data/model-mf-web.json",
         required: false,
         label: "model-mf-web.json",
@@ -4348,52 +4239,28 @@ async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex
   let factors = 0;
   let globalMean = 0;
 
-  if (rawCompact && isCompactModelRecommendationData(rawCompact)) {
-    generatedAt = rawCompact.generatedAt;
-    factors = rawCompact.factors;
-    globalMean = Number.isFinite(rawCompact.globalMean) ? rawCompact.globalMean : 0;
-
-    const count = Math.min(
-      rawCompact.animeIds.length,
-      rawCompact.titles.length,
-      rawCompact.biases.length,
-      rawCompact.embeddings.length,
+  if (rawCompact !== null) {
+    const model = parseCompactModel(
+      rawCompact.value, demoMode ? "synthetic demo model" : "model-mf-web.compact.json",
     );
-    for (let index = 0; index < count; index += 1) {
-      const animeId = rawCompact.animeIds[index];
-      const title = rawCompact.titles[index];
-      const bias = rawCompact.biases[index];
-      const embedding = rawCompact.embeddings[index];
-      if (!Number.isFinite(animeId) || !Number.isFinite(bias)) {
-        continue;
-      }
-      if (!Array.isArray(embedding) || embedding.length === 0) {
-        continue;
-      }
-      if (!embedding.every((value) => Number.isFinite(value))) {
-        continue;
-      }
+    generatedAt = model.generatedAt;
+    factors = model.factors;
+    globalMean = model.globalMean;
+    for (let index = 0; index < model.animeIds.length; index += 1) {
+      const animeId = model.animeIds[index];
       animeByAnimeId.set(animeId, {
         animeId,
-        title: String(title),
-        bias,
-        embedding,
+        title: model.titles[index],
+        bias: model.biases[index],
+        embedding: model.embeddings[index],
       });
     }
-  } else if (rawLegacy) {
-    generatedAt = rawLegacy.generatedAt;
-    factors = rawLegacy.factors;
-    globalMean = Number.isFinite(rawLegacy.globalMean) ? rawLegacy.globalMean : 0;
-    for (const anime of rawLegacy.anime) {
-      if (!Number.isFinite(anime.animeId) || !Number.isFinite(anime.bias)) {
-        continue;
-      }
-      if (!Array.isArray(anime.embedding) || anime.embedding.length === 0) {
-        continue;
-      }
-      if (!anime.embedding.every((value) => Number.isFinite(value))) {
-        continue;
-      }
+  } else if (rawLegacy !== null) {
+    const model = parseLegacyModel(rawLegacy.value, "model-mf-web.json");
+    generatedAt = model.generatedAt;
+    factors = model.factors;
+    globalMean = model.globalMean;
+    for (const anime of model.anime) {
       animeByAnimeId.set(anime.animeId, anime);
     }
   }
@@ -4411,29 +4278,32 @@ async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex
 }
 
 async function fetchDemoCatalog(): Promise<DemoCatalogItem[]> {
-  const raw = await fetchPlainJson<{ format?: string; anime?: DemoCatalogItem[] }>(
+  const raw = await fetchPlainJson(
     "./demo-data/catalog.json", "synthetic demo catalog",
   );
-  if (raw.format !== "demo-catalog-v1" || !Array.isArray(raw.anime) ||
-      raw.anime.some((item) => !Number.isSafeInteger(item.animeId) ||
-        typeof item.title !== "string" || !Array.isArray(item.genres))) {
-    throw new Error("Invalid synthetic demo catalog. Run npm run data:fixture.");
-  }
-  return raw.anime;
+  return parseDemoCatalog(raw, "synthetic demo catalog");
 }
 
-async function fetchPlainJson<T>(url: string, label: string): Promise<T> {
+async function loadRequiredArtifact<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown artifact error";
+    recMessageEl.textContent = `Data unavailable: ${detail}`;
+    recMessageEl.setAttribute("role", "alert");
+    recEngineStatusEl.textContent = "Recommendations unavailable until the data artifact is repaired.";
+    throw error;
+  }
+}
+
+async function fetchPlainJson(url: string, label: string): Promise<unknown> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
-  return await response.json() as T;
-}
-
-function isCompactGraphData(value: unknown): value is CompactGraphData {
-  if (!value || typeof value !== "object") {
-    return false;
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
   }
-  const maybe = value as Record<string, unknown>;
-  return maybe.format === "graph-compact-v1";
 }
 
 function getGraphNodes(graphDataValue: LoadedGraphData): GraphNode[] {
@@ -4465,17 +4335,7 @@ function getGraphNodes(graphDataValue: LoadedGraphData): GraphNode[] {
   return nodes;
 }
 
-function isCompactModelRecommendationData(
-  value: unknown,
-): value is CompactModelRecommendationData {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const maybe = value as Record<string, unknown>;
-  return maybe.format === "model-mf-compact-v1";
-}
-
-async function fetchJsonWithGzipFallback<T>({
+async function fetchJsonWithGzipFallback({
   path,
   required,
   label,
@@ -4483,7 +4343,7 @@ async function fetchJsonWithGzipFallback<T>({
   path: string;
   required: boolean;
   label: string;
-}): Promise<T | null> {
+}): Promise<{ value: unknown } | null> {
   const gzPath = `${path}.gz`;
   let gzStatus: number | null = null;
 
@@ -4492,9 +4352,9 @@ async function fetchJsonWithGzipFallback<T>({
     gzStatus = gzResponse.status;
     if (gzResponse.ok) {
       try {
-        return await parseGzipJsonResponse<T>(gzResponse, label);
-      } catch (error) {
-        console.warn(`Failed to parse ${label}.gz; falling back to JSON`, error);
+        return { value: await parseGzipJsonResponse(gzResponse, label) };
+      } catch {
+        console.warn(`Failed to parse ${label}.gz; falling back to JSON`);
       }
     } else if (gzResponse.status !== 404) {
       console.warn(`Unable to load ${label}.gz (${gzResponse.status})`);
@@ -4510,13 +4370,17 @@ async function fetchJsonWithGzipFallback<T>({
     }
     throw new Error(`Unable to load ${label} (${response.status})`);
   }
-  return (await response.json()) as T;
+  try {
+    return { value: await response.json() };
+  } catch {
+    throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
+  }
 }
 
-async function parseGzipJsonResponse<T>(
+async function parseGzipJsonResponse(
   response: Response,
   label: string,
-): Promise<T> {
+): Promise<unknown> {
   if (typeof DecompressionStream === "undefined") {
     throw new Error(
       `This browser does not support DecompressionStream for ${label}.gz`,
@@ -4527,7 +4391,7 @@ async function parseGzipJsonResponse<T>(
   }
   const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
   const text = await new Response(stream).text();
-  return JSON.parse(text) as T;
+  return JSON.parse(text) as unknown;
 }
 
 function mustElement<T extends Element>(selector: string): T {

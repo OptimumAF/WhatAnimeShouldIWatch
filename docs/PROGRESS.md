@@ -128,3 +128,21 @@
 **Plan revisions and reasons:** Checked M1.6 after the regression, typecheck, build, and browser suite passed. Removed obsolete cleanup rather than choosing an app-specific scope without any registration code or historical scope evidence.
 
 **Single next task:** M1.1 — define and validate graph, catalog, and model artifact contracts against synthetic fixtures before extracting recommendation logic.
+
+## Session 2026-09-24 — M1.1
+
+**Branch / starting commit:** `codex/artifact-contracts` from clean `9ea52f7` on draft PR #5. Read the active plan, latest handoff, web loaders, graph/model exporters, fixture generator, and current tests before editing.
+
+**Completed:** M1.1. Moved browser graph, metadata, model, and recommendation domain interfaces out of `main.ts` into `web/src/artifacts.ts` and `web/src/domain.ts`. JSON now enters graph, catalog, and model logic only after runtime validation. The validators reject unsupported formats or versions, non-finite values, duplicate IDs and compact relationships, malformed tuples, out-of-range/missing graph references, stale counts, and mismatched model arrays or embedding width. Errors identify the artifact and field without echoing content. Required graph/catalog failures appear in the app; an invalid optional model is reported as unavailable. Valid unversioned legacy graph/model files and three-value compact anime-pair tuples remain supported.
+
+**Verification commands and actual results:** Baseline `npm run data:fixture:check`, `npm test` (4 pipeline tests), and `npm run typecheck` passed before editing. After the change, `npm run data:fixture` generated 7 invented users, 8 anime, and 11 pairs; `npm run data:fixture:check`, `npm run typecheck`, `npm test` (4 pipeline plus 6 web contract tests), `npm run test:python` (2), `python -m unittest discover -s scripts/tests` (5), `npm run build:web`, and `npm run test:e2e` (11) all passed. `npm ci --dry-run --ignore-scripts` accepted the updated lockfile. A one-off invented graph with 6,500 anime and 2,000,000 unique pairs validated in 563 ms in Node with 265 MiB total heap use; this is a local scale check, not a browser performance claim. Browser tests exercised invalid graph/catalog/model error paths, the normal legacy graph/model fallback, and refusal to use legacy data when a present compact graph declares an unsupported version.
+
+**Files changed:** `web/src/artifacts.ts`, `web/src/domain.ts`, `web/src/main.ts`, `web/test/artifacts.test.ts`, `web/tests/artifact-validation.spec.ts`, `web/package.json`, `package.json`, `package-lock.json`, `README.md`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
+
+**Commit / PR and CI:** Implementation commit `e11b4b7` in draft [PR #6](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/6), stacked on PR #5. [Fixture and fast checks run 36093194065](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36093194065) passed from a fresh PR checkout, including the new web unit tests, all 11 browser tests, fixture checks, TypeScript/Python checks, and build; GitGuardian passed.
+
+**Checks not run / blockers:** No production graph, catalog, or model was regenerated, fetched for testing, or republished; no real username or history was used. The scale check does not establish mobile latency or memory behavior, which remains M7 work. Provider rights, existing public assets, profile migration, and M1's overall exit gate remain unresolved. Desktop parsing was not changed or tested in this web-contract slice.
+
+**Plan revisions and reasons:** Checked M1.1 after all stated rejection cases and valid legacy/compact browser paths passed. An existing compact file with invalid content now fails visibly instead of falling through to legacy; an absent compact file still falls back. This makes unsupported versions explicit without changing the stored format versions. M1.2 remains the pure-scoring extraction task.
+
+**Single next task:** M1.2 — extract graph, model, and hybrid scoring plus eligibility and explanations into pure typed functions, preserving characterized behavior before any intentional ranking change.
