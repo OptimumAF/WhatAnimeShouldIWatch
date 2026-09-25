@@ -12,9 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "graphology": "^0.26.0",
-    "graphology-layout-forceatlas2": "^0.10.1",
-    "sigma": "^3.0.2"
+    "graphology": "^0.26.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

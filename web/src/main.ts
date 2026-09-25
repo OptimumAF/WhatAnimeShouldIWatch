@@ -54,6 +54,7 @@ import type {
   ThemeMode,
 } from "./persistence";
 import { createBrowserRuntime, isAbortError } from "./runtime";
+import { safeExternalImageUrl } from "./safe-url";
 import "./style.css";
 
 const runtime = createBrowserRuntime();
@@ -2617,9 +2618,10 @@ async function updateRecommendations(): Promise<void> {
 
 function renderRecommendationCard(item: RecommendationResult): string {
   const metadata = animeMetadataCache.get(item.anime.animeId) ?? null;
+  const imageUrl = safeExternalImageUrl(metadata?.imageUrl ?? "");
   const coverHtml =
-    metadata && metadata.imageUrl
-      ? `<img class="rec-cover" src="${escapeHtml(metadata.imageUrl)}" alt="Cover for ${escapeHtml(item.anime.label)}" loading="lazy" />`
+    imageUrl
+      ? `<img class="rec-cover" src="${escapeHtml(imageUrl)}" alt="Cover for ${escapeHtml(item.anime.label)}" loading="lazy" referrerpolicy="no-referrer" />`
       : `<div class="rec-cover rec-cover-placeholder" aria-hidden="true">No image</div>`;
   const metadataMeta = formatRecommendationMetadataMeta(metadata);
   const synopsisText =
@@ -2876,8 +2878,9 @@ function renderSeasonalList(): void {
         subtitleParts.push(`${demoMode ? "Demo" : "MAL"} ${item.score.toFixed(2)}`);
       }
       const subtitle = subtitleParts.length > 0 ? subtitleParts.join(" | ") : "No stats";
-      const coverHtml = item.imageUrl
-        ? `<img class="seasonal-cover" src="${escapeHtml(item.imageUrl)}" alt="Cover for ${escapeHtml(item.title)}" loading="lazy" />`
+      const imageUrl = safeExternalImageUrl(item.imageUrl);
+      const coverHtml = imageUrl
+        ? `<img class="seasonal-cover" src="${escapeHtml(imageUrl)}" alt="Cover for ${escapeHtml(item.title)}" loading="lazy" referrerpolicy="no-referrer" />`
         : `<div class="seasonal-cover seasonal-cover-placeholder" aria-hidden="true">No image</div>`;
       return `
         <li class="seasonal-item">
@@ -3278,7 +3281,7 @@ function selectRenderableEdges(
 }
 
 function statLine(label: string, value: string): string {
-  return `<div class="stat-row"><span>${label}</span><strong>${value}</strong></div>`;
+  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
 async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
@@ -3958,7 +3961,7 @@ function applyRecommendationState(state: {
 }
 
 function valueRow(label: string, value: string): string {
-  return `<div class="inspect-value-row"><span>${label}</span><strong>${value}</strong></div>`;
+  return `<div class="inspect-value-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
 function countNodesByType(graph: Graph, type: NodeType): number {
