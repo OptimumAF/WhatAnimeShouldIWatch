@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { migrateDatabase, NORMALIZED_FIELD_VERSION } from "./migrations.js";
 import type { AnonymizedDataset, AnonymizedUserRatings } from "./types.js";
 
 export interface AnimeRatingRow {
@@ -13,62 +14,15 @@ export interface AnimeRatingRow {
 export function openDatabase(dbPath: string): Database.Database {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS anime (
-      id INTEGER PRIMARY KEY,
-      title TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS ratings (
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      anime_id INTEGER NOT NULL REFERENCES anime(id) ON DELETE CASCADE,
-      raw_score REAL NOT NULL,
-      normalized_score REAL NOT NULL DEFAULT 0,
-      PRIMARY KEY (user_id, anime_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS collection_status (
-      user_id TEXT PRIMARY KEY,
-      state TEXT NOT NULL CHECK (state IN (
-        'in_progress', 'paused', 'complete', 'below_threshold',
-        'failed', 'unavailable', 'invalid', 'canceled'
-      )),
-      next_offset INTEGER NOT NULL DEFAULT 0 CHECK (next_offset >= 0),
-      pages_fetched INTEGER NOT NULL DEFAULT 0 CHECK (pages_fetched >= 0),
-      staged_entries INTEGER NOT NULL DEFAULT 0 CHECK (staged_entries >= 0),
-      committed_scored_count INTEGER,
-      last_completed_at TEXT,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS collection_pages (
-      user_id TEXT NOT NULL REFERENCES collection_status(user_id) ON DELETE CASCADE,
-      offset INTEGER NOT NULL CHECK (offset >= 0),
-      entry_count INTEGER NOT NULL CHECK (entry_count > 0),
-      scored_count INTEGER NOT NULL CHECK (scored_count >= 0),
-      PRIMARY KEY (user_id, offset)
-    );
-
-    CREATE TABLE IF NOT EXISTS collection_staged_entries (
-      user_id TEXT NOT NULL REFERENCES collection_status(user_id) ON DELETE CASCADE,
-      anime_id INTEGER NOT NULL CHECK (anime_id > 0),
-      page_offset INTEGER NOT NULL,
-      anime_title TEXT NOT NULL,
-      score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 10),
-      PRIMARY KEY (user_id, anime_id),
-      FOREIGN KEY (user_id, page_offset) REFERENCES collection_pages(user_id, offset)
-    );
-  `);
-
-  return db;
+  try {
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    migrateDatabase(db);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export function upsertUser(db: Database.Database, userId: string): void {
@@ -105,7 +59,16 @@ export function upsertRating(
     `
       INSERT INTO ratings (user_id, anime_id, raw_score)
       VALUES (?, ?, ?)
-      ON CONFLICT(user_id, anime_id) DO UPDATE SET raw_score = excluded.raw_score;
+      ON CONFLICT(user_id, anime_id) DO UPDATE SET
+        raw_score = excluded.raw_score,
+        normalized_score = 0,
+        normalized_field_version = 0,
+        source_provider = NULL,
+        source_route = NULL,
+        source_anime_id = NULL,
+        fetched_at = NULL,
+        provider_updated_at = NULL,
+        fetch_run_id = NULL;
     `,
   ).run(userId, animeId, rawScore);
 }
@@ -122,7 +85,7 @@ export function recomputeNormalizedScores(db: Database.Database): void {
   const updateStmt = db.prepare(
     `
       UPDATE ratings
-      SET normalized_score = raw_score - ?
+      SET normalized_score = raw_score - ?, normalized_field_version = ?
       WHERE user_id = ?;
     `,
   );
@@ -131,7 +94,7 @@ export function recomputeNormalizedScores(db: Database.Database): void {
     for (const user of users) {
       const row = avgScoreStmt.get(user.id) as { avg_score: number | null };
       const avg = row.avg_score ?? 0;
-      updateStmt.run(avg, user.id);
+      updateStmt.run(avg, NORMALIZED_FIELD_VERSION, user.id);
     }
   });
 
@@ -139,6 +102,9 @@ export function recomputeNormalizedScores(db: Database.Database): void {
 }
 
 export function loadDatasetFromDb(db: Database.Database): AnonymizedDataset {
+  const sources = db.prepare(`SELECT DISTINCT source_provider AS provider,
+    source_route AS route FROM ratings`).all() as
+    { provider: string | null; route: string | null }[];
   const rows = db.prepare(
     `
       SELECT
@@ -170,7 +136,8 @@ export function loadDatasetFromDb(db: Database.Database): AnonymizedDataset {
 
   return {
     generatedAt: new Date().toISOString(),
-    source: "myanimelist.net/animelist/{username}/load.json",
+    source: sources.length === 1 && sources[0].provider && sources[0].route
+      ? sources[0].route : "mixed-or-unverified",
     users: [...byUser.values()],
   };
 }
