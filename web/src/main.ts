@@ -21,10 +21,13 @@ import {
   MAX_MODEL_BLEND_WEIGHT,
   MIN_MODEL_BLEND_WEIGHT,
   buildCatalogCoverageRecommendations,
+  buildCommunityQualityExploration,
+  buildGenreOverlapExploration,
   buildGraphRecommendationsForPreferences,
   buildModelRecommendationsForPreferences,
   buildRecommendationIndex,
   buildRecommendationIndexFromCompact,
+  buildSamplePopularityExploration,
   clampModelBlendWeight,
   createCandidateEligibilityPolicy,
   explainRecommendation,
@@ -33,7 +36,7 @@ import {
   normalizeTitle,
   rankEligibleCandidates,
 } from "./recommendations";
-import type { EligibilityRankingMode, RecommendationFilters } from "./recommendations";
+import type { CandidateEligibilityPolicy, EligibilityRankingMode, GenreOverlapRecommendation, RecommendationFilters } from "./recommendations";
 import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { createArtifactLoader } from "./artifact-loader";
 import {
@@ -74,6 +77,7 @@ const persistence = createPersistenceAdapter(runtime, demoMode ? "wasiw.demo" : 
 type AppView = "recommendations" | "network";
 type UsernameImportProvider = "anilist" | "mal";
 type AsyncUiState = "idle" | "loading" | "ready" | "empty" | "unavailable" | "failed" | "stale" | "demo";
+type DiscoveryView = "auto" | "popularity" | "quality" | "related";
 type CommandMatchReason =
   | "pinned"
   | "exact"
@@ -92,6 +96,7 @@ const MODEL_BLEND_WEIGHT_STEP = 0.05;
 const METADATA_PREFETCH_LIMIT = 100;
 const METADATA_PREFETCH_WITH_FILTER_LIMIT = 30;
 const METADATA_PREFETCH_CONCURRENCY = 3;
+const MAX_SPARSE_CONTENT_SEEDS = 3;
 const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
 const NETWORK_MOBILE_COMPACT_MAX_WIDTH = 980;
@@ -183,7 +188,7 @@ app.innerHTML = `
           </div>
           <ul class="contextual-tip-list">
             <li>Mark titles you liked or disliked; Seen alone does not become a favorite.</li>
-            <li>Use <strong>Hybrid</strong> mode when model data is available for best balance.</li>
+            <li>Use Discovery view to compare sampled popularity, known community scores, and shared genres.</li>
             <li>Use Include Only to limit scored candidates; exclusions and watched titles always win.</li>
             <li>Keyboard: <strong>Alt+/</strong> focuses the main anime input instantly.</li>
           </ul>
@@ -191,15 +196,15 @@ app.innerHTML = `
 
         <section class="panel intro-panel">
           <div class="intro-copy">
-            <h2>Start in 3 Steps</h2>
+            <h2>Explore or Personalize in 3 Steps</h2>
             <p class="muted">
-              Add what you watched, state how you felt, then review ranked picks with explainable reasons.
+              Browse the catalog now, or add what you watched to get preference-based suggestions.
             </p>
           </div>
           <ol class="intro-steps">
-            <li><strong>Step 1:</strong> Add a title and mark it Liked, Disliked, or Seen/Unrated.</li>
-            <li><strong>Step 2:</strong> Pick Graph, Model, or Hybrid ranking.</li>
-            <li><strong>Step 3:</strong> Use filters and inspect recommendation reasons.</li>
+            <li><strong>Step 1:</strong> Explore sampled popularity or community scores without adding a title.</li>
+            <li><strong>Step 2:</strong> Mark watched titles Liked, Disliked, or Seen/Unrated.</li>
+            <li><strong>Step 3:</strong> Compare ranking modes, filters, and reasons.</li>
           </ol>
           <div class="intro-actions">
             <button id="quickstart-seasonal" type="button" class="primary-btn">${demoMode ? "Browse Demo Ideas" : "Browse Seasonal Ideas"}</button>
@@ -210,7 +215,7 @@ app.innerHTML = `
         <div class="recommend-layout">
           <section class="card">
             <h2>Find Your Next Anime</h2>
-            <p class="muted">${demoMode ? "Choose invented anime, then compare graph edges with a tiny synthetic model." : "Add anime you have seen, then mark your preference to rank next picks."}</p>
+            <p class="muted">${demoMode ? "Explore invented anime, then compare graph edges with a tiny synthetic model." : "Explore the loaded catalog, or add anime you have seen to rank next picks."}</p>
 
             <label class="rec-engine-control" for="rec-method">
               <span>Recommendation engine</span>
@@ -224,6 +229,15 @@ app.innerHTML = `
               <span>Model blend weight</span>
               <input id="rec-blend" type="range" min="${MIN_MODEL_BLEND_WEIGHT}" max="${MAX_MODEL_BLEND_WEIGHT}" step="${MODEL_BLEND_WEIGHT_STEP}" value="0.50" />
               <output id="rec-blend-value">50% model / 50% graph</output>
+            </label>
+            <label class="rec-engine-control" for="discovery-view">
+              <span>Discovery view</span>
+              <select id="discovery-view">
+                <option value="auto">Automatic: explore until a ranking has a preference signal</option>
+                <option value="popularity">Popularity proxy: ratings in loaded recommendation graph</option>
+                <option value="quality">Community score among checked titles</option>
+                <option value="related">Shared genres with Liked titles</option>
+              </select>
             </label>
             <p id="rec-engine-status" class="rec-engine-status">Using graph recommendations.</p>
 
@@ -380,6 +394,10 @@ app.innerHTML = `
               </section>
             </details>
             <p id="rec-summary" class="muted" role="status" aria-live="polite">Add at least one anime to start.</p>
+            <div id="discovery-metadata-controls" class="discovery-metadata-controls" hidden>
+              <p id="discovery-metadata-note" class="muted" role="status"></p>
+              <button id="discovery-load-metadata" type="button" class="ghost-btn">Check 12 more catalog titles for quality and genres</button>
+            </div>
             <ol id="rec-results" class="rec-results"></ol>
 
             <section class="seasonal">
@@ -513,6 +531,7 @@ const animeInput = mustElement<HTMLInputElement>("#anime-input");
 const addPreferenceSelect = mustElement<HTMLSelectElement>("#add-preference");
 const animeOptions = mustElement<HTMLDataListElement>("#anime-options");
 const recMethodSelect = mustElement<HTMLSelectElement>("#rec-method");
+const discoveryViewSelect = mustElement<HTMLSelectElement>("#discovery-view");
 const recBlendControl = mustElement<HTMLLabelElement>("#rec-blend-control");
 const recBlendInput = mustElement<HTMLInputElement>("#rec-blend");
 const recBlendValueEl = mustElement<HTMLOutputElement>("#rec-blend-value");
@@ -554,6 +573,9 @@ const excludeInput = mustElement<HTMLInputElement>("#exclude-input");
 const excludeAnimeEl = mustElement<HTMLDivElement>("#exclude-anime");
 const clearExcludeBtn = mustElement<HTMLButtonElement>("#clear-exclude");
 const recSummaryEl = mustElement<HTMLParagraphElement>("#rec-summary");
+const discoveryMetadataControlsEl = mustElement<HTMLDivElement>("#discovery-metadata-controls");
+const discoveryMetadataNoteEl = mustElement<HTMLParagraphElement>("#discovery-metadata-note");
+const discoveryLoadMetadataBtn = mustElement<HTMLButtonElement>("#discovery-load-metadata");
 const recResultsEl = mustElement<HTMLOListElement>("#rec-results");
 const filterGenreSelect = mustElement<HTMLSelectElement>("#filter-genre");
 const filterYearMinInput = mustElement<HTMLInputElement>("#filter-year-min");
@@ -597,6 +619,8 @@ let explorerGraphData: LoadedGraphData | null = null;
 let explorerGraphDataPromise: Promise<LoadedGraphData> | null = null;
 let activeView: AppView = "recommendations";
 let recommendationMode: RecommendationMode = "graph";
+let discoveryView: DiscoveryView = "auto";
+let discoveryMetadataBatchRequested = false;
 let modelBlendWeight = 0.5;
 let recommendationRunId = 0;
 let recommendationController: AbortController | null = null;
@@ -1185,6 +1209,19 @@ recMethodSelect.addEventListener("change", () => {
   recommendationMode = persistence.parseRecommendationMode(recMethodSelect.value);
   setBlendControlVisibility();
   persistRecommendationState();
+  void updateRecommendations();
+});
+
+discoveryViewSelect.addEventListener("change", () => {
+  const value = discoveryViewSelect.value;
+  if (value !== "auto" && value !== "popularity" && value !== "quality" && value !== "related") return;
+  discoveryView = value;
+  discoveryMetadataBatchRequested = !demoMode && (value === "quality" || value === "related");
+  void updateRecommendations();
+});
+
+discoveryLoadMetadataBtn.addEventListener("click", () => {
+  discoveryMetadataBatchRequested = true;
   void updateRecommendations();
 });
 
@@ -2547,36 +2584,9 @@ async function updateRecommendations(): Promise<void> {
   const preferences = selectedAnimeNodeIds
     .map((nodeId) => selectedAnimePreferences.get(nodeId))
     .filter((item): item is AnimePreference => item !== undefined);
-
-  if (selectedAnimeNodeIds.length === 0) {
-    recSummaryEl.textContent = "Add a title and mark your preference to start.";
-    recEngineStatusEl.textContent =
-      recommendationMode === "graph"
-        ? "Using graph recommendations."
-        : recommendationMode === "model"
-          ? "Using ML model recommendations."
-          : `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model).`;
-    recResultsEl.innerHTML = "";
-    setMetadataStatus("empty", "Metadata: add anime to begin.");
-    renderSelectedAnime();
-    return;
-  }
-
-  if (!(recommendationMode === "graph"
+  const hasEngineSignal = recommendationMode === "graph"
     ? preferences.some((item) => item.sentiment === "liked")
-    : preferences.some((item) => item.sentiment !== "seen"))) {
-    recEngineStatusEl.textContent = recommendationMode === "graph"
-      ? "Graph waiting for a Liked title."
-      : "Model waiting for a Liked or Disliked title.";
-    recSummaryEl.textContent = recommendationMode === "graph"
-      ? "Seen and disliked titles are excluded. Mark at least one title Liked for graph suggestions."
-      : "Seen titles are excluded. Mark a title Liked or Disliked for model suggestions.";
-    recResultsEl.innerHTML = "";
-    setMetadataStatus("empty", "Metadata: no preference signal yet.");
-    renderSelectedAnime();
-    return;
-  }
-
+    : preferences.some((item) => item.sentiment !== "seen");
   const eligibilityPolicy = createCandidateEligibilityPolicy({
     index: recommendationIndex,
     preferences,
@@ -2585,10 +2595,20 @@ async function updateRecommendations(): Promise<void> {
     excludeNodeIds: excludeCandidateNodeIds,
     filters: recommendationFilters,
   });
+  const activeDiscoveryView = discoveryView === "auto"
+    ? hasEngineSignal ? null : "popularity"
+    : discoveryView;
+  if (activeDiscoveryView) {
+    await renderCatalogExploration(activeDiscoveryView, preferences, eligibilityPolicy, runId, controller.signal);
+    return;
+  }
+  discoveryMetadataControlsEl.hidden = true;
+
   const graphRecommendations = buildGraphRecommendationsForPreferences(preferences, recommendationIndex);
   let modelRecommendations: RecommendationResult[] = [];
   let activeRankingMode: EligibilityRankingMode = recommendationMode;
-  let usingCatalogFallback = false;
+  let usingFallback = false;
+  let fallbackDisplay: "coverage" | "related" = "coverage";
   let fallbackReason: string | null = null;
   let modelFactors: number | null = null;
   let modelCoverageNote = "";
@@ -2599,8 +2619,9 @@ async function updateRecommendations(): Promise<void> {
   } = { graph: graphRecommendations, model: modelRecommendations, fallback: [] };
   function showActiveEngine(): void {
     if (activeRankingMode === "fallback") {
-      recEngineStatusEl.textContent =
-        `Using catalog coverage baseline (positive graph connections, then anime ID). ${fallbackReason ?? ""}`;
+      recEngineStatusEl.textContent = fallbackDisplay === "related"
+        ? `Using shared-genre content baseline from Liked titles. ${fallbackReason ?? ""}`
+        : `Using catalog coverage baseline (positive graph connections, then anime ID). ${fallbackReason ?? ""}`;
     } else if (activeRankingMode === "graph") {
       recEngineStatusEl.textContent = fallbackReason
         ? `Using graph fallback. ${fallbackReason}`
@@ -2612,11 +2633,45 @@ async function updateRecommendations(): Promise<void> {
         `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph)${modelCoverageNote}.`;
     }
   }
-  function selectCatalogBaseline(): void {
+  function selectContentBaseline(): boolean {
+    const likedCount = preferences.filter((item) => item.sentiment === "liked").length;
+    if (likedCount === 0 || likedCount > MAX_SPARSE_CONTENT_SEEDS) return false;
+    const content = buildGenreOverlapExploration(preferences, recommendationIndex, animeMetadataCache);
+    if (eligibilityPolicy.evaluate(content, animeMetadataCache).recommendations.length === 0) return false;
     activeRankingMode = "fallback";
-    usingCatalogFallback = true;
+    usingFallback = true;
+    fallbackDisplay = "related";
+    sources.fallback = content;
+    showActiveEngine();
+    return true;
+  }
+  function selectCatalogBaseline(): void {
+    if (selectContentBaseline()) return;
+    activeRankingMode = "fallback";
+    usingFallback = true;
+    fallbackDisplay = "coverage";
     sources.fallback = buildCatalogCoverageRecommendations(recommendationIndex);
     showActiveEngine();
+  }
+  function currentFallbackDisplay(): "coverage" | "related" {
+    return fallbackDisplay;
+  }
+  let sparseContentMetadataPrimed = false;
+  async function primeSparseContentMetadata(): Promise<boolean> {
+    if (demoMode || sparseContentMetadataPrimed) return runId === recommendationRunId && !controller.signal.aborted;
+    const liked = preferences.filter((item) => item.sentiment === "liked");
+    if (liked.length === 0 || liked.length > MAX_SPARSE_CONTENT_SEEDS) return true;
+    sparseContentMetadataPrimed = true;
+    const seedIds = liked.map((item) => recommendationIndex.animeByNodeId.get(item.nodeId)?.animeId)
+      .filter((animeId): animeId is number => animeId !== undefined);
+    const candidateIds = eligibilityPolicy.evaluate(
+      buildSamplePopularityExploration(recommendationIndex), animeMetadataCache,
+    ).structurallyEligible.slice(0, METADATA_PREFETCH_LIMIT).map((item) => item.anime.animeId);
+    setMetadataStatus("loading", "Metadata: checking a bounded catalog sample for shared genres...");
+    await hydrateMetadataForAnimeIds(seedIds, seedIds.length, controller.signal);
+    if (runId !== recommendationRunId || controller.signal.aborted) return false;
+    await hydrateMetadataForAnimeIds(candidateIds, 12, controller.signal);
+    return runId === recommendationRunId && !controller.signal.aborted;
   }
   setMetadataStatus(demoMode ? "demo" : "loading", demoMode ? "Metadata: synthetic demo catalog." : "Metadata: loading recommendations...");
 
@@ -2666,10 +2721,19 @@ async function updateRecommendations(): Promise<void> {
     );
   }
   if (fallbackReason && initialEligibility.structurallyEligible.length === 0) {
+    if (!await primeSparseContentMetadata()) return;
     selectCatalogBaseline();
     initialEligibility = rankEligibleCandidates(
       activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
     );
+  }
+  if (recommendationMode === "graph" && initialEligibility.structurallyEligible.length === 0) {
+    if (!await primeSparseContentMetadata()) return;
+    if (selectContentBaseline()) {
+      initialEligibility = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      );
+    }
   }
   let structuralCandidates = initialEligibility.structurallyEligible;
   if (structuralCandidates.length === 0) {
@@ -2702,7 +2766,7 @@ async function updateRecommendations(): Promise<void> {
   let finalEligibility = rankEligibleCandidates(
     activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
   );
-  if (recommendationMode !== "graph" && !usingCatalogFallback &&
+  if (recommendationMode !== "graph" && !usingFallback &&
       finalEligibility.recommendations.length === 0) {
     if (activeRankingMode !== "graph") {
       activeRankingMode = "graph";
@@ -2719,6 +2783,7 @@ async function updateRecommendations(): Promise<void> {
       );
     }
     if (finalEligibility.recommendations.length === 0) {
+      if (!await primeSparseContentMetadata()) return;
       selectCatalogBaseline();
       structuralCandidates = rankEligibleCandidates(
         activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
@@ -2726,6 +2791,17 @@ async function updateRecommendations(): Promise<void> {
       if (!await hydrateRankedCandidates(structuralCandidates)) {
         return;
       }
+      finalEligibility = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      );
+    }
+  }
+  if (recommendationMode === "graph" && finalEligibility.recommendations.length === 0 && !usingFallback) {
+    if (!await primeSparseContentMetadata()) return;
+    if (selectContentBaseline()) {
+      structuralCandidates = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      ).structurallyEligible;
       finalEligibility = rankEligibleCandidates(
         activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
       );
@@ -2751,15 +2827,19 @@ async function updateRecommendations(): Promise<void> {
     return;
   }
 
-  const methodLabel = usingCatalogFallback ? "catalog coverage baseline"
+  const methodLabel = usingFallback ? currentFallbackDisplay() === "related"
+    ? "shared-genre content baseline" : "catalog coverage baseline"
     : activeRankingMode === "graph" ? fallbackReason ? "graph edge fallback" : "graph edge ranking"
       : activeRankingMode === "model" ? "ML model ranking" : "hybrid graph+ML ranking";
   const filterSummary = formatActiveFilterSummary();
-  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${filteredRecommendations.length} candidates (${methodLabel})${filterSummary}.`;
+  const fallbackScopeNote = usingFallback && currentFallbackDisplay() === "related" && !demoMode
+    ? " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles by sampled rating count."
+    : "";
+  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${filteredRecommendations.length} candidates (${methodLabel})${filterSummary}.${fallbackScopeNote}`;
 
   const visibleRecommendations = filteredRecommendations
     .slice(0, MAX_RECOMMENDATIONS)
-    .map((item) => renderRecommendationCard(item, usingCatalogFallback));
+    .map((item) => renderRecommendationCard(item, usingFallback ? currentFallbackDisplay() : "ranking"));
   recResultsEl.innerHTML = visibleRecommendations.join("");
 
   const visibleWithMetadata = filteredRecommendations
@@ -2791,7 +2871,99 @@ async function updateRecommendations(): Promise<void> {
   );
 }
 
-function renderRecommendationCard(item: RecommendationResult, catalogFallback = false): string {
+async function renderCatalogExploration(
+  view: Exclude<DiscoveryView, "auto">,
+  preferences: readonly AnimePreference[],
+  policy: CandidateEligibilityPolicy,
+  runId: number,
+  signal: AbortSignal,
+): Promise<void> {
+  const popularity = buildSamplePopularityExploration(recommendationIndex);
+  const eligibleCatalog = policy.evaluate(popularity, animeMetadataCache).structurallyEligible;
+  const metadataScope = eligibleCatalog.slice(0, METADATA_PREFETCH_LIMIT);
+  const metadataScopeIds = metadataScope.map((item) => item.anime.animeId);
+  const hasLikedSource = preferences.some((item) => item.sentiment === "liked");
+  if (view === "related" && !hasLikedSource) discoveryMetadataBatchRequested = false;
+  if (discoveryMetadataBatchRequested && !demoMode) {
+    discoveryLoadMetadataBtn.disabled = true;
+    recEngineStatusEl.textContent = "Checking catalog metadata for exploration...";
+    setMetadataStatus("loading", "Metadata: checking a bounded catalog batch...");
+    if (view === "related") {
+      const seedIds = preferences.filter((item) => item.sentiment === "liked")
+        .map((item) => recommendationIndex.animeByNodeId.get(item.nodeId)?.animeId)
+        .filter((animeId): animeId is number => animeId !== undefined);
+      await hydrateMetadataForAnimeIds(seedIds, seedIds.length, signal);
+      if (runId !== recommendationRunId || signal.aborted) return;
+    }
+    await hydrateMetadataForAnimeIds(metadataScopeIds, 12, signal);
+    if (runId !== recommendationRunId || signal.aborted) return;
+    discoveryMetadataBatchRequested = false;
+  }
+
+  updateGenreFilterOptions(eligibleCatalog);
+  const knownInScope = metadataScopeIds.filter((id) => animeMetadataCache.has(id)).length;
+  const scoredInScope = metadataScopeIds.filter((id) => animeMetadataCache.get(id)?.score !== null &&
+    animeMetadataCache.get(id)?.score !== undefined).length;
+  const genresInScope = metadataScopeIds.filter((id) => (animeMetadataCache.get(id)?.genres.length ?? 0) > 0).length;
+  const unavailableInScope = metadataScopeIds.filter((id) => animeMetadataUnavailable.has(id)).length;
+  const checkedScopeCount = knownInScope + unavailableInScope;
+  discoveryMetadataControlsEl.hidden = demoMode;
+  if (!demoMode) {
+    discoveryMetadataNoteEl.textContent =
+      `Metadata loaded for ${knownInScope}/${metadataScopeIds.length} eligible titles in the first ` +
+      `${METADATA_PREFETCH_LIMIT} by sampled ratings; ${scoredInScope} have a community score and ` +
+      `${genresInScope} have genres. ${unavailableInScope} had no metadata. ` +
+      "Checking more titles sends only their catalog IDs through the existing metadata provider.";
+    discoveryLoadMetadataBtn.disabled = metadataScopeIds.length === 0 ||
+      checkedScopeCount >= metadataScopeIds.length || (view === "related" && !hasLikedSource);
+  }
+
+  const explorationResults = view === "popularity" ? popularity
+    : view === "quality" ? buildCommunityQualityExploration(recommendationIndex, animeMetadataCache)
+      : buildGenreOverlapExploration(preferences, recommendationIndex, animeMetadataCache);
+  const finalEligibility = rankEligibleCandidates("fallback", { fallback: explorationResults },
+    policy, animeMetadataCache);
+  const results = finalEligibility.recommendations;
+  const heading = view === "popularity" ? "catalog popularity proxy"
+    : view === "quality" ? "community-score exploration"
+      : "shared-genre content baseline";
+  recEngineStatusEl.textContent = `Using ${heading}; selected recommendation engine remains ${recommendationMode}.`;
+  if (results.length === 0) {
+    recSummaryEl.textContent = view === "related" && !hasLikedSource
+      ? "Mark a title Liked to explore shared genres. Seen and Disliked titles are still excluded."
+      : view === "quality"
+        ? "No eligible catalog titles with a known community score match these filters. Check more metadata or explore sampled rating counts."
+        : view === "related"
+          ? "No checked catalog titles share genres with your Liked titles. Check more metadata or try another Liked title."
+          : "No eligible catalog titles match these filters and overrides.";
+    recResultsEl.innerHTML = "";
+  } else {
+    const scopeNote = view === "popularity"
+      ? "Counts cover only user-anime edges retained in the loaded recommendation graph; they are not global popularity."
+      : view === "quality"
+        ? `Community scores are known for ${buildCommunityQualityExploration(recommendationIndex, animeMetadataCache).length}/${recommendationIndex.animeList.length} catalog titles.`
+        : "Scores sum exact shared genres with Liked titles, weighted by importance and confidence.";
+    recSummaryEl.textContent =
+      `Showing top ${Math.min(MAX_RECOMMENDATIONS, results.length)} of ${results.length} eligible titles ` +
+      `(${heading})${formatActiveFilterSummary()}. ${scopeNote}`;
+    recResultsEl.innerHTML = results.slice(0, MAX_RECOMMENDATIONS)
+      .map((item) => renderRecommendationCard(item, view)).join("");
+  }
+  const metadataState: AsyncUiState = demoMode ? "demo"
+    : metadataScopeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
+      : knownInScope > 0 ? "ready" : "empty";
+  setMetadataStatus(metadataState,
+    `Metadata available for ${knownInScope}/${metadataScopeIds.length} eligible titles in the bounded exploration scope` +
+      (finalEligibility.missingMetadataCount > 0
+        ? ` | ${finalEligibility.missingMetadataCount} skipped by required filters until metadata is known`
+        : "") + (demoMode ? " | synthetic demo catalog" : ""),
+  );
+}
+
+function renderRecommendationCard(
+  item: RecommendationResult,
+  display: "ranking" | "coverage" | "popularity" | "quality" | "related" = "ranking",
+): string {
   const metadata = animeMetadataCache.get(item.anime.animeId) ?? null;
   const imageUrl = safeExternalImageUrl(metadata?.imageUrl ?? "");
   const coverHtml =
@@ -2807,13 +2979,26 @@ function renderRecommendationCard(item: RecommendationResult, catalogFallback = 
     metadata && metadata.synopsis
       ? "rec-synopsis"
       : "rec-synopsis rec-synopsis-muted";
-  const reason = catalogFallback
-    ? `Catalog coverage: ${item.supportCount} positive graph connections; personal preference evidence is unavailable.`
-    : formatRecommendationWhyHtml(item);
-  const score = catalogFallback ? `${item.supportCount} connections` : formatWeight(item.score);
-  const supportLine = catalogFallback
-    ? `Positive graph connections: ${item.supportCount}`
-    : `Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}`;
+  const related = display === "related" ? item as GenreOverlapRecommendation : null;
+  const reason = display === "ranking" ? formatRecommendationWhyHtml(item)
+    : escapeHtml(display === "coverage"
+      ? `Catalog coverage: ${item.supportCount} positive graph connections; personal preference evidence is unavailable.`
+      : display === "popularity"
+        ? `${item.supportCount} user-anime edges are retained for this title in the loaded recommendation graph.`
+        : display === "quality"
+          ? `Community score ${item.score.toFixed(2)}/10 is from available catalog metadata; ${item.supportCount} sampled rating edges were retained.`
+          : `Shares ${related!.sharedGenres.join(", ")} with Liked title(s) ${related!.matchingLikedTitles.join(", ")}. ` +
+            `Weighted genre-overlap sum: ${item.score.toFixed(2)}.`);
+  const score = display === "coverage" ? `${item.supportCount} connections`
+    : display === "popularity" ? `${item.supportCount} sampled ratings`
+      : display === "quality" ? `${item.score.toFixed(2)} / 10`
+        : display === "related" ? `${item.score.toFixed(2)} overlap` : formatWeight(item.score);
+  const supportLine = display === "coverage" ? `Positive graph connections: ${item.supportCount}`
+    : display === "popularity" || display === "quality"
+      ? `Rating edges in loaded recommendation graph: ${item.supportCount}`
+      : display === "related"
+        ? `Shared genres: ${related!.sharedGenres.length} across ${related!.supportCount} liked titles`
+        : `Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}`;
 
   return `
       <li class="rec-item">

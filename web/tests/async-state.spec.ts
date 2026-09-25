@@ -115,7 +115,8 @@ test("superseded metadata cannot enter the cache or replace current status", asy
   await expect.poll(() => metadataRequests).toBeGreaterThan(0);
   await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", "loading");
   await page.locator("#clear-watched").click();
-  await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", "empty");
+  await expect(page.locator("#rec-engine-status")).toContainText("catalog popularity proxy");
+  await expect(page.locator("#metadata-status")).toContainText("bounded exploration scope");
   releaseFirst?.();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
