@@ -4,11 +4,9 @@ import type { ImportedWatchedEntry, RecommendationIndex, SeasonalAnimeItem, User
 import { normalizeImportedScoreToWeight } from "./recommendations";
 import { throwIfAborted } from "./runtime";
 import type { RuntimePorts } from "./runtime";
+import { createProviderScheduler, type Provider, type ProviderScheduler } from "../../shared/provider-scheduler";
 
-const USERNAME_IMPORT_MAX_RETRIES = 3;
 const USERNAME_IMPORT_PAGE_SIZE = 300;
-const USERNAME_IMPORT_PAGE_DELAY_MS = 350;
-const METADATA_MAX_RETRIES = 2;
 
 export type MetadataReadResult =
   | { state: "ready"; metadata: AnimeMetadata }
@@ -19,7 +17,16 @@ export class ProviderUnavailableError extends Error {
   readonly name = "ProviderUnavailableError";
 }
 
-export function createProviderAdapter(runtime: RuntimePorts) {
+export function createProviderAdapter(
+  runtime: RuntimePorts,
+  scheduler: ProviderScheduler = createProviderScheduler({
+    fetch: (url, init) => runtime.fetch(url, init),
+    monotonicNow: () => runtime.monotonicNow(),
+    wallNow: () => runtime.now().getTime(),
+    sleep: (ms, signal) => runtime.sleep(ms, signal),
+    random: () => runtime.random(),
+  }),
+) {
   async function fetchAniListUsernameImport(
     username: string,
     index: RecommendationIndex,
@@ -54,7 +61,7 @@ export function createProviderAdapter(runtime: RuntimePorts) {
         } | null;
       };
       errors?: Array<{ message?: string }>;
-    }>("https://graphql.anilist.co", {
+    }>("anilist", "https://graphql.anilist.co", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -64,7 +71,7 @@ export function createProviderAdapter(runtime: RuntimePorts) {
         query,
         variables: { userName: username },
       }),
-    }, USERNAME_IMPORT_MAX_RETRIES, signal);
+    }, signal);
 
     if (payload.errors && payload.errors.length > 0) {
       const message = payload.errors[0]?.message ?? "AniList API returned an error.";
@@ -127,7 +134,6 @@ export function createProviderAdapter(runtime: RuntimePorts) {
       }
 
       offset += page.length;
-      await runtime.sleep(USERNAME_IMPORT_PAGE_DELAY_MS, signal);
     }
     throwIfAborted(signal);
 
@@ -173,13 +179,13 @@ export function createProviderAdapter(runtime: RuntimePorts) {
 
     try {
       const page = await fetchJsonWithRetries<unknown>(
+        "mal",
         malUrl.toString(),
         {
           headers: {
             Accept: "application/json",
           },
         },
-        USERNAME_IMPORT_MAX_RETRIES,
         signal,
       );
       if (!Array.isArray(page)) {
@@ -197,36 +203,22 @@ export function createProviderAdapter(runtime: RuntimePorts) {
   }
 
   async function fetchJsonWithRetries<T>(
+    provider: Provider,
     url: string,
     init?: RequestInit,
-    maxRetries = USERNAME_IMPORT_MAX_RETRIES,
     signal?: AbortSignal,
   ): Promise<T> {
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const response = await scheduler.request(provider, url, init, { signal });
+    throwIfAborted(signal);
+    if (response.ok) {
+      const payload = (await response.json()) as T;
       throwIfAborted(signal);
-      const response = await runtime.fetch(url, { ...init, signal });
-      throwIfAborted(signal);
-      if (response.ok) {
-        const payload = (await response.json()) as T;
-        throwIfAborted(signal);
-        return payload;
-      }
-
-      if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
-        if (response.status === 403 || response.status === 404) {
-          throw new ProviderUnavailableError(`Request unavailable (${response.status}) for ${url}`);
-        }
-        throw new Error(`Request failed (${response.status}) for ${url}`);
-      }
-
-      await runtime.sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(runtime.random() * 200), signal);
+      return payload;
     }
-
-    throw new Error("Request retries exhausted.");
-  }
-
-  function isRetryableStatus(status: number): boolean {
-    return status === 408 || status === 425 || status === 429 || status >= 500;
+    if (response.status === 403 || response.status === 404) {
+      throw new ProviderUnavailableError(`Request unavailable (${response.status}) for ${url}`);
+    }
+    throw new Error(`Request failed (${response.status}) for ${url}`);
   }
 
   async function fetchAnimeMetadataFromJikan(
@@ -235,41 +227,23 @@ export function createProviderAdapter(runtime: RuntimePorts) {
   ): Promise<MetadataReadResult> {
     const url = `https://api.jikan.moe/v4/anime/${animeId}/full`;
 
-    for (let attempt = 0; attempt <= METADATA_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await scheduler.request("jikan", url, {
+        headers: { Accept: "application/json" },
+      }, { signal });
       throwIfAborted(signal);
-      try {
-        const response = await runtime.fetch(url, {
-          headers: {
-            Accept: "application/json",
-          },
-          signal,
-        });
+      if (response.ok) {
+        const payload = (await response.json()) as { data?: Record<string, unknown> };
         throwIfAborted(signal);
-        if (response.ok) {
-          const payload = (await response.json()) as {
-            data?: Record<string, unknown>;
-          };
-          throwIfAborted(signal);
-          const metadata = parseAnimeMetadataPayload(animeId, payload.data);
-          return metadata ? { state: "ready", metadata } : { state: "failed" };
-        }
-        if (response.status === 403 || response.status === 404) {
-          return { state: "unavailable" };
-        }
-        if (!isRetryableStatus(response.status) || attempt >= METADATA_MAX_RETRIES) {
-          return { state: "failed" };
-        }
-      } catch {
-        throwIfAborted(signal);
-        if (attempt >= METADATA_MAX_RETRIES) {
-          return { state: "failed" };
-        }
+        const metadata = parseAnimeMetadataPayload(animeId, payload.data);
+        return metadata ? { state: "ready", metadata } : { state: "failed" };
       }
-
-      await runtime.sleep(Math.min(800 * 2 ** attempt, 5000) + Math.floor(runtime.random() * 220), signal);
+      return response.status === 403 || response.status === 404
+        ? { state: "unavailable" } : { state: "failed" };
+    } catch {
+      throwIfAborted(signal);
+      return { state: "failed" };
     }
-
-    return { state: "failed" };
   }
 
   function parseAnimeMetadataPayload(
@@ -341,9 +315,9 @@ export function createProviderAdapter(runtime: RuntimePorts) {
     const payload = await fetchJsonWithRetries<{
       data?: Array<Record<string, unknown>>;
     }>(
+      "jikan",
       `https://api.jikan.moe/v4/seasons/now?limit=${limit}`,
       { headers: { Accept: "application/json" } },
-      USERNAME_IMPORT_MAX_RETRIES,
       signal,
     );
     const incoming = Array.isArray(payload.data) ? payload.data : [];

@@ -72,6 +72,9 @@ if (Number.isNaN(maxPagesPerUser) || maxPagesPerUser < 0) {
   );
 }
 const db = openDatabase(dbPath);
+const controller = new AbortController();
+process.once("SIGINT", () => controller.abort());
+process.once("SIGTERM", () => controller.abort());
 
 const insertTx = db.transaction(
   (
@@ -88,9 +91,10 @@ const insertTx = db.transaction(
 
 try {
   for (const username of userNames) {
+    if (controller.signal.aborted) throw new Error("Collection canceled");
     const anonymizedId = anonymizeUsername(username, salt);
     process.stdout.write(`Fetching MAL list for "${username}"... `);
-    const ratings = await fetchMalRatings(username, delayMs, maxPagesPerUser);
+    const ratings = await fetchMalRatings(username, delayMs, maxPagesPerUser, controller.signal);
     process.stdout.write(`done (${ratings.length} scored anime)\n`);
 
     insertTx(anonymizedId, ratings);

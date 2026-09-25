@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
+import threading
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
+from provider_scheduler import JikanRequestScheduler, RequestBudgetExceeded, RequestCancelled
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,31 +62,16 @@ def load_model_anime(path: Path) -> List[Tuple[int, str]]:
     return list(zip(anime_ids, anime_titles))
 
 
-def fetch_json(url: str, max_retries: int) -> Dict[str, object] | None:
-    for attempt in range(max_retries + 1):
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                if response.status != 200:
-                    if response.status == 404:
-                        return None
-                    raise RuntimeError(f"HTTP {response.status}")
-                raw = response.read().decode("utf-8")
-                return json.loads(raw)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return None
-            if exc.code in (408, 425, 429) or exc.code >= 500:
-                if attempt < max_retries:
-                    time.sleep(min(1.0 * (2**attempt), 8.0))
-                    continue
-            raise
-        except (TimeoutError, urllib.error.URLError):
-            if attempt < max_retries:
-                time.sleep(min(1.0 * (2**attempt), 8.0))
-                continue
-            raise
-    return None
+_default_scheduler = JikanRequestScheduler()
+
+
+def fetch_json(
+    url: str,
+    max_retries: int,
+    scheduler: JikanRequestScheduler | None = None,
+    cancelled=lambda: False,
+) -> Dict[str, object] | None:
+    return (scheduler or _default_scheduler).get_json(url, max_retries, cancelled)
 
 
 def parse_name_list(value: object) -> List[str]:
@@ -168,6 +154,10 @@ def main() -> None:
     fetched = 0
     skipped = 0
     failures = 0
+    scheduler = JikanRequestScheduler(delay_ms=args.delay_ms)
+    stop = threading.Event()
+    signal.signal(signal.SIGINT, lambda _number, _frame: stop.set())
+    signal.signal(signal.SIGTERM, lambda _number, _frame: stop.set())
 
     for index, (anime_id, fallback_title) in enumerate(model_anime, start=1):
         key = str(anime_id)
@@ -177,7 +167,10 @@ def main() -> None:
 
         url = f"https://api.jikan.moe/v4/anime/{anime_id}/full"
         try:
-            payload = fetch_json(url, max_retries=max(0, args.max_retries))
+            payload = fetch_json(
+                url, max_retries=max(0, args.max_retries), scheduler=scheduler,
+                cancelled=stop.is_set,
+            )
             if payload is None:
                 failures += 1
                 continue
@@ -187,6 +180,8 @@ def main() -> None:
                 continue
             features[key] = parsed
             fetched += 1
+        except RequestBudgetExceeded:
+            raise
         except Exception as exc:  # noqa: BLE001
             failures += 1
             print(f"[warn] anime {anime_id} failed: {exc}")
@@ -203,9 +198,6 @@ def main() -> None:
                 f"Progress {index}/{total} | cached={len(features)} fetched={fetched} skipped={skipped} failures={failures}"
             )
 
-        if args.delay_ms > 0:
-            time.sleep(args.delay_ms / 1000.0)
-
     report = {
         "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": "jikan.moe/v4/anime/{id}/full",
@@ -218,4 +210,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RequestCancelled:
+        raise SystemExit(130) from None
