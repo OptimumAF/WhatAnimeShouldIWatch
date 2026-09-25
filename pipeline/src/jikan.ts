@@ -1,3 +1,6 @@
+import type { ProviderScheduler } from "../../shared/provider-scheduler.js";
+import { crawlerProviderScheduler } from "./provider-client.js";
+
 interface JikanAnimeUserUpdatesResponse {
   data: {
     user: {
@@ -15,6 +18,9 @@ interface JikanUsersResponse {
 export async function fetchJikanAnimeUserUpdates(
   animeId: number,
   page: number,
+  minIntervalMs = 0,
+  signal?: AbortSignal,
+  scheduler: ProviderScheduler = crawlerProviderScheduler,
 ): Promise<string[]> {
   const url = new URL(`https://api.jikan.moe/v4/anime/${animeId}/userupdates`);
   url.searchParams.set("page", String(page));
@@ -22,6 +28,9 @@ export async function fetchJikanAnimeUserUpdates(
   const json = await fetchJsonWithRetry<JikanAnimeUserUpdatesResponse>(
     url.toString(),
     `Jikan anime/${animeId}/userupdates page=${page}`,
+    minIntervalMs,
+    signal,
+    scheduler,
   );
 
   return json.data
@@ -29,13 +38,21 @@ export async function fetchJikanAnimeUserUpdates(
     .filter((username) => username.length > 0);
 }
 
-export async function fetchJikanUsersPage(page: number): Promise<string[]> {
+export async function fetchJikanUsersPage(
+  page: number,
+  minIntervalMs = 0,
+  signal?: AbortSignal,
+  scheduler: ProviderScheduler = crawlerProviderScheduler,
+): Promise<string[]> {
   const url = new URL("https://api.jikan.moe/v4/users");
   url.searchParams.set("page", String(page));
 
   const json = await fetchJsonWithRetry<JikanUsersResponse>(
     url.toString(),
     `Jikan users page=${page}`,
+    minIntervalMs,
+    signal,
+    scheduler,
   );
 
   return json.data
@@ -46,43 +63,16 @@ export async function fetchJikanUsersPage(page: number): Promise<string[]> {
 async function fetchJsonWithRetry<T>(
   url: string,
   label: string,
-  maxRetries = 4,
+  minIntervalMs: number,
+  signal: AbortSignal | undefined,
+  scheduler: ProviderScheduler,
 ): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "WhatAnimeShouldIWatch/0.1",
-      },
-    });
-
-    if (response.ok) {
-      return (await response.json()) as T;
-    }
-
-    const retryable = response.status === 429 || response.status >= 500;
-    if (retryable && attempt < maxRetries) {
-      const retryAfterHeader = response.headers.get("retry-after");
-      const retryAfterSeconds = retryAfterHeader
-        ? Number.parseInt(retryAfterHeader, 10)
-        : Number.NaN;
-
-      const backoffMs = Number.isNaN(retryAfterSeconds)
-        ? Math.min(1000 * 2 ** attempt, 10_000)
-        : Math.max(retryAfterSeconds, 1) * 1000;
-
-      await sleep(backoffMs);
-      continue;
-    }
-
-    const body = await response.text();
-    throw new Error(
-      `${label} failed: ${response.status} ${response.statusText} ${body}`,
-    );
+  const response = await scheduler.request("jikan", url, {
+    headers: { "User-Agent": "WhatAnimeShouldIWatch/0.1" },
+  }, { minIntervalMs, maxAttempts: 5, retryBudgetMs: 120_000, signal });
+  if (response.ok) {
+    return (await response.json()) as T;
   }
-
-  throw new Error(`${label} exhausted retries`);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const body = await response.text();
+  throw new Error(`${label} failed: ${response.status} ${response.statusText} ${body}`);
 }

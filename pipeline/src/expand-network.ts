@@ -111,6 +111,9 @@ const maxMalPagesPerUser = parseNonNegativeInt(
 );
 
 const db = openDatabase(dbPath);
+const controller = new AbortController();
+process.once("SIGINT", () => controller.abort());
+process.once("SIGTERM", () => controller.abort());
 const countUsersStmt = db.prepare(
   "SELECT COUNT(*) AS count FROM users",
 ) as unknown as {
@@ -175,18 +178,17 @@ try {
       `Priming queue using Jikan /users pages: ${fallbackUsersPages}\n`,
     );
     for (let page = 1; page <= fallbackUsersPages; page += 1) {
+      if (controller.signal.aborted) throw new Error("Collection canceled");
       try {
-        const users = await fetchJikanUsersPage(page);
+        const users = await fetchJikanUsersPage(page, jikanDelayMs, controller.signal);
         for (const username of users) {
           enqueue(username, queue, queued, processed);
         }
       } catch (error) {
+        if (controller.signal.aborted) throw error;
         process.stderr.write(
           `Jikan /users page ${page} failed: ${(error as Error).message}\n`,
         );
-      }
-      if (jikanDelayMs > 0) {
-        await sleep(jikanDelayMs);
       }
     }
   }
@@ -199,6 +201,7 @@ try {
   const startedAt = Date.now();
 
   while (queue.length > 0) {
+    if (controller.signal.aborted) throw new Error("Collection canceled");
     const totalUsers = countUsersStmt.get().count;
     if (totalUsers >= targetTotalUsers) {
       break;
@@ -231,6 +234,7 @@ try {
           username,
           malDelayMs,
           maxMalPagesPerUser,
+          controller.signal,
         );
         if (ratings.length < minScoredAnime) {
           skippedUsers += 1;
@@ -251,6 +255,7 @@ try {
           `[add] ${username} -> ${ratings.length} rated anime; total users ${countUsersStmt.get().count}\n`,
         );
       } catch (error) {
+        if (controller.signal.aborted) throw error;
         failedUsers += 1;
         process.stderr.write(
           `[fail] ${username}: ${(error as Error).message}\n`,
@@ -274,8 +279,9 @@ try {
       for (let page = 1; page <= updatesPagesPerAnime; page += 1) {
         let usernames: string[] = [];
         try {
-          usernames = await fetchJikanAnimeUserUpdates(rating.animeId, page);
+          usernames = await fetchJikanAnimeUserUpdates(rating.animeId, page, jikanDelayMs, controller.signal);
         } catch (error) {
+          if (controller.signal.aborted) throw error;
           process.stderr.write(
             `Jikan updates failed anime=${rating.animeId}, page=${page}: ${
               (error as Error).message
@@ -296,9 +302,6 @@ try {
           }
         }
 
-        if (jikanDelayMs > 0) {
-          await sleep(jikanDelayMs);
-        }
       }
     }
   }
@@ -347,8 +350,4 @@ function parseNonNegativeInt(raw: string, field: string): number {
     throw new Error(`Invalid ${field}: ${raw}`);
   }
   return parsed;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

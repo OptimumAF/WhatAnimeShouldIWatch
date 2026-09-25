@@ -98,11 +98,11 @@ test("an empty rated-list response leaves the watched list intact", async ({ pag
 test("a browser transport failure gives an actionable error without proxying", async ({ page }) => {
   const requests = await openNormalAppWithMockedProviders(page, 0, "");
   await page.locator("#username-import-submit").click();
-  await expect(page.locator("#rec-message")).toContainText("Direct MAL import failed");
+  await expect(page.locator("#rec-message")).toContainText("Direct MAL import failed", { timeout: 15_000 });
   await expect(page.locator("#rec-message")).toContainText("local file or text import");
   await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "failed");
   expect(requests.filter((url) => new URL(url).hostname === "r.jina.ai")).toEqual([]);
-  expect(requests.filter((url) => new URL(url).hostname === "myanimelist.net")).toHaveLength(1);
+  expect(requests.filter((url) => new URL(url).hostname === "myanimelist.net")).toHaveLength(4);
 });
 
 test("local file import waits for review and never sends the entries to a provider", async ({ page }) => {

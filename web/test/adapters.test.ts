@@ -20,8 +20,9 @@ function fakeRuntime(
   seed = 19,
 ) {
   const values = new Map<string, string>();
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const requests: Array<{ url: string; init?: RequestInit; at: number }> = [];
   const sleeps: number[] = [];
+  let elapsedMs = 0;
   const storage: StoragePort = {
     getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => { values.set(key, value); },
@@ -30,14 +31,14 @@ function fakeRuntime(
   const runtime: RuntimePorts = {
     fetch: async (input, init) => {
       const url = String(input);
-      requests.push({ url, init });
+      requests.push({ url, init, at: elapsedMs });
       return await responder(url, init);
     },
     storage,
-    now: () => new Date("2026-09-24T12:34:56.000Z"),
-    monotonicNow: () => 1234,
+    now: () => new Date(Date.parse("2026-09-24T12:34:56.000Z") + elapsedMs),
+    monotonicNow: () => 1234 + elapsedMs,
     random: createSeededRandom(seed),
-    sleep: async (ms) => { sleeps.push(ms); },
+    sleep: async (ms) => { sleeps.push(ms); elapsedMs += ms; },
     schedule: (callback) => { callback(); },
     frame: (callback) => { callback(1234); },
   };
@@ -164,7 +165,7 @@ test("provider imports and metadata use only mocked direct transport and seeded 
   const seasonal = await provider.fetchSeasonalAnime(12);
   assert.deepEqual(seasonal.map((item) => item.title), ["Moonlit Workshop"]);
   const random = createSeededRandom(19);
-  assert.deepEqual(fake.sleeps, [1000 + Math.floor(random() * 200), 800 + Math.floor(random() * 220)]);
+  assert.deepEqual(fake.sleeps, [1000 + Math.floor(random() * 350), 800 + Math.floor(random() * 250), 200]);
   assert.deepEqual(new Set(fake.requests.map((request) => new URL(request.url).hostname)),
     new Set(["myanimelist.net", "graphql.anilist.co", "api.jikan.moe"]));
   assert.equal(fake.requests.some((request) => request.url.includes("r.jina.ai")), false);
@@ -180,6 +181,26 @@ test("a provider rejection is testable without the page and never uses a proxy",
   assert.deepEqual(fake.sleeps, []);
 });
 
+test("metadata and seasonal reads share one Jikan quota in the browser adapter", async () => {
+  const fake = fakeRuntime((url) => new URL(url).pathname === "/v4/seasons/now"
+    ? jsonResponse({ data: [] }) : jsonResponse({ data: { year: 2026 } }));
+  const provider = createProviderAdapter(fake.runtime);
+  await Promise.all([
+    provider.fetchAnimeMetadataFromJikan(101),
+    provider.fetchAnimeMetadataFromJikan(102),
+    provider.fetchAnimeMetadataFromJikan(103),
+    provider.fetchAnimeMetadataFromJikan(104),
+    provider.fetchSeasonalAnime(12),
+  ]);
+  const starts = fake.requests.map((request) => request.at);
+  assert.equal(starts.length, 5);
+  for (const at of starts) {
+    assert.ok(starts.filter((other) => other >= at && other < at + 1_000).length <= 3);
+  }
+  assert.ok(starts[3] >= 1_000);
+  assert.equal(fake.requests.some((request) => request.url.includes("r.jina.ai")), false);
+});
+
 test("aborted imports and metadata discard delayed responses and stop retrying", async () => {
   let releaseImport: (() => void) | undefined;
   let importSignal: AbortSignal | undefined;
@@ -192,11 +213,12 @@ test("aborted imports and metadata discard delayed responses and stop retrying",
   const importController = new AbortController();
   const importPromise = createProviderAdapter(delayed.runtime)
     .fetchMalUsernameImport("fixture-user", index, importController.signal);
-  await Promise.resolve();
-  assert.equal(importSignal, importController.signal);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.ok(importSignal);
   importController.abort();
   releaseImport?.();
   await assert.rejects(importPromise, { name: "AbortError" });
+  assert.equal(importSignal.aborted, true);
   assert.equal(delayed.requests.length, 1);
 
   let releaseSleep: (() => void) | undefined;
@@ -205,8 +227,8 @@ test("aborted imports and metadata discard delayed responses and stop retrying",
   const retryController = new AbortController();
   const retryPromise = createProviderAdapter(retrying.runtime)
     .fetchAniListUsernameImport("fixture-user", index, retryController.signal);
-  await Promise.resolve();
-  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.ok(releaseSleep);
   retryController.abort();
   releaseSleep?.();
   await assert.rejects(retryPromise, { name: "AbortError" });
@@ -222,7 +244,7 @@ test("aborted imports and metadata discard delayed responses and stop retrying",
   const metadataController = new AbortController();
   const metadataPromise = createProviderAdapter(metadata.runtime)
     .fetchAnimeMetadataFromJikan(102, metadataController.signal);
-  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
   metadataController.abort();
   releaseMetadata?.();
   await assert.rejects(metadataPromise, { name: "AbortError" });

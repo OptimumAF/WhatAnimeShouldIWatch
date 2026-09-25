@@ -1,22 +1,22 @@
 import type { MalAnimeEntry } from "./types.js";
+import type { ProviderScheduler } from "../../shared/provider-scheduler.js";
+import { crawlerProviderScheduler } from "./provider-client.js";
 
 const MAL_PAGE_SIZE = 300;
-const MAL_MAX_RETRIES = 5;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export async function fetchMalRatings(
   username: string,
   delayMs: number,
   maxPages = 0,
+  signal?: AbortSignal,
+  scheduler: ProviderScheduler = crawlerProviderScheduler,
 ): Promise<MalAnimeEntry[]> {
   const ratings: MalAnimeEntry[] = [];
   let offset = 0;
   let pageCount = 0;
 
   while (true) {
+    if (signal?.aborted) throw Object.assign(new Error("Collection canceled"), { name: "AbortError" });
     if (maxPages > 0 && pageCount >= maxPages) {
       break;
     }
@@ -27,7 +27,7 @@ export async function fetchMalRatings(
     url.searchParams.set("status", "7");
     url.searchParams.set("offset", String(offset));
 
-    const page = await fetchMalPage(username, offset, url);
+    const page = await fetchMalPage(username, offset, url, scheduler, delayMs, signal);
     if (page.length === 0) {
       break;
     }
@@ -48,9 +48,6 @@ export async function fetchMalRatings(
     }
 
     offset += page.length;
-    if (delayMs > 0) {
-      await sleep(delayMs);
-    }
   }
 
   return ratings;
@@ -60,44 +57,17 @@ async function fetchMalPage(
   username: string,
   offset: number,
   url: URL,
+  scheduler: ProviderScheduler,
+  delayMs: number,
+  signal?: AbortSignal,
 ): Promise<MalAnimeEntry[]> {
-  for (let attempt = 0; attempt <= MAL_MAX_RETRIES; attempt += 1) {
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "WhatAnimeShouldIWatch/0.1",
-      },
-    });
-
-    if (response.ok) {
-      return (await response.json()) as MalAnimeEntry[];
-    }
-
-    const retryable = isRetryableStatus(response.status);
-    if (retryable && attempt < MAL_MAX_RETRIES) {
-      const retryAfterHeader = response.headers.get("retry-after");
-      const retryAfterSeconds = retryAfterHeader
-        ? Number.parseInt(retryAfterHeader, 10)
-        : Number.NaN;
-
-      const baseBackoffMs = Number.isNaN(retryAfterSeconds)
-        ? Math.min(1000 * 2 ** attempt, 20_000)
-        : Math.max(retryAfterSeconds, 1) * 1000;
-
-      const jitterMs = Math.floor(Math.random() * 350);
-      await sleep(baseBackoffMs + jitterMs);
-      continue;
-    }
-
-    throw new Error(
-      `MAL request failed for "${username}" at offset ${offset}: ${response.status} ${response.statusText}`,
-    );
+  const response = await scheduler.request("mal", url.toString(), {
+    headers: { "User-Agent": "WhatAnimeShouldIWatch/0.1" },
+  }, { minIntervalMs: delayMs, maxAttempts: 6, retryBudgetMs: 120_000, signal });
+  if (response.ok) {
+    return (await response.json()) as MalAnimeEntry[];
   }
-
   throw new Error(
-    `MAL request failed for "${username}" at offset ${offset}: retries exhausted`,
+    `MAL request failed for "${username}" at offset ${offset}: ${response.status} ${response.statusText}`,
   );
-}
-
-function isRetryableStatus(status: number): boolean {
-  return status === 405 || status === 408 || status === 429 || status >= 500;
 }
