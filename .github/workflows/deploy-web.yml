@@ -22,10 +22,17 @@ concurrency:
 
 jobs:
   build:
+    # This build downloads the provider-derived release before creating Pages output.
+    if: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Verify recorded deployment approval
+        env:
+          PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+        run: python3 scripts/verify_provider_data_approval.py deployment
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -53,6 +60,7 @@ jobs:
           path: web/dist
 
   deploy:
+    if: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

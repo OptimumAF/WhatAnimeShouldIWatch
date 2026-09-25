@@ -92,3 +92,21 @@
 **Plan revisions and reasons:** Checked M2.2 after inspecting actual public payloads and proposing an allowlist. Added M2.9 for the immediate approval gate on existing provider-derived jobs; M8.4 retains broader model promotion. Neither the existing release nor Pages site was changed.
 
 **Single next task:** M2.9 — gate the scheduled retrain and provider-derived release/deploy paths, verifying blocked and explicitly enabled workflow conditions without running provider or publication jobs.
+
+## Session 2026-09-24 — M2.9
+
+**Branch / starting commit:** `codex/provider-data-workflow-gates` from `cf39bef` on the M2.1–M2.2 draft PR branch. Inspected a clean starting checkout, all six workflow definitions, and the existing plan before editing.
+
+**Completed:** M2.9. The scheduled retrain, data-release publication, and Pages build/deploy jobs now require separate use-specific repository flags and approval references. The first step after checkout verifies a committed record naming sources, basis, use, owner, date, decision file, and matching approval reference. The manifest currently has no approvals. A decision note documents the operator sequence, skipped-job behavior, and limits; `AGENTS.md` and README link it. Fixture PR checks remain independent and now test the workflow gates.
+
+**Verification commands and actual results:** `gh api repos/OptimumAF/WhatAnimeShouldIWatch/actions/variables --jq '.variables[].name'` returned no repository variable names; `gh api users/OptimumAF --jq .type` returned `User` (no organization-variable scope). `python scripts/verify_provider_data_approval.py training` exited 1 with “training has no recorded approval,” as intended. `python -m unittest discover -s scripts/tests -v` passed 5 tests, including blocked and synthetic enabled cases for each use and condition checks for every relevant job. `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.10` on the four edited workflows exited 0. `npm run data:fixture` and `npm run data:fixture:check` generated/verified 7 invented users, 8 anime, 11 pairs; `npm run typecheck`, `npm test` (4), `npm run test:python` (2), `npm run build:web`, and `npm run test:e2e` (5) passed. `git diff --check` passed.
+
+**Files changed:** `.github/workflows/ci.yml`, `.github/workflows/ml-retrain.yml`, `.github/workflows/publish-data-release.yml`, `.github/workflows/deploy-web.yml`, `scripts/verify_provider_data_approval.py`, `scripts/tests/test_verify_provider_data_approval.py`, `scripts/tests/test_provider_workflow_conditions.py`, `docs/approvals/provider-data.json`, `docs/decisions/0002-provider-workflow-gates.md`, `docs/decisions/0001-provider-data-permissions.md`, `AGENTS.md`, `README.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
+
+**Commit / PR and CI:** Implementation commit `06a0797` in draft [PR #4](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/4), stacked on PR #3. [Fixture and fast checks run 36091467488](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36091467488) passed, including the new gate tests, existing fixture/typecheck/Python checks, web build, and browser tests; GitGuardian passed.
+
+**Checks not run / blockers:** No enabled GitHub Actions job was dispatched; the enabled path was verified with synthetic approval records and local expression cases. No real provider request, production ratings fetch, training, public artifact update, or Pages deployment occurred. These gates are not active on `master` until merged. The existing public release and Pages graph remain available; source rights, a remedy for those copies, and any owner approval are unresolved. The M2 exit gate remains open.
+
+**Plan revisions and reasons:** Checked M2.9 after local acceptance. Required both an owner-controlled variable pair and a committed use-specific source/use approval entry so accidental variable setup alone cannot reach data access. Kept M8.4's broader model promotion criteria unchanged. Updated the source-review summary to distinguish the historical starting state from current draft PRs.
+
+**Single next task:** M1.6 — scope the origin-wide service-worker cleanup to this app and verify that another app on the origin is unaffected.
