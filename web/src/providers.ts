@@ -1,12 +1,56 @@
 /** Existing optional public-provider reads behind injectable transport and timing. */
 import type { AnimeMetadata } from "./artifacts";
 import type { ImportedWatchedEntry, RecommendationIndex, SeasonalAnimeItem, UsernameImportResult } from "./domain";
+import { deduplicateHistory, historyScoreToTen, normalizeHistoryStatus } from "./import-history";
+import type { HistoryEntry, HistoryScoreScale } from "./import-history";
 import { normalizeImportedScoreToWeight } from "./recommendations";
 import { throwIfAborted } from "./runtime";
 import type { RuntimePorts } from "./runtime";
 import { createProviderScheduler, type Provider, type ProviderScheduler } from "../../shared/provider-scheduler";
 
 const USERNAME_IMPORT_PAGE_SIZE = 300;
+
+function providerScore(value: unknown, scale: HistoryScoreScale): number | null {
+  if (value === null || value === undefined || value === 0) return null;
+  const maximum = scale === "POINT_100" ? 100 : scale === "POINT_5" ? 5 : scale === "POINT_3" ? 3 : 10;
+  const integerOnly = scale !== "POINT_10_DECIMAL" && scale !== "local-10";
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum ||
+    (integerOnly && !Number.isInteger(value)) ||
+    (scale === "POINT_10_DECIMAL" && !Number.isInteger(value * 10))) {
+    throw new Error("Provider returned an invalid list score; import was not applied.");
+  }
+  return value;
+}
+
+function providerProgress(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 1_000_000) {
+    throw new Error("Provider returned invalid episode progress; import was not applied.");
+  }
+  return value;
+}
+
+function mappedRatedEntries(history: HistoryEntry[], index: RecommendationIndex): {
+  entries: ImportedWatchedEntry[]; ratedCount: number; unmappedCount: number;
+} {
+  const byNodeId = new Map<string, ImportedWatchedEntry>();
+  let ratedCount = 0;
+  let unmappedCount = 0;
+  for (const entry of history) {
+    if (entry.score === null) continue;
+    ratedCount += 1;
+    if (entry.status === "plan_to_watch") continue;
+    const anime = entry.animeId === null ? undefined : index.animeByAnimeId.get(entry.animeId);
+    if (!anime) {
+      unmappedCount += 1;
+      continue;
+    }
+    const scoreTen = historyScoreToTen(entry);
+    if (scoreTen === null) continue;
+    byNodeId.set(anime.nodeId, { anime, weight: normalizeImportedScoreToWeight(scoreTen) });
+  }
+  return { entries: [...byNodeId.values()], ratedCount, unmappedCount };
+}
 
 export type MetadataReadResult =
   | { state: "ready"; metadata: AnimeMetadata }
@@ -34,12 +78,17 @@ export function createProviderAdapter(
   ): Promise<UsernameImportResult> {
     const query = `
       query ($userName: String) {
+        User(name: $userName) { mediaListOptions { scoreFormat } }
         MediaListCollection(userName: $userName, type: ANIME) {
           lists {
             entries {
-              score(format: POINT_10_DECIMAL)
+              score
+              status
+              progress
               media {
+                id
                 idMal
+                title { romaji }
               }
             }
           }
@@ -49,12 +98,17 @@ export function createProviderAdapter(
 
     const payload = await fetchJsonWithRetries<{
       data?: {
+        User?: { mediaListOptions?: { scoreFormat?: string | null } | null } | null;
         MediaListCollection?: {
           lists?: Array<{
             entries?: Array<{
               score?: number;
+              status?: string;
+              progress?: number;
               media?: {
+                id?: number;
                 idMal?: number | null;
+                title?: { romaji?: string | null } | null;
               } | null;
             }>;
           }>;
@@ -81,36 +135,41 @@ export function createProviderAdapter(
     const lists = payload.data?.MediaListCollection?.lists;
     if (!lists) throw new ProviderUnavailableError("No AniList anime list was available for that user.");
 
-    let ratedCount = 0;
-    let unmappedCount = 0;
-    const byNodeId = new Map<string, ImportedWatchedEntry>();
+    const rawScoreScale = payload.data?.User?.mediaListOptions?.scoreFormat;
+    const scoreScales = new Set<HistoryScoreScale>(
+      ["POINT_100", "POINT_10_DECIMAL", "POINT_10", "POINT_5", "POINT_3"],
+    );
+    if (lists.some((list) => (list.entries?.length ?? 0) > 0) &&
+      !scoreScales.has(rawScoreScale as HistoryScoreScale)) {
+      throw new Error("AniList did not return a recognized user score format; import was not applied.");
+    }
+    const scoreScale = rawScoreScale as HistoryScoreScale;
 
+    const history: HistoryEntry[] = [];
     for (const list of lists) {
       const entries = list.entries ?? [];
       for (const entry of entries) {
-        const score = Number(entry.score ?? 0);
-        const malId = Number(entry.media?.idMal ?? 0);
-        if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(malId) || malId <= 0) {
-          continue;
+        const sourceId = entry.media?.id;
+        if (!Number.isSafeInteger(sourceId) || (sourceId ?? 0) <= 0) {
+          throw new Error("AniList returned an entry without a media ID; import was not applied.");
         }
-
-        ratedCount += 1;
-        const anime = index.animeByAnimeId.get(Math.trunc(malId));
-        if (!anime) {
-          unmappedCount += 1;
-          continue;
-        }
-
-        const weight = normalizeImportedScoreToWeight(score);
-        byNodeId.set(anime.nodeId, { anime, weight });
+        const malId = entry.media?.idMal;
+        const animeId = Number.isSafeInteger(malId) && (malId ?? 0) > 0 ? malId! : null;
+        const sourceStatus = entry.status ?? "";
+        if (typeof sourceStatus !== "string") throw new Error("Invalid AniList status.");
+        history.push({
+          provider: "anilist", sourceId: String(sourceId),
+          title: entry.media?.title?.romaji?.trim() ||
+            (animeId === null ? `AniList anime ${sourceId}` : index.animeByAnimeId.get(animeId)?.label || `AniList anime ${sourceId}`),
+          animeId, status: normalizeHistoryStatus(sourceStatus), sourceStatus,
+          progressEpisodes: providerProgress(entry.progress),
+          score: providerScore(entry.score, scoreScale), scoreScale,
+        });
       }
     }
-
-    return {
-      entries: [...byNodeId.values()],
-      ratedCount,
-      unmappedCount,
-    };
+    const parsed = deduplicateHistory(history);
+    return { ...mappedRatedEntries(parsed.entries, index), history: parsed.entries,
+      duplicateCount: parsed.duplicates };
   }
 
   async function fetchMalUsernameImport(
@@ -118,7 +177,11 @@ export function createProviderAdapter(
     index: RecommendationIndex,
     signal?: AbortSignal,
   ): Promise<UsernameImportResult> {
-    const allEntries: Array<{ anime_id?: number; score?: number }> = [];
+    const allEntries: Array<{
+      anime_id?: number; anime_title?: string; score?: number;
+      status?: string | number; my_status?: string | number;
+      num_watched_episodes?: number; my_watched_episodes?: number;
+    }> = [];
     let offset = 0;
 
     while (true) {
@@ -137,40 +200,36 @@ export function createProviderAdapter(
     }
     throwIfAborted(signal);
 
-    let ratedCount = 0;
-    let unmappedCount = 0;
-    const byNodeId = new Map<string, ImportedWatchedEntry>();
-
+    const history: HistoryEntry[] = [];
     for (const entry of allEntries) {
-      const score = Number(entry.score ?? 0);
-      const animeId = Number(entry.anime_id ?? 0);
-      if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(animeId) || animeId <= 0) {
-        continue;
+      const animeId = entry.anime_id;
+      if (!Number.isSafeInteger(animeId) || (animeId ?? 0) <= 0) {
+        throw new Error("MAL returned an entry without a valid anime ID; import was not applied.");
       }
-
-      ratedCount += 1;
-      const anime = index.animeByAnimeId.get(Math.trunc(animeId));
-      if (!anime) {
-        unmappedCount += 1;
-        continue;
-      }
-
-      const weight = normalizeImportedScoreToWeight(score);
-      byNodeId.set(anime.nodeId, { anime, weight });
+      const rawStatus = entry.status ?? entry.my_status;
+      const sourceStatus = rawStatus === undefined ? "" : String(rawStatus);
+      history.push({
+        provider: "mal", sourceId: String(animeId),
+        title: entry.anime_title?.trim() || index.animeByAnimeId.get(animeId!)?.label || `MAL anime ${animeId}`,
+        animeId: animeId!, status: normalizeHistoryStatus(sourceStatus), sourceStatus,
+        progressEpisodes: providerProgress(entry.num_watched_episodes ?? entry.my_watched_episodes),
+        score: providerScore(entry.score, "mal-10"), scoreScale: "mal-10",
+      });
     }
-
-    return {
-      entries: [...byNodeId.values()],
-      ratedCount,
-      unmappedCount,
-    };
+    const parsed = deduplicateHistory(history);
+    return { ...mappedRatedEntries(parsed.entries, index), history: parsed.entries,
+      duplicateCount: parsed.duplicates };
   }
 
   async function fetchMalUsernamePage(
     username: string,
     offset: number,
     signal?: AbortSignal,
-  ): Promise<Array<{ anime_id?: number; score?: number }>> {
+  ): Promise<Array<{
+    anime_id?: number; anime_title?: string; score?: number;
+    status?: string | number; my_status?: string | number;
+    num_watched_episodes?: number; my_watched_episodes?: number;
+  }>> {
     const malUrl = new URL(
       `https://myanimelist.net/animelist/${encodeURIComponent(username)}/load.json`,
     );
@@ -191,7 +250,11 @@ export function createProviderAdapter(
       if (!Array.isArray(page)) {
         throw new Error("Unexpected MAL response shape.");
       }
-      return page as Array<{ anime_id?: number; score?: number }>;
+      return page as Array<{
+        anime_id?: number; anime_title?: string; score?: number;
+        status?: string | number; my_status?: string | number;
+        num_watched_episodes?: number; my_watched_episodes?: number;
+      }>;
     } catch (error) {
       throwIfAborted(signal);
       const message = "Direct MAL import failed. Browser access may be blocked, the profile may be private, or MAL may be rate limiting. No proxy was contacted. Try the local file or text import above, or AniList.";

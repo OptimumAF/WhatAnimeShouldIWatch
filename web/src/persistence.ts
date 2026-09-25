@@ -1,5 +1,7 @@
 /** Local browser state and legacy profile parsing behind injected storage and clock. */
 import { clampModelBlendWeight, clampWatchWeight } from "./recommendations";
+import { validateHistoryEntries } from "./import-history";
+import type { HistoryEntry } from "./import-history";
 import type { RuntimePorts } from "./runtime";
 
 export type RecommendationMode = "graph" | "model" | "hybrid";
@@ -12,6 +14,7 @@ export interface StoredRecommendationState {
   modelBlendWeight?: number;
   includeCandidates?: string[];
   excludeCandidates?: string[];
+  history?: HistoryEntry[];
 }
 
 export interface RecommendationProfileRecord {
@@ -24,6 +27,7 @@ export type RecommendationState = Omit<StoredRecommendationState, "version"> & {
   modelBlendWeight: number;
   includeCandidates: string[];
   excludeCandidates: string[];
+  history: HistoryEntry[];
 };
 
 export const RECOMMENDATION_STORAGE_VERSION = 4;
@@ -227,6 +231,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       modelBlendWeight: blend,
       includeCandidates: candidateIds("includeCandidates"),
       excludeCandidates: candidateIds("excludeCandidates"),
+      history: value.history === undefined ? [] : validateHistoryEntries(value.history),
     };
   }
 
@@ -382,11 +387,13 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
         modelBlendWeight: stored.modelBlendWeight ?? 0.5,
         includeCandidates: stored.includeCandidates ?? [],
         excludeCandidates: stored.excludeCandidates ?? [],
+        history: stored.history ?? [],
       };
     }
     return {
       mode: "graph", selected: [], modelBlendWeight: 0.5,
       includeCandidates: [], excludeCandidates: [],
+      history: [],
     };
   }
 

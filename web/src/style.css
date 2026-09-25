@@ -1036,8 +1036,61 @@ button:hover,
   font-size: 0.78rem;
 }
 
+.import-preview,
+.imported-history {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+
+.import-preview[hidden] {
+  display: none;
+}
+
+.import-preview h3,
+.imported-history h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.import-preview p,
+.imported-history p,
+.imported-history li {
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.import-preview label,
+.import-preview select,
+.import-preview button {
+  display: block;
+  margin-top: 0.45rem;
+}
+
+.import-preview select {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--text);
+  padding: 0.5rem 0.65rem;
+}
+
+.import-preview button {
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+
+.imported-history ul {
+  max-height: 14rem;
+  overflow: auto;
+  padding-left: 1.2rem;
+}
+
 .accordion .bulk-import,
 .accordion .username-import,
+.accordion .import-preview,
+.accordion .imported-history,
 .accordion .profiles {
   margin-top: 0.65rem;
 }

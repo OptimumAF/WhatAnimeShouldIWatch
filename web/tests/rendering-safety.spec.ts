@@ -87,7 +87,9 @@ test("graph labels, imported lines, and profile names remain text", async ({ pag
   await page.locator("summary").filter({ hasText: "Import & Profiles" }).click();
   await page.locator("#bulk-import-input").fill(unsafeImportLine);
   await page.locator("#bulk-import-form button").click();
-  await expect(page.locator("#rec-message")).toContainText(unsafeImportLine);
+  await expect(page.locator("#history-import-unmapped")).toContainText(unsafeImportLine);
+  await page.locator("#history-import-apply").click();
+  await expect(page.locator("#history-list")).toContainText(unsafeImportLine);
   await page.locator("#profile-name-input").fill(unsafeMarkup);
   await page.locator("#profile-save-submit").click();
   await expect(page.locator("#profile-select option")).toHaveText(unsafeMarkup);

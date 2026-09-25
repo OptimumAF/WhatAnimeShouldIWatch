@@ -8,6 +8,7 @@ async function openNormalAppWithMockedProviders(
   page: Page,
   malStatus: number,
   malBody: string,
+  anilistBody?: string,
 ): Promise<string[]> {
   const graphJson = readFileSync(new URL("../public/demo-data/graph.compact.json", import.meta.url), "utf8");
   const requests: string[] = [];
@@ -23,6 +24,12 @@ async function openNormalAppWithMockedProviders(
         contentType: "application/json",
         headers: { "Access-Control-Allow-Origin": "*" },
         body: malBody,
+      });
+    }
+    if (url.hostname === "graphql.anilist.co" && anilistBody !== undefined) {
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": "*" }, body: anilistBody,
       });
     }
     if (url.hostname === "r.jina.ai") {
@@ -57,6 +64,24 @@ async function openNormalAppWithMockedProviders(
   return requests;
 }
 
+test("mocked AniList import stores a native five-star score and converts the watched weight", async ({ page }) => {
+  const requests = await openNormalAppWithMockedProviders(page, 200, "[]", JSON.stringify({ data: {
+    User: { mediaListOptions: { scoreFormat: "POINT_5" } },
+    MediaListCollection: { lists: [{ entries: [{
+      score: 4, status: "COMPLETED", progress: 12,
+      media: { id: 501, idMal: 101, title: { romaji: "Copper Comet" } },
+    }] }] },
+  } }));
+  await page.locator("#username-import-provider").selectOption("anilist");
+  await page.locator("#username-import-submit").click();
+  await expect(page.locator("#history-import-preview")).toBeVisible();
+  await expect(page.locator("#watched-count")).toHaveText("0");
+  await page.locator("#history-import-apply").click();
+  await expect(page.locator("#history-list")).toContainText("score: 4 (POINT_5)");
+  await expect(page.locator("#selected-anime input[data-weight-node-id='anime:101']")).toHaveValue("1.6");
+  expect(requests.filter((url) => new URL(url).hostname === "graphql.anilist.co")).toHaveLength(1);
+});
+
 test("MAL failure keeps the existing watched list and never routes through a proxy", async ({ page }) => {
   const requests = await openNormalAppWithMockedProviders(page, 403, "{}");
   await expect(page.locator(".username-import .muted").first()).toContainText("username is sent directly");
@@ -79,9 +104,35 @@ test("a direct MAL response still imports a mapped synthetic rating", async ({ p
     page, 200, '[{"anime_id":102,"score":8}]',
   );
   await page.locator("#username-import-submit").click();
-  await expect(page.locator("#rec-message")).toContainText("Imported MAL user");
+  await expect(page.locator("#history-import-preview")).toBeVisible();
+  await expect(page.locator("#history-import-summary")).toContainText("1 entries");
+  await expect(page.locator("#watched-count")).toHaveText("0");
+  await page.locator("#history-import-apply").click();
+  await expect(page.locator("#rec-message")).toContainText("Import applied");
   await expect(page.locator("#selected-anime")).toContainText("Moonlit Workshop");
   await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "ready");
+  expect(requests.filter((url) => new URL(url).hostname === "r.jina.ai")).toEqual([]);
+});
+
+test("mocked MAL username history keeps unscored seen and unmapped entries through preview and reload", async ({ page }) => {
+  const requests = await openNormalAppWithMockedProviders(page, 200, JSON.stringify([
+    { anime_id: 101, anime_title: "Copper Comet", score: 9, status: 2, num_watched_episodes: 12 },
+    { anime_id: 102, anime_title: "Moonlit Workshop", score: 0, status: 1, num_watched_episodes: 3 },
+    { anime_id: 99999, anime_title: "Unknown Fixture", score: 0, status: 6, num_watched_episodes: 0 },
+  ]));
+  await page.locator("#username-import-submit").click();
+  await expect(page.locator("#history-import-summary")).toContainText("3 entries");
+  await expect(page.locator("#history-import-summary")).toContainText("unmapped: 1");
+  await expect(page.locator("#history-import-summary")).toContainText("unscored: 2");
+  await expect(page.locator("#watched-count")).toHaveText("0");
+  await page.locator("#history-import-apply").click();
+  await expect(page.locator("#watched-count")).toHaveText("1");
+  await expect(page.locator("#history-count")).toHaveText("3");
+  await expect(page.locator("#history-list")).toContainText("Unknown Fixture — 6; episodes: 0; score: unscored (mal-10); unmapped, kept");
+  await expect(page.locator("#rec-results")).not.toContainText("Moonlit Workshop");
+  await page.reload();
+  await page.locator("summary").filter({ hasText: "Import & Profiles" }).click();
+  await expect(page.locator("#history-count")).toHaveText("3");
   expect(requests.filter((url) => new URL(url).hostname === "r.jina.ai")).toEqual([]);
 });
 
@@ -113,7 +164,7 @@ test("local file import waits for review and never sends the entries to a provid
     mimeType: "text/plain",
     buffer: Buffer.alloc(128 * 1024 + 1, "1"),
   });
-  await expect(page.locator("#rec-message")).toContainText("no larger than 128 KiB");
+  await expect(page.locator("#rec-message")).toContainText("up to 128 KiB");
   await expect(page.locator("#watched-count")).toHaveText("0");
 
   await page.locator("#bulk-import-file").setInputFiles({
@@ -121,10 +172,13 @@ test("local file import waits for review and never sends the entries to a provid
     mimeType: "text/plain",
     buffer: Buffer.from("101, 9\n102, 8\n"),
   });
-  await expect(page.locator("#rec-message")).toContainText("Review the entries");
+  await expect(page.locator("#rec-message")).toContainText("Preview Text Import");
   await expect(page.locator("#bulk-import-input")).toHaveValue("101, 9\n102, 8\n");
   await expect(page.locator("#watched-count")).toHaveText("0");
   await page.locator("#bulk-import-form button").click();
+  await expect(page.locator("#history-import-preview")).toBeVisible();
+  await expect(page.locator("#watched-count")).toHaveText("0");
+  await page.locator("#history-import-apply").click();
   await expect(page.locator("#watched-count")).toHaveText("2");
   expect(requests.filter((url) => ["r.jina.ai", "myanimelist.net", "graphql.anilist.co"].includes(new URL(url).hostname))).toEqual([]);
 });

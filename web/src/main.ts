@@ -41,6 +41,18 @@ import type { RecommendationFilters } from "./recommendations";
 import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { createArtifactLoader } from "./artifact-loader";
 import {
+  MAX_MAL_XML_IMPORT_BYTES,
+  MAX_TEXT_IMPORT_BYTES,
+  historyScoreToTen,
+  mergeHistory,
+  parseMalXmlHistory,
+  parseTextHistory,
+  previewHistory,
+  resolveHistoryAnime,
+  seenHistoryNodeIds,
+} from "./import-history";
+import type { HistoryEntry, ImportMode, ParsedHistory } from "./import-history";
+import {
   COMMAND_HISTORY_LIMIT,
   COMMAND_PINNED_LIMIT,
   RECOMMENDATION_STORAGE_VERSION,
@@ -239,14 +251,14 @@ app.innerHTML = `
               <summary>Import & Profiles</summary>
               <section class="bulk-import">
                 <h3>Import From Local File or Text (Recommended)</h3>
-                <p class="muted">Choose a local plain-text file or paste entries below. One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>. The file is read in this browser; review the entries before importing.</p>
+                <p class="muted">Choose a local MAL-style XML export, a plain-text list, or paste text below. Text lines use <code>animeId[, score[, status[, episodes]]]</code> or a title in place of the ID. Files stay in this browser. Review counts and choose merge or replace before applying.</p>
                 <form id="bulk-import-form" class="bulk-import-form">
-                  <label for="bulk-import-file">Local .txt file (up to 128 KiB)</label>
-                  <input id="bulk-import-file" type="file" accept=".txt,text/plain" />
+                  <label for="bulk-import-file">Local .txt (up to 128 KiB) or .xml (up to 2 MiB)</label>
+                  <input id="bulk-import-file" type="file" accept=".txt,.xml,text/plain,application/xml,text/xml" />
                   <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
                   <button type="submit">
                     <span class="icon icon-import" aria-hidden="true"></span>
-                    <span>Import Watched Entries</span>
+                    <span>Preview Text Import</span>
                   </button>
                 </form>
                 <p id="bulk-import-status" class="muted" role="status" aria-live="polite" data-state="idle"></p>
@@ -254,7 +266,7 @@ app.innerHTML = `
 
               <section class="username-import">
                 <h3>Import From Username</h3>
-                <p class="muted">${demoMode ? "Username imports are unavailable in the offline demo." : "Your entered username is sent directly to the selected provider to read its public rated anime list. MAL may block browser requests; no third-party proxy is used. The local file or text import above needs no provider username."}</p>
+                <p class="muted">${demoMode ? "Username imports are unavailable in the offline demo." : "Your entered username is sent directly to the selected provider to read its public anime list. MAL may block browser requests; no third-party proxy is used. The local file or text import above needs no provider username."}</p>
                 <form id="username-import-form" class="username-import-form">
                   <select id="username-import-provider" aria-label="Import provider">
                     <option value="anilist" selected>AniList</option>
@@ -267,6 +279,24 @@ app.innerHTML = `
                   </button>
                 </form>
                 <p id="username-import-status" class="muted" role="status" aria-live="polite" data-state="idle"></p>
+              </section>
+
+              <section id="history-import-preview" class="import-preview" hidden>
+                <h3>Import Preview</h3>
+                <p id="history-import-summary" role="status" aria-live="polite"></p>
+                <p id="history-import-unmapped" class="muted"></p>
+                <label for="history-import-mode">Apply as</label>
+                <select id="history-import-mode" aria-label="Import mode">
+                  <option value="merge">Merge with current history and watched picks</option>
+                  <option value="replace">Replace current history and watched picks</option>
+                </select>
+                <button id="history-import-apply" type="button" class="primary-btn">Apply Import</button>
+              </section>
+
+              <section class="imported-history">
+                <h3>Imported History <span id="history-count" class="count-pill">0</span></h3>
+                <p class="muted">Statuses, episode progress, original score scale, and titles missing from this catalog are kept with your local recommendation state and saved profiles.</p>
+                <ul id="history-list"></ul>
               </section>
 
               <section class="profiles">
@@ -497,6 +527,13 @@ const usernameImportInput = mustElement<HTMLInputElement>("#username-import-inpu
 const usernameImportSubmit = mustElement<HTMLButtonElement>("#username-import-submit");
 const usernameImportSubmitLabel = mustElement<HTMLSpanElement>("#username-import-submit-label");
 const usernameImportStatusEl = mustElement<HTMLParagraphElement>("#username-import-status");
+const historyImportPreviewEl = mustElement<HTMLElement>("#history-import-preview");
+const historyImportSummaryEl = mustElement<HTMLParagraphElement>("#history-import-summary");
+const historyImportUnmappedEl = mustElement<HTMLParagraphElement>("#history-import-unmapped");
+const historyImportModeEl = mustElement<HTMLSelectElement>("#history-import-mode");
+const historyImportApplyBtn = mustElement<HTMLButtonElement>("#history-import-apply");
+const historyCountEl = mustElement<HTMLSpanElement>("#history-count");
+const historyListEl = mustElement<HTMLUListElement>("#history-list");
 const profileSaveForm = mustElement<HTMLFormElement>("#profile-save-form");
 const profileNameInput = mustElement<HTMLInputElement>("#profile-name-input");
 const profileSelect = mustElement<HTMLSelectElement>("#profile-select");
@@ -560,6 +597,7 @@ let recommendationController: AbortController | null = null;
 let activeUsernameImport: { controller: AbortController; provider: UsernameImportProvider } | null = null;
 let bulkFileLoadId = 0;
 let activeBulkFileLoadId: number | null = null;
+let pendingHistoryImport: { parsed: ParsedHistory; origin: "local" | "username" } | null = null;
 let graphRenderRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
 let modelLoadError: string | null = null;
@@ -611,6 +649,7 @@ const recommendationIndex = isCompactGraphData(graphData)
   : buildRecommendationIndex(graphData);
 const selectedAnimeNodeIds: string[] = [];
 const selectedAnimeWeights = new Map<string, number>();
+const historyEntries: HistoryEntry[] = [];
 const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
 const persistedState = persistence.loadRecommendationState();
@@ -621,6 +660,7 @@ for (const entry of persistedState.selected) {
   selectedAnimeNodeIds.push(entry.nodeId);
   selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
 }
+historyEntries.push(...persistedState.history);
 for (const nodeId of persistedState.includeCandidates) {
   includeCandidateNodeIds.push(nodeId);
 }
@@ -637,6 +677,7 @@ setBlendControlVisibility();
 populateAnimeOptions(recommendationIndex.animeList, animeOptions);
 populateNetworkNodeOptions(graphNodes, networkNodeOptions);
 renderSelectedAnime();
+renderImportedHistory();
 renderIncludeCandidates();
 renderExcludeCandidates();
 renderProfileOptions(savedProfiles);
@@ -907,11 +948,24 @@ bulkImportFile.addEventListener("change", () => {
 
 bulkImportInput.addEventListener("input", () => {
   cancelBulkFileLoad();
+  cancelActiveUsernameImport();
+  clearPendingHistoryImport();
 });
 
 usernameImportForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void importWatchedFromUsername();
+});
+
+historyImportModeEl.addEventListener("change", renderImportPreview);
+historyImportApplyBtn.addEventListener("click", applyPendingHistoryImport);
+usernameImportProvider.addEventListener("change", () => {
+  cancelActiveUsernameImport();
+  clearPendingHistoryImport();
+});
+usernameImportInput.addEventListener("input", () => {
+  cancelActiveUsernameImport();
+  clearPendingHistoryImport();
 });
 
 profileSaveForm.addEventListener("submit", (event) => {
@@ -1981,33 +2035,51 @@ async function loadBulkImportFile(): Promise<void> {
   if (!file) {
     return;
   }
+  cancelActiveUsernameImport();
   const loadId = ++bulkFileLoadId;
   activeBulkFileLoadId = loadId;
   bulkImportFile.value = "";
-  if (!file.name.toLowerCase().endsWith(".txt") || file.size > 128 * 1024) {
+  clearPendingHistoryImport();
+  const name = file.name.toLowerCase();
+  const isText = name.endsWith(".txt");
+  const isXml = name.endsWith(".xml");
+  if ((!isText && !isXml) || file.size > (isText ? MAX_TEXT_IMPORT_BYTES : MAX_MAL_XML_IMPORT_BYTES)) {
     activeBulkFileLoadId = null;
-    setAsyncStatus(bulkImportStatusEl, "failed", "Choose a .txt file no larger than 128 KiB.");
-    recMessageEl.textContent = "Choose a .txt file no larger than 128 KiB.";
+    setAsyncStatus(bulkImportStatusEl, "failed", "Choose a .txt file up to 128 KiB or .xml file up to 2 MiB.");
+    recMessageEl.textContent = "Choose a .txt file up to 128 KiB or .xml file up to 2 MiB.";
     return;
   }
   setAsyncStatus(bulkImportStatusEl, "loading", "Reading local file...");
   try {
     const content = await file.text();
     if (activeBulkFileLoadId !== loadId) return;
-    activeBulkFileLoadId = null;
-    bulkImportInput.value = content;
-    if (content.trim()) {
-      setAsyncStatus(bulkImportStatusEl, "ready", "Local file loaded. Review the entries before importing.");
-      recMessageEl.textContent = `Loaded local file "${file.name}". Review the entries, then select Import Watched Entries.`;
+    if (isXml) {
+      const parsed = parseMalXmlHistory(content);
+      bulkImportInput.value = "";
+      if (parsed.entries.length > 0) {
+        setPendingHistoryImport(parsed, "local");
+        setAsyncStatus(bulkImportStatusEl, "ready", "Local XML parsed. Review the import preview before applying.");
+        recMessageEl.textContent = `Loaded local XML file "${file.name}". Review the import preview.`;
+      } else {
+        setAsyncStatus(bulkImportStatusEl, "empty", "The local XML has no anime entries; current history is intact.");
+      }
     } else {
-      setAsyncStatus(bulkImportStatusEl, "empty", "The local file has no entries to import.");
-      recMessageEl.textContent = `Local file "${file.name}" is empty.`;
+      bulkImportInput.value = content;
+      if (content.trim()) {
+        setAsyncStatus(bulkImportStatusEl, "ready", "Local text loaded. Preview the entries before applying.");
+        recMessageEl.textContent = `Loaded local file "${file.name}". Select Preview Text Import.`;
+      } else {
+        setAsyncStatus(bulkImportStatusEl, "empty", "The local file has no entries to import.");
+        recMessageEl.textContent = `Local file "${file.name}" is empty.`;
+      }
     }
-  } catch {
+    activeBulkFileLoadId = null;
+  } catch (error) {
     if (activeBulkFileLoadId !== loadId) return;
     activeBulkFileLoadId = null;
-    setAsyncStatus(bulkImportStatusEl, "failed", "Unable to read that local file.");
-    recMessageEl.textContent = "Unable to read that local file.";
+    clearPendingHistoryImport();
+    setAsyncStatus(bulkImportStatusEl, "failed", "Unable to parse that local file; current history is intact.");
+    recMessageEl.textContent = error instanceof Error ? error.message : "Unable to read that local file.";
   }
 }
 
@@ -2016,73 +2088,27 @@ function importWatchedFromBulkInput(): void {
     recMessageEl.textContent = "Wait for the local file to finish loading before importing.";
     return;
   }
+  cancelActiveUsernameImport();
   const raw = bulkImportInput.value.trim();
   if (!raw) {
     recMessageEl.textContent = "Paste at least one line to import.";
     return;
   }
 
-  const lines = raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  if (lines.length === 0) {
-    recMessageEl.textContent = "Paste at least one line to import.";
-    return;
-  }
-
-  let added = 0;
-  let updated = 0;
-  let skipped = 0;
-  let unresolved = 0;
-  const unresolvedLines: string[] = [];
-
-  for (const line of lines) {
-    const parsed = parseBulkWatchedLine(line, recommendationIndex);
-    if (!parsed) {
-      unresolved += 1;
-      if (unresolvedLines.length < 3) {
-        unresolvedLines.push(line);
-      }
-      continue;
+  try {
+    const parsed = parseTextHistory(raw);
+    if (parsed.entries.length === 0) {
+      setAsyncStatus(bulkImportStatusEl, "empty", "No entries found; current history is intact.");
+      return;
     }
-
-    const { anime, weight } = parsed;
-    const existingIndex = selectedAnimeNodeIds.indexOf(anime.nodeId);
-    if (existingIndex < 0) {
-      selectedAnimeNodeIds.push(anime.nodeId);
-      selectedAnimeWeights.set(anime.nodeId, weight ?? 1);
-      added += 1;
-      continue;
-    }
-
-    if (weight === undefined) {
-      skipped += 1;
-      continue;
-    }
-
-    selectedAnimeWeights.set(anime.nodeId, weight);
-    updated += 1;
+    setPendingHistoryImport(parsed, "local");
+    setAsyncStatus(bulkImportStatusEl, "ready", "Text parsed. Review the import preview before applying.");
+    recMessageEl.textContent = "Review the import counts and choose merge or replace before applying.";
+  } catch (error) {
+    clearPendingHistoryImport();
+    setAsyncStatus(bulkImportStatusEl, "failed", "Text import is invalid; current history is intact.");
+    recMessageEl.textContent = error instanceof Error ? error.message : "Unable to parse text import.";
   }
-
-  if (added === 0 && updated === 0 && skipped === 0 && unresolved === 0) {
-    recMessageEl.textContent = "No entries were imported.";
-    return;
-  }
-
-  persistRecommendationState();
-  renderSelectedAnime();
-  void updateRecommendations();
-  setAsyncStatus(bulkImportStatusEl, "ready", "Local entries imported into this browser.");
-
-  const unresolvedNote =
-    unresolved > 0
-      ? ` Unresolved: ${unresolved}${unresolvedLines.length > 0 ? ` (${unresolvedLines.join("; ")})` : ""}.`
-      : "";
-  recMessageEl.textContent =
-    `Import complete. Added: ${added}, Updated: ${updated}, Skipped: ${skipped}.` +
-    unresolvedNote;
 }
 
 async function importWatchedFromUsername(): Promise<void> {
@@ -2099,11 +2125,12 @@ async function importWatchedFromUsername(): Promise<void> {
   }
 
   cancelActiveUsernameImport();
+  clearPendingHistoryImport();
   const controller = new AbortController();
   activeUsernameImport = { controller, provider };
   setUsernameImportLoading(true, provider);
   setAsyncStatus(usernameImportStatusEl, "loading", `Importing from ${providerLabel(provider)}...`);
-  recMessageEl.textContent = `Importing rated anime from ${providerLabel(provider)} user "${username}"...`;
+  recMessageEl.textContent = `Reading anime history from ${providerLabel(provider)} for import preview...`;
 
   try {
     const result =
@@ -2114,23 +2141,15 @@ async function importWatchedFromUsername(): Promise<void> {
     if (controller.signal.aborted || activeUsernameImport?.controller !== controller) return;
     activeUsernameImport = null;
     setUsernameImportLoading(false, provider);
-    if (result.ratedCount === 0) {
-      setAsyncStatus(usernameImportStatusEl, "empty", `No rated entries returned by ${providerLabel(provider)}.`);
-      recMessageEl.textContent = `No rated entries returned by ${providerLabel(provider)}; the watched list was left intact.`;
+    if (result.history.length === 0) {
+      setAsyncStatus(usernameImportStatusEl, "empty", `No entries returned by ${providerLabel(provider)}.`);
+      recMessageEl.textContent = `No entries returned by ${providerLabel(provider)}; the watched list was left intact.`;
       return;
     }
 
-    const summary = upsertImportedWatchedEntries(result.entries);
-    persistRecommendationState();
-    renderSelectedAnime();
-    void updateRecommendations();
-
-    recMessageEl.textContent =
-      `Imported ${providerLabel(provider)} user "${username}". ` +
-      `Rated: ${result.ratedCount}, matched in graph: ${result.entries.length}, ` +
-      `added: ${summary.added}, updated: ${summary.updated}, skipped: ${summary.skipped}, ` +
-      `unmapped: ${result.unmappedCount}.`;
-    setAsyncStatus(usernameImportStatusEl, "ready", `Imported ${result.ratedCount} rated entries from ${providerLabel(provider)}.`);
+    setPendingHistoryImport({ entries: result.history, duplicates: result.duplicateCount }, "username");
+    recMessageEl.textContent = `Review ${providerLabel(provider)} import counts and choose merge or replace before applying.`;
+    setAsyncStatus(usernameImportStatusEl, "ready", `${result.history.length} entries ready for import preview.`);
   } catch (error) {
     if (controller.signal.aborted || activeUsernameImport?.controller !== controller) return;
     if (isAbortError(error)) {
@@ -2151,6 +2170,122 @@ async function importWatchedFromUsername(): Promise<void> {
       activeUsernameImport = null;
       setUsernameImportLoading(false, provider);
     }
+  }
+}
+
+function clearPendingHistoryImport(): void {
+  pendingHistoryImport = null;
+  historyImportPreviewEl.hidden = true;
+  historyImportSummaryEl.textContent = "";
+  historyImportUnmappedEl.textContent = "";
+}
+
+function setPendingHistoryImport(parsed: ParsedHistory, origin: "local" | "username"): void {
+  pendingHistoryImport = { parsed, origin };
+  historyImportModeEl.value = "merge";
+  historyImportPreviewEl.hidden = false;
+  renderImportPreview();
+}
+
+function renderImportPreview(): void {
+  const pending = pendingHistoryImport;
+  if (!pending) return;
+  const mode: ImportMode = historyImportModeEl.value === "replace" ? "replace" : "merge";
+  const counts = previewHistory(pending.parsed, historyEntries, recommendationIndex, mode);
+  const incomingPicks = new Set(pending.parsed.entries
+    .filter((entry) => historyScoreToTen(entry) !== null && entry.status !== "plan_to_watch")
+    .map((entry) => resolveHistoryAnime(entry, recommendationIndex)?.nodeId)
+    .filter((nodeId): nodeId is string => nodeId !== undefined));
+  const picksRemoved = mode === "replace"
+    ? selectedAnimeNodeIds.filter((nodeId) => !incomingPicks.has(nodeId)).length : 0;
+  historyImportSummaryEl.textContent =
+    `${counts.total} entries (${counts.duplicates} duplicate identities collapsed). ` +
+    `Mapped: ${counts.mapped}; unmapped: ${counts.unmapped}; unscored: ${counts.unscored}; ` +
+    `seen: ${counts.seen}; planned: ${counts.planned}. ` +
+    `History new: ${counts.added}; updated: ${counts.updated}; unchanged: ${counts.unchanged}; ` +
+    `removed by replace: ${counts.removed}. Watched picks removed by replace: ${picksRemoved}.`;
+  const unmapped = pending.parsed.entries
+    .filter((entry) => !resolveHistoryAnime(entry, recommendationIndex))
+    .slice(0, 3).map((entry) => entry.title);
+  historyImportUnmappedEl.textContent = unmapped.length > 0
+    ? `Unmapped examples kept for later matching: ${unmapped.join("; ")}.` : "All entries match the current graph.";
+}
+
+function applyPendingHistoryImport(): void {
+  const pending = pendingHistoryImport;
+  if (!pending) return;
+  const mode: ImportMode = historyImportModeEl.value === "replace" ? "replace" : "merge";
+  const previousHistory = [...historyEntries];
+  const previousSelected = [...selectedAnimeNodeIds];
+  const previousWeights = new Map(selectedAnimeWeights);
+  try {
+    const nextHistory = mergeHistory(historyEntries, pending.parsed.entries, mode);
+    if (mode === "replace") {
+      selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
+      selectedAnimeWeights.clear();
+    }
+    const ratedMapped: ImportedWatchedEntry[] = [];
+    for (const entry of pending.parsed.entries) {
+      if (entry.status === "plan_to_watch") continue;
+      const scoreTen = historyScoreToTen(entry);
+      if (scoreTen === null) continue;
+      const anime = resolveHistoryAnime(entry, recommendationIndex);
+      if (anime) ratedMapped.push({ anime, weight: normalizeImportedScoreToWeight(scoreTen) });
+    }
+    const selectionSummary = upsertImportedWatchedEntries(ratedMapped);
+    historyEntries.splice(0, historyEntries.length, ...nextHistory);
+    if (!persistRecommendationState()) {
+      throw new Error("Browser storage rejected the import; prior history is intact.");
+    }
+    renderSelectedAnime();
+    renderImportedHistory();
+    void updateRecommendations();
+    setAsyncStatus(pending.origin === "local" ? bulkImportStatusEl : usernameImportStatusEl,
+      "ready", "Import applied and saved in this browser.");
+    recMessageEl.textContent =
+      `Import applied: ${pending.parsed.entries.length} history entries; ` +
+      `watched picks added: ${selectionSummary.added}, updated: ${selectionSummary.updated}, ` +
+      `unchanged: ${selectionSummary.skipped}.`;
+  } catch (error) {
+    historyEntries.splice(0, historyEntries.length, ...previousHistory);
+    selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length, ...previousSelected);
+    selectedAnimeWeights.clear();
+    for (const [nodeId, weight] of previousWeights) selectedAnimeWeights.set(nodeId, weight);
+    renderSelectedAnime();
+    renderImportedHistory();
+    setAsyncStatus(pending.origin === "local" ? bulkImportStatusEl : usernameImportStatusEl,
+      "failed", "Import was not applied; prior history is intact.");
+    recMessageEl.textContent = error instanceof Error ? error.message : "Import was not applied.";
+  }
+}
+
+function renderImportedHistory(): void {
+  historyCountEl.textContent = String(historyEntries.length);
+  historyListEl.replaceChildren();
+  if (historyEntries.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "No imported history yet.";
+    historyListEl.append(item);
+    return;
+  }
+  const ordered = [...historyEntries].sort((left, right) =>
+    Number(Boolean(resolveHistoryAnime(left, recommendationIndex))) -
+    Number(Boolean(resolveHistoryAnime(right, recommendationIndex))));
+  for (const entry of ordered.slice(0, 50)) {
+    const item = document.createElement("li");
+    const mappedAnime = resolveHistoryAnime(entry, recommendationIndex);
+    const mapped = mappedAnime !== null;
+    item.textContent = `${mappedAnime?.label ?? entry.title} — ${entry.sourceStatus || entry.status}; ` +
+      `episodes: ${entry.progressEpisodes ?? "unknown"}; ` +
+      `score: ${entry.score ?? "unscored"} (${entry.scoreScale}); ` +
+      `${mapped ? "in catalog" : "unmapped, kept"}` +
+      (mapped && entry.title !== mappedAnime.label ? `; source title: ${entry.title}` : "");
+    historyListEl.append(item);
+  }
+  if (historyEntries.length > 50) {
+    const more = document.createElement("li");
+    more.textContent = `${historyEntries.length - 50} more entries saved locally.`;
+    historyListEl.append(more);
   }
 }
 
@@ -2227,40 +2362,6 @@ function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
   }
 
   return { added, updated, skipped };
-}
-
-function parseBulkWatchedLine(
-  line: string,
-  index: RecommendationIndex,
-): { anime: AnimeInfo; weight?: number } | null {
-  const parts = line
-    .split(/[,\t|]/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  if (parts.length === 0) {
-    return null;
-  }
-
-  const animeToken = parts[0];
-  const anime = resolveAnimeInput(animeToken, index);
-  if (!anime) {
-    return null;
-  }
-
-  const scoreToken = parts[1];
-  if (!scoreToken) {
-    return { anime };
-  }
-
-  const scoreValue = Number.parseFloat(scoreToken);
-  if (!Number.isFinite(scoreValue)) {
-    return { anime };
-  }
-
-  return {
-    anime,
-    weight: normalizeImportedScoreToWeight(scoreValue),
-  };
 }
 
 function removeSelectedAnime(nodeId: string): void {
@@ -2523,7 +2624,7 @@ async function updateRecommendations(): Promise<void> {
   recommendations = filterCandidateEligibility(
     recommendations,
     includeCandidateNodeIds,
-    excludeCandidateNodeIds,
+    [...excludeCandidateNodeIds, ...seenHistoryNodeIds(historyEntries, recommendationIndex)],
   );
 
   if (recommendations.length === 0) {
@@ -3806,6 +3907,7 @@ function renderStorageWarnings(): void {
 function persistRecommendationState(): boolean {
   cancelActiveUsernameImport();
   cancelBulkFileLoad();
+  clearPendingHistoryImport();
   recommendationController?.abort();
   ++recommendationRunId;
   const saved = persistence.persistRecommendationState(buildCurrentRecommendationState());
@@ -3827,6 +3929,7 @@ function buildCurrentRecommendationState(): StoredRecommendationState {
     modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
     includeCandidates: [...includeCandidateNodeIds],
     excludeCandidates: [...excludeCandidateNodeIds],
+    history: [...historyEntries],
   };
 }
 
@@ -3894,9 +3997,11 @@ function loadSelectedProfile(): void {
     modelBlendWeight: profile.state.modelBlendWeight ?? 0.5,
     includeCandidates: profile.state.includeCandidates ?? [],
     excludeCandidates: profile.state.excludeCandidates ?? [],
+    history: profile.state.history ?? [],
   });
   const saved = persistRecommendationState();
   renderSelectedAnime();
+  renderImportedHistory();
   renderIncludeCandidates();
   renderExcludeCandidates();
   void updateRecommendations();
@@ -3935,11 +4040,14 @@ function applyRecommendationState(state: {
   modelBlendWeight: number;
   includeCandidates: string[];
   excludeCandidates: string[];
+  history?: HistoryEntry[];
 }): void {
   selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
   selectedAnimeWeights.clear();
   includeCandidateNodeIds.splice(0, includeCandidateNodeIds.length);
   excludeCandidateNodeIds.splice(0, excludeCandidateNodeIds.length);
+  historyEntries.splice(0, historyEntries.length, ...(state.history ?? []));
+  clearPendingHistoryImport();
 
   for (const entry of state.selected) {
     selectedAnimeNodeIds.push(entry.nodeId);

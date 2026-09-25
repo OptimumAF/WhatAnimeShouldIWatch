@@ -1,4 +1,5 @@
 import type { EdgeType, ModelRecommendationAnime, NodeType } from "./artifacts";
+import type { HistoryEntry } from "./import-history";
 
 export interface ConnectedItem {
   nodeId: string;
@@ -60,6 +61,8 @@ export interface ImportedWatchedEntry {
 
 export interface UsernameImportResult {
   entries: ImportedWatchedEntry[];
+  history: HistoryEntry[];
+  duplicateCount: number;
   ratedCount: number;
   unmappedCount: number;
 }
