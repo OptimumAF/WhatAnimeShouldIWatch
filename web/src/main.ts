@@ -31,12 +31,13 @@ import {
   clampModelBlendWeight,
   createCandidateEligibilityPolicy,
   explainRecommendation,
+  formatScoreEquation,
   formatWeight,
   hasActiveRecommendationFilters,
   normalizeTitle,
   rankEligibleCandidates,
 } from "./recommendations";
-import type { CandidateEligibilityPolicy, EligibilityRankingMode, GenreOverlapRecommendation, RecommendationFilters } from "./recommendations";
+import type { CandidateEligibilityPolicy, EligibilityRankingMode, GenreOverlapRecommendation, RecommendationExplanation, RecommendationFilters } from "./recommendations";
 import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { createArtifactLoader } from "./artifact-loader";
 import {
@@ -2990,7 +2991,8 @@ function renderRecommendationCard(
       ? "rec-synopsis"
       : "rec-synopsis rec-synopsis-muted";
   const related = display === "related" ? item as GenreOverlapRecommendation : null;
-  const reason = display === "ranking" ? formatRecommendationWhyHtml(item)
+  const explanation = display === "ranking" ? explainRecommendation(item) : null;
+  const reason = explanation ? formatRecommendationWhyHtml(explanation)
     : escapeHtml(display === "coverage"
       ? `Catalog coverage: ${item.supportCount} positive graph connections; personal preference evidence is unavailable.`
       : display === "popularity"
@@ -3013,7 +3015,11 @@ function renderRecommendationCard(
           ? `Graph ${item.fusion.graphWeight === 0 ? "inactive" : item.fusion.graphRank === null
             ? "no candidate" : `rank #${item.fusion.graphRank}`} | Model ${item.fusion.modelWeight === 0
             ? "inactive" : item.fusion.modelRank === null ? "no candidate"
-              : `rank #${item.fusion.modelRank}`}`
+              : `rank #${item.fusion.modelRank}`} | ${explanation?.kind === "score" ? explanation.distinctSourceCount : 0} distinct source titles`
+          : item.scoreSource?.kind === "graph" && explanation?.kind === "score"
+            ? `${explanation.distinctSourceCount} distinct Liked sources | ${item.scoreSource.contributingEdges} positive pair edges`
+          : item.scoreSource?.kind === "model" && explanation?.kind === "score"
+            ? `${explanation.distinctSourceCount} distinct mapped titles | ${item.scoreSource.mappedSignals}/${item.scoreSource.suppliedSignals} signals mapped`
           : `Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}`;
 
   return `
@@ -4115,19 +4121,24 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function formatRecommendationWhyHtml(result: RecommendationResult): string {
-  const explanation = explainRecommendation(result);
+function formatRecommendationWhyHtml(explanation: RecommendationExplanation): string {
   if (explanation.kind === "none") {
-    return `<div class="rec-why-line">Why: no direct contributing anime found.</div>`;
+    return `<div class="rec-why-line">${escapeHtml(explanation.headline)}</div>`;
   }
-  if (explanation.kind === "fusion") {
-    return `<div class="rec-why-line">${escapeHtml(explanation.line)}</div>`;
+  if (explanation.kind === "qualitative") {
+    return `<div class="rec-why-line">${escapeHtml(explanation.headline)}</div>` +
+      `<div class="rec-why-line">${escapeHtml(explanation.uncertainty)}</div>`;
   }
-
-  return [
-    `<div class="rec-why-line rec-why-pos">${escapeHtml(explanation.positiveLine)}</div>`,
-    `<div class="rec-why-line rec-why-neg">${escapeHtml(explanation.negativeLine)}</div>`,
-  ].join("");
+  const equation = formatScoreEquation(explanation);
+  return `<div class="rec-why-line">${escapeHtml(explanation.headline)}</div>` +
+    `<div class="rec-why-line">${escapeHtml(explanation.uncertainty)}</div>` +
+    `<details class="rec-score-breakdown"><summary>How the score was calculated</summary>` +
+    `<div class="rec-score-equation">${escapeHtml(equation.line)}</div>` +
+    explanation.detailLines.map((line) => `<div class="rec-score-detail">${escapeHtml(line)}</div>`).join("") +
+    (equation.roundingAdjustmentUnits !== 0
+      ? `<div class="rec-score-detail">The display rounding adjustment reconciles independently rounded terms with the shown score.</div>`
+      : "") +
+    `</details>`;
 }
 
 function renderModelBlendValue(): void {

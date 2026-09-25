@@ -23,20 +23,28 @@ export interface RecommendationContribution {
   weightedScore: number;
 }
 
+export type RecommendationScoreSource =
+  | { kind: "graph"; contributingEdges: number }
+  | { kind: "model"; globalMean: number; itemBias: number;
+      normalizationDenominator: number; suppliedSignals: number; mappedSignals: number };
+
 export interface RecommendationResult {
   anime: AnimeInfo;
   score: number;
   strongest: number;
   supportCount: number;
   contributions: RecommendationContribution[];
+  scoreSource?: RecommendationScoreSource;
   /** Present only for hybrid relative-rank points, which are not calibrated probabilities. */
   fusion?: {
     graphRank: number | null;
     modelRank: number | null;
     graphWeight: number;
     modelWeight: number;
-    graphContributions: RecommendationContribution[];
-    modelContributions: RecommendationContribution[];
+    graphPoints: number;
+    modelPoints: number;
+    graphSource: RecommendationResult | null;
+    modelSource: RecommendationResult | null;
   };
 }
 

@@ -300,7 +300,7 @@ test("quality and content exploration use known metadata and only Liked genre ev
     .recommendations.some((item) => [101, 102, 103, 104].includes(item.anime.animeId)), false);
 });
 
-test("explanations select the two strongest contributors of each sign as plain text", () => {
+test("untyped legacy results label source evidence as qualitative", () => {
   const item: RecommendationResult = {
     anime: { animeId: 9, nodeId: "anime:9", label: "Candidate" },
     score: 0.4, strongest: 0.8, supportCount: 3,
@@ -308,15 +308,15 @@ test("explanations select the two strongest contributors of each sign as plain t
       ["small", 0.1], ["<Large & watched>", 0.8], ["middle", 0.4],
       ["weak negative", -0.1], ["strong negative", -0.7], ["middle negative", -0.3],
       ["neutral", 0],
-    ].map(([label, weightedScore]) => ({
-      watched: { animeId: 1, nodeId: "anime:1", label: String(label) },
+    ].map(([label, weightedScore], index) => ({
+      watched: { animeId: index + 1, nodeId: `anime:${index + 1}`, label: String(label) },
       edgeWeight: Number(weightedScore), weightFactor: 1, weightedScore: Number(weightedScore),
     })),
   };
-  assert.deepEqual(explainRecommendation(item), {
-    kind: "contributors",
-    positiveLine: "Why+: <Large & watched> (+0.800) | middle (+0.400)",
-    negativeLine: "Why-: strong negative (-0.700) | middle negative (-0.300)",
-  });
-  assert.deepEqual(explainRecommendation({ ...item, contributions: [] }), { kind: "none" });
+  const explanation = explainRecommendation(item);
+  assert.equal(explanation.kind, "qualitative");
+  assert.ok(explanation.headline.includes("<Large & watched>"));
+  assert.ok(explanation.headline.includes("No numeric attribution"));
+  assert.deepEqual(explainRecommendation({ ...item, contributions: [] }),
+    { kind: "none", headline: "Why: no direct contributing title is available." });
 });

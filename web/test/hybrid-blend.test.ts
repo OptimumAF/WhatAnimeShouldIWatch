@@ -68,9 +68,15 @@ test("fusion explanation names source ranks and evidence without equating raw ev
   const model = [{ ...item(2, -1), contributions: [{ watched: item(4, 0).anime,
     edgeWeight: -2, weightFactor: 1, weightedScore: -2 }] }];
   const result = combineHybridRecommendations(graph, model, 0.5)[0];
-  assert.deepEqual(explainRecommendation(result), { kind: "fusion",
-    line: "Why: Graph rank #1; positive evidence from Invented 1 | " +
-      "Model rank #1; negative evidence from Invented 4. " +
-      "Rank points combine relative positions; they are not a probability." });
+  const explanation = explainRecommendation(result);
+  assert.equal(explanation.kind, "score");
+  if (explanation.kind !== "score") return;
+  assert.equal(explanation.engine, "fusion");
+  assert.match(explanation.headline, /graph rank #1; model rank #1/);
+  assert.match(explanation.headline, /Invented 1, Invented 4/);
+  assert.match(explanation.headline, /not a probability/);
+  assert.equal(explanation.distinctSourceCount, 2);
+  assert.match(explanation.detailLines.join(" "), /Graph source evidence is qualitative/);
+  assert.match(explanation.detailLines.join(" "), /Model source evidence is qualitative/);
   assert.deepEqual(result.contributions, []);
 });

@@ -8,26 +8,19 @@ test("synthetic recommendation modes retain their visible ranking and explanatio
 
   const expected = {
     graph: [
-      ["Moonlit Workshop", "+0.583", "Why+: Copper Comet (+0.583)Why-: no notable negative contributors."],
-      ["星の航路", "+0.417", "Why+: Copper Comet (+0.417)Why-: no notable negative contributors."],
+      ["Moonlit Workshop", "+0.583"], ["星の航路", "+0.417"],
     ],
     model: [
-      ["星の航路", "+0.940", "Why+: Copper Comet (+0.820)Why-: no notable negative contributors."],
-      ["Moonlit Workshop", "+0.760", "Why+: Copper Comet (+0.710)Why-: no notable negative contributors."],
-      ["Quiet Satellite", "+0.520", "Why+: Copper Comet (+0.480)Why-: no notable negative contributors."],
-      ["Café Nebula", "+0.490", "Why+: Copper Comet (+0.470)Why-: no notable negative contributors."],
-      ["Glass Orchard", "+0.380", "Why+: Copper Comet (+0.430)Why-: no notable negative contributors."],
-      ["Paper Current", "-0.090", "Why+: no strong positive contributors.Why-: Copper Comet (-0.060)"],
-      ["Ashen Harbor", "-0.400", "Why+: no strong positive contributors.Why-: Copper Comet (-0.400)"],
+      ["星の航路", "+0.940"], ["Moonlit Workshop", "+0.760"],
+      ["Quiet Satellite", "+0.520"], ["Café Nebula", "+0.490"],
+      ["Glass Orchard", "+0.380"], ["Paper Current", "-0.090"],
+      ["Ashen Harbor", "-0.400"],
     ],
     hybrid: [
-      ["Moonlit Workshop", "16.26 rank points", "Why: Graph rank #1; positive evidence from Copper Comet | Model rank #2; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
-      ["星の航路", "16.26 rank points", "Why: Graph rank #2; positive evidence from Copper Comet | Model rank #1; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
-      ["Quiet Satellite", "7.94 rank points", "Why: Graph: no candidate | Model rank #3; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
-      ["Café Nebula", "7.81 rank points", "Why: Graph: no candidate | Model rank #4; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
-      ["Glass Orchard", "7.69 rank points", "Why: Graph: no candidate | Model rank #5; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
-      ["Paper Current", "7.58 rank points", "Why: Graph: no candidate | Model rank #6; negative evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
-      ["Ashen Harbor", "7.46 rank points", "Why: Graph: no candidate | Model rank #7; negative evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
+      ["Moonlit Workshop", "16.26 rank points"], ["星の航路", "16.26 rank points"],
+      ["Quiet Satellite", "7.94 rank points"], ["Café Nebula", "7.81 rank points"],
+      ["Glass Orchard", "7.69 rank points"], ["Paper Current", "7.58 rank points"],
+      ["Ashen Harbor", "7.46 rank points"],
     ],
   };
 
@@ -43,10 +36,34 @@ test("synthetic recommendation modes retain their visible ranking and explanatio
       items.map((item) => [
         item.querySelector(".rec-title")?.textContent,
         item.querySelector(".rec-score")?.textContent,
-        item.querySelector(".rec-why")?.textContent,
       ]),
     );
     expect(cards).toEqual(expected[mode]);
+    const first = page.locator("#rec-results .rec-item").first();
+    await expect(first.locator(".rec-why-line").first()).toContainText("Copper Comet");
+    await expect(first.locator(".rec-why-line").nth(1)).toContainText("No calibrated confidence interval");
+    await first.locator(".rec-score-breakdown summary").click();
+    const equation = first.locator(".rec-score-equation");
+    if (mode === "graph") {
+      await expect(equation).toHaveText("Graph score +0.583 = Copper Comet (+0.583).");
+      await expect(first.locator(".rec-score-detail").first()).toContainText("1 distinct source title");
+    } else if (mode === "model") {
+      await expect(equation).toHaveText(
+        "Model score +0.940 = global mean (0.000) + item bias (+0.120) + Copper Comet (+0.820).");
+      await expect(first.locator(".rec-score-detail").first()).toContainText("sum of absolute mapped weights");
+    } else {
+      await expect(equation).toContainText("Rank points 16.26 = graph rank #1");
+      await expect(first.locator(".rec-score-detail")).toContainText([
+        "Eligible raw graph/model scores set source ranks",
+        "Effective weights: graph 50%, model 50%",
+        "Graph input: Graph score +0.583",
+        "Each title term sums",
+        "There is no global mean",
+        "Model input: Model score +0.760",
+        "Each title term is its item-vector dot product",
+        "The global mean and candidate item bias",
+      ]);
+    }
   }
 });
 
@@ -67,6 +84,19 @@ test("browser model ranks from three explicit preference signals", async ({ page
   for (const title of ["Copper Comet", "Moonlit Workshop", "Ashen Harbor"]) {
     await expect(page.locator("#rec-results .rec-title").filter({ hasText: title })).toHaveCount(0);
   }
+  const first = page.locator("#rec-results .rec-item").first();
+  await expect(first.locator(".rec-meta").first()).toContainText("3 distinct mapped titles | 3/3 signals mapped");
+  await expect(first.locator(".rec-why-line").first()).toContainText(
+    "Copper Comet, Moonlit Workshop, Ashen Harbor");
+  await first.locator(".rec-score-breakdown summary").click();
+  const equation = first.locator(".rec-score-equation");
+  await expect(equation).toContainText("global mean (");
+  await expect(equation).toContainText("item bias (");
+  for (const title of ["Copper Comet", "Moonlit Workshop", "Ashen Harbor"]) {
+    await expect(equation).toContainText(title);
+  }
+  await expect(first.locator(".rec-score-detail").first()).toContainText(
+    "signed importance × confidence ÷");
 });
 
 test("hybrid endpoints keep the lowest source item and a missing graph gives the model full weight", async ({ page }) => {
@@ -109,6 +139,8 @@ test("recommendation explanation renders an invented unsafe label as text", asyn
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await expect(page.locator("#rec-results .rec-why").first()).toContainText(unsafeLabel);
+  await page.locator("#rec-results .rec-score-breakdown summary").first().click();
+  await expect(page.locator("#rec-results .rec-score-equation").first()).toContainText(unsafeLabel);
   await expect(page.locator("#rec-results .rec-why img")).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __unsafe?: number }).__unsafe)).toBeUndefined();
 });

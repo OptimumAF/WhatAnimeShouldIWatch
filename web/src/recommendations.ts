@@ -300,10 +300,7 @@ function scoreGraphRecommendations(
       score: number;
       strongest: number;
       supportCount: number;
-      sourceMap: Map<
-        string,
-        { edgeWeight: number; weightFactor: number; weightedScore: number }
-      >;
+      contributions: RecommendationContribution[];
     }
   >();
 
@@ -319,6 +316,12 @@ function scoreGraphRecommendations(
         continue;
       }
       const weightedScore = neighbor.weight * weightFactor;
+      const watched = index.animeByNodeId.get(selectedNodeId) ?? {
+        nodeId: selectedNodeId, animeId: parseAnimeId(selectedNodeId), label: selectedNodeId,
+      };
+      const contribution: RecommendationContribution = {
+        watched, edgeWeight: neighbor.weight, weightFactor, weightedScore,
+      };
 
       const current = scored.get(neighbor.otherNodeId);
       if (!current) {
@@ -326,16 +329,7 @@ function scoreGraphRecommendations(
           score: weightedScore,
           strongest: weightedScore,
           supportCount: 1,
-          sourceMap: new Map([
-            [
-              selectedNodeId,
-              {
-                edgeWeight: neighbor.weight,
-                weightFactor,
-                weightedScore,
-              },
-            ],
-          ]),
+          contributions: [contribution],
         });
         continue;
       }
@@ -343,35 +337,19 @@ function scoreGraphRecommendations(
       current.score += weightedScore;
       current.strongest = Math.max(current.strongest, weightedScore);
       current.supportCount += 1;
-      current.sourceMap.set(selectedNodeId, {
-        edgeWeight: neighbor.weight,
-        weightFactor,
-        weightedScore,
-      });
+      current.contributions.push(contribution);
     }
   }
 
   return [...scored.entries()]
-    .map(([nodeId, aggregate]) => {
+    .map(([nodeId, aggregate]): RecommendationResult | null => {
       const anime = index.animeByNodeId.get(nodeId);
       if (!anime) {
         return null;
       }
-      const contributions = [...aggregate.sourceMap.entries()]
-        .map(([watchedNodeId, source]) => {
-          const watched = index.animeByNodeId.get(watchedNodeId);
-          if (!watched) {
-            return null;
-          }
-          return {
-            watched,
-            edgeWeight: source.edgeWeight,
-            weightFactor: source.weightFactor,
-            weightedScore: source.weightedScore,
-          } satisfies RecommendationContribution;
-        })
-        .filter((value): value is RecommendationContribution => value !== null)
-        .sort((left, right) => right.weightedScore - left.weightedScore);
+      const contributions = aggregate.contributions
+        .sort((left, right) => right.weightedScore - left.weightedScore ||
+          left.watched.animeId - right.watched.animeId);
 
       return {
         anime,
@@ -379,7 +357,8 @@ function scoreGraphRecommendations(
         strongest: aggregate.strongest,
         supportCount: aggregate.supportCount,
         contributions,
-      } satisfies RecommendationResult;
+        scoreSource: { kind: "graph", contributingEdges: aggregate.supportCount },
+      };
     })
     .filter((value): value is RecommendationResult => value !== null)
     .sort((left, right) => {
@@ -455,6 +434,8 @@ function scoreModelRecommendations(
     return [];
   }
 
+  const suppliedSignalCount = new Set(seeds.map((seed) => seed.nodeId)).size;
+  const mappedSignalCount = new Set(watchedEntries.map((entry) => entry.anime.nodeId)).size;
   const watchedAnimeIds = new Set(excludedNodeIds.map((nodeId) => index.animeByNodeId.get(nodeId)?.animeId));
   const userVector = new Float32Array(factors);
   let denominator = 0;
@@ -520,6 +501,14 @@ function scoreModelRecommendations(
       strongest,
       supportCount,
       contributions,
+      scoreSource: {
+        kind: "model",
+        globalMean: modelIndex.globalMean,
+        itemBias: modelAnime.bias,
+        normalizationDenominator: denominator,
+        suppliedSignals: suppliedSignalCount,
+        mappedSignals: mappedSignalCount,
+      },
     });
   }
 
@@ -558,6 +547,8 @@ export function combineHybridRecommendations(
       (activeGraphRank === null ? 0 : graphWeight / (60 + activeGraphRank)) +
       (activeModelRank === null ? 0 : effectiveModelWeight / (60 + activeModelRank))
     );
+    const graphPoints = activeGraphRank === null ? 0 : 1_000 * graphWeight / (60 + activeGraphRank);
+    const modelPoints = activeModelRank === null ? 0 : 1_000 * effectiveModelWeight / (60 + activeModelRank);
     return {
       anime: (graph?.item ?? model!.item).anime,
       score,
@@ -569,8 +560,10 @@ export function combineHybridRecommendations(
         modelRank: activeModelRank,
         graphWeight,
         modelWeight: effectiveModelWeight,
-        graphContributions: activeGraphRank === null ? [] : graph!.item.contributions,
-        modelContributions: activeModelRank === null ? [] : model!.item.contributions,
+        graphPoints,
+        modelPoints,
+        graphSource: activeGraphRank === null ? null : graph!.item,
+        modelSource: activeModelRank === null ? null : model!.item,
       },
     } satisfies RecommendationResult;
   }).sort((left, right) => right.score - left.score || left.anime.animeId - right.anime.animeId);
@@ -744,50 +737,165 @@ export function rankEligibleCandidates(
   };
 }
 
+export interface ScoreExplanationTerm {
+  label: string;
+  value: number;
+}
+
 export type RecommendationExplanation =
-  | { kind: "none" }
-  | { kind: "fusion"; line: string }
-  | { kind: "contributors"; positiveLine: string; negativeLine: string };
+  | { kind: "none"; headline: string }
+  | { kind: "qualitative"; headline: string; uncertainty: string }
+  | { kind: "score"; engine: "graph" | "model" | "fusion";
+      headline: string; score: number; precision: 2 | 3;
+      distinctSourceCount: number; terms: ScoreExplanationTerm[];
+      detailLines: string[]; uncertainty: string };
+
+function groupedSources(contributions: readonly RecommendationContribution[]): {
+  nodeId: string; label: string; value: number;
+}[] {
+  const byNodeId = new Map<string, { nodeId: string; label: string; value: number }>();
+  for (const item of contributions) {
+    const current = byNodeId.get(item.watched.nodeId);
+    if (current) current.value += item.weightedScore;
+    else byNodeId.set(item.watched.nodeId, { nodeId: item.watched.nodeId,
+      label: item.watched.label, value: item.weightedScore });
+  }
+  return [...byNodeId.values()].sort((left, right) =>
+    Math.abs(right.value) - Math.abs(left.value) ||
+    (left.nodeId < right.nodeId ? -1 : left.nodeId > right.nodeId ? 1 : 0));
+}
+
+function distinctSourceTitles(results: readonly RecommendationResult[]): { nodeId: string; label: string }[] {
+  const byNodeId = new Map<string, { nodeId: string; label: string }>();
+  for (const result of results) {
+    for (const contribution of result.contributions) {
+      const { nodeId, label } = contribution.watched;
+      if (!byNodeId.has(nodeId)) byNodeId.set(nodeId, { nodeId, label });
+    }
+  }
+  return [...byNodeId.values()].sort((left, right) =>
+    left.nodeId < right.nodeId ? -1 : left.nodeId > right.nodeId ? 1 : 0);
+}
+
+function previewTitles(sources: readonly { label: string }[]): string {
+  const names = sources.slice(0, 3).map((item) => item.label).join(", ");
+  return sources.length > 3 ? `${names}, and ${sources.length - 3} more` : names;
+}
+
+function uncertaintyFor(count: number, engine: "graph" | "model" | "fusion"): string {
+  const scope = count < 3 ? `Sparse: ${count} distinct observed title${count === 1 ? "" : "s"}. ` : "";
+  const limit = engine === "graph" ? "Pair-preference edges reflect the loaded graph sample."
+    : engine === "model" ? "Latent-factor scores have not been calibrated for new users."
+      : "Ranks depend on the current eligible candidate pool.";
+  return `Uncertainty: ${scope}No calibrated confidence interval or probability is available. ${limit}`;
+}
 
 export function explainRecommendation(result: RecommendationResult): RecommendationExplanation {
   if (result.fusion) {
     const fusion = result.fusion;
-    const sourceLine = (source: "Graph" | "Model", rank: number | null,
-      weight: number, contributions: readonly RecommendationContribution[]): string | null => {
-      if (weight === 0) return null;
-      if (rank === null) return `${source}: no candidate`;
-      const positive = contributions.find((item) => item.weightedScore > 0)?.watched.label;
-      const negative = contributions.find((item) => item.weightedScore < 0)?.watched.label;
-      return `${source} rank #${rank}` +
-        (positive ? `; positive evidence from ${positive}` : "") +
-        (negative ? `; negative evidence from ${negative}` : "");
-    };
-    const parts = [
-      sourceLine("Graph", fusion.graphRank, fusion.graphWeight, fusion.graphContributions),
-      sourceLine("Model", fusion.modelRank, fusion.modelWeight, fusion.modelContributions),
-    ].filter((part): part is string => part !== null);
-    return { kind: "fusion",
-      line: `Why: ${parts.join(" | ")}. Rank points combine relative positions; they are not a probability.` };
+    const activeSources = [fusion.graphSource, fusion.modelSource].filter(
+      (item): item is RecommendationResult => item !== null);
+    const sourceTitles = distinctSourceTitles(activeSources);
+    const rankLabel = (name: string, rank: number | null, weight: number): string =>
+      weight === 0 ? `${name} inactive` : rank === null ? `${name} has no candidate`
+        : `${name} rank #${rank}`;
+    const detailLines = [
+      "Eligible raw graph/model scores set source ranks; rank points = 1000 × effective weight ÷ (60 + rank). Missing candidates contribute 0.",
+      `Effective weights: graph ${(fusion.graphWeight * 100).toFixed(0)}%, model ${(fusion.modelWeight * 100).toFixed(0)}%. Raw source scores are not added to rank points.`,
+    ];
+    for (const [name, source] of [["Graph", fusion.graphSource], ["Model", fusion.modelSource]] as const) {
+      if (!source) continue;
+      const explained = explainRecommendation(source);
+      if (explained.kind !== "score") {
+        detailLines.push(`${name} source evidence is qualitative; its raw score has no verified decomposition.`);
+        continue;
+      }
+      detailLines.push(`${name} input: ${formatScoreEquation(explained).line}`);
+      detailLines.push(...explained.detailLines);
+    }
+    return { kind: "score", engine: "fusion", score: result.score, precision: 2,
+      distinctSourceCount: sourceTitles.length,
+      headline: `Why: ${rankLabel("graph", fusion.graphRank, fusion.graphWeight)}; ` +
+        `${rankLabel("model", fusion.modelRank, fusion.modelWeight)}. ` +
+        `${sourceTitles.length} distinct observed source title${sourceTitles.length === 1 ? "" : "s"}` +
+        (sourceTitles.length > 0 ? `: ${previewTitles(sourceTitles)}` : "") +
+        ". Rank points are relative, not a probability.",
+      terms: [
+        { label: fusion.graphRank === null ? "graph absent/inactive" : `graph rank #${fusion.graphRank}`,
+          value: fusion.graphPoints },
+        { label: fusion.modelRank === null ? "model absent/inactive" : `model rank #${fusion.modelRank}`,
+          value: fusion.modelPoints },
+      ],
+      detailLines,
+      uncertainty: uncertaintyFor(sourceTitles.length, "fusion") };
   }
-  if (result.contributions.length === 0) {
-    return { kind: "none" };
+
+  const sources = groupedSources(result.contributions);
+  if (result.scoreSource?.kind === "graph") {
+    return { kind: "score", engine: "graph", score: result.score, precision: 3,
+      distinctSourceCount: sources.length,
+      headline: `Why: ${sources.length} distinct Liked source title${sources.length === 1 ? "" : "s"}` +
+        (sources.length > 0 ? `: ${previewTitles(sources)}` : "") + ".",
+      terms: sources.map((source) => ({ label: source.label, value: source.value })),
+      detailLines: [
+        `Each title term sums its retained positive pair-preference edge weight × your importance × confidence. ${result.scoreSource.contributingEdges} contributing edge${result.scoreSource.contributingEdges === 1 ? "" : "s"}; ${sources.length} distinct source title${sources.length === 1 ? "" : "s"}.`,
+        "There is no global mean, item bias, or extra score normalization in this graph score. Pair preference is not item similarity.",
+      ],
+      uncertainty: uncertaintyFor(sources.length, "graph") };
   }
+  if (result.scoreSource?.kind === "model") {
+    const { globalMean, itemBias, normalizationDenominator,
+      suppliedSignals, mappedSignals } = result.scoreSource;
+    const terms: ScoreExplanationTerm[] = [
+      { label: "global mean", value: globalMean },
+      { label: "item bias", value: itemBias },
+      ...sources.map((source) => ({ label: source.label,
+        value: source.value / normalizationDenominator })),
+    ];
+    const residual = result.score - terms.reduce((sum, term) => sum + term.value, 0);
+    if (Math.abs(residual) >= 0.0005) {
+      terms.push({ label: "float32 rounding", value: residual });
+    }
+    return { kind: "score", engine: "model", score: result.score, precision: 3,
+      distinctSourceCount: sources.length,
+      headline: `Why: ${sources.length} distinct mapped preference title${sources.length === 1 ? "" : "s"}` +
+        (sources.length > 0 ? `: ${previewTitles(sources)}` : "") +
+        `. ${mappedSignals}/${suppliedSignals} supplied signal${suppliedSignals === 1 ? "" : "s"} mapped.`,
+      terms,
+      detailLines: [
+        `Each title term is its item-vector dot product × signed importance × confidence ÷ ${normalizationDenominator} (the sum of absolute mapped weights). Liked is positive; Disliked is negative.`,
+        "The global mean and candidate item bias are added separately. Float32 arithmetic may create small rounding differences; a separate term appears when it reaches the displayed precision.",
+      ],
+      uncertainty: uncertaintyFor(sources.length, "model") };
+  }
+  if (sources.length > 0) {
+    return { kind: "qualitative",
+      headline: `Qualitative source evidence: ${previewTitles(sources)}. No numeric attribution is available for this score.`,
+      uncertainty: uncertaintyFor(sources.length, "model") };
+  }
+  return { kind: "none", headline: "Why: no direct contributing title is available." };
+}
 
-  const positives = result.contributions
-    .filter((item) => item.weightedScore > 0)
-    .sort((left, right) => right.weightedScore - left.weightedScore)
-    .slice(0, 2);
-  const negatives = result.contributions
-    .filter((item) => item.weightedScore < 0)
-    .sort((left, right) => left.weightedScore - right.weightedScore)
-    .slice(0, 2);
-
-  const positiveLine = positives.length > 0
-    ? `Why+: ${positives.map((item) => `${item.watched.label} (${formatWeight(item.weightedScore)})`).join(" | ")}`
-    : "Why+: no strong positive contributors.";
-  const negativeLine = negatives.length > 0
-    ? `Why-: ${negatives.map((item) => `${item.watched.label} (${formatWeight(item.weightedScore)})`).join(" | ")}`
-    : "Why-: no notable negative contributors.";
-
-  return { kind: "contributors", positiveLine, negativeLine };
+/** Independently round terms, then disclose any display adjustment needed to reconcile the shown score. */
+export function formatScoreEquation(explanation: Extract<RecommendationExplanation, { kind: "score" }>): {
+  line: string; totalUnits: number; termUnits: number[];
+  roundingAdjustmentUnits: number; precision: 2 | 3;
+} {
+  const precision = explanation.precision;
+  const scale = 10 ** precision;
+  const toUnits = (value: number): number => Math.round(Number(value.toFixed(precision)) * scale);
+  const totalUnits = toUnits(explanation.score);
+  const displayedTerms = explanation.terms.map((term) => ({ label: term.label, units: toUnits(term.value) }));
+  const roundingAdjustmentUnits = totalUnits - displayedTerms.reduce((sum, term) => sum + term.units, 0);
+  if (roundingAdjustmentUnits !== 0) {
+    displayedTerms.push({ label: "display rounding adjustment", units: roundingAdjustmentUnits });
+  }
+  const termUnits = displayedTerms.map((term) => term.units);
+  const display = (units: number, signed = true): string =>
+    `${units < 0 ? "-" : signed && units > 0 ? "+" : ""}${(Math.abs(units) / scale).toFixed(precision)}`;
+  const label = explanation.engine === "graph" ? "Graph score"
+    : explanation.engine === "model" ? "Model score" : "Rank points";
+  return { line: `${label} ${display(totalUnits, explanation.engine !== "fusion")} = ` +
+      displayedTerms.map((term) => `${term.label} (${display(term.units)})`).join(" + ") + ".",
+    totalUnits, termUnits, roundingAdjustmentUnits, precision };
 }
