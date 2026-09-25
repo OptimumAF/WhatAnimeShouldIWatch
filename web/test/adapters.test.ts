@@ -59,27 +59,29 @@ test("persistence uses injected storage, prefix, and clock while migrating legac
   const fake = fakeRuntime(() => { throw new Error("network must not be used"); });
   const persistence = createPersistenceAdapter(fake.runtime, "wasiw.demo");
   const state = {
-    version: 4,
+    version: 5,
     mode: "hybrid" as const,
-    selected: [{ nodeId: "anime:101", weight: 1.7 }],
+    preferences: [{ nodeId: "anime:101", sentiment: "liked" as const,
+      importance: 1.7, confidence: 1, source: "manual" as const }],
     modelBlendWeight: 0.35,
     includeCandidates: ["anime:102"],
     excludeCandidates: ["anime:105"],
   };
   persistence.persistRecommendationState(state);
-  assert.equal(fake.values.has("wasiw.demo.recommendationState.v4"), true);
+  assert.equal(fake.values.has("wasiw.demo.recommendationState.v5"), true);
   assert.deepEqual(persistence.loadRecommendationState(), {
-    mode: "hybrid", selected: state.selected, modelBlendWeight: 0.35,
+    mode: "hybrid", preferences: state.preferences, modelBlendWeight: 0.35,
     includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"], history: [],
   });
 
   fake.values.set("wasiw.demo.recommendationProfiles.v1", JSON.stringify([
-    { name: " Fixture Profile ", state: { ...state, version: 3 } },
+    { name: " Fixture Profile ", state: { version: 3, mode: "hybrid",
+      selected: [{ nodeId: "anime:101", weight: 1.7 }] } },
   ]));
   const profiles = persistence.loadRecommendationProfiles();
   assert.equal(profiles.get("Fixture Profile")?.updatedAt, "2026-09-24T12:34:56.000Z");
   persistence.persistRecommendationProfiles(profiles);
-  assert.deepEqual(JSON.parse(fake.values.get("wasiw.demo.recommendationProfiles.v4") ?? "null")
+  assert.deepEqual(JSON.parse(fake.values.get("wasiw.demo.recommendationProfiles.v5") ?? "null")
     .profiles.map((item: { name: string }) => item.name), ["Fixture Profile"]);
 
   assert.equal(persistence.loadThemeModePreference(() => true), "light");
@@ -108,13 +110,13 @@ test("denied browser storage has deterministic fallbacks without DOM setup", () 
   console.warn = () => {};
   try {
     assert.deepEqual(persistence.loadRecommendationState(), {
-      mode: "graph", selected: [], modelBlendWeight: 0.5,
+      mode: "graph", preferences: [], modelBlendWeight: 0.5,
       includeCandidates: [], excludeCandidates: [], history: [],
     });
     assert.equal(persistence.loadThemeModePreference(() => true), "light");
     assert.deepEqual(persistence.loadRecommendationProfiles(), new Map());
     assert.doesNotThrow(() => persistence.persistRecommendationState({
-      version: 4, mode: "graph", selected: [],
+      version: 5, mode: "graph", preferences: [],
     }));
   } finally {
     console.warn = oldWarn;
@@ -155,11 +157,13 @@ test("provider imports and metadata use only mocked direct transport and seeded 
   });
   const provider = createProviderAdapter(fake.runtime);
   const mal = await provider.fetchMalUsernameImport("fixture-user", index);
-  assert.deepEqual(mal.entries.map((entry) => [entry.anime.animeId, entry.weight]), [[102, 1.6]]);
+  assert.deepEqual(mal.entries.map((entry) => [entry.anime.animeId, entry.preference.sentiment,
+    entry.preference.confidence]), [[102, "liked", 0.5]]);
   assert.deepEqual([mal.history[0].provider, mal.history[0].sourceId, mal.history[0].scoreScale],
     ["mal", "102", "mal-10"]);
   const anilist = await provider.fetchAniListUsernameImport("fixture-user", index);
-  assert.deepEqual(anilist.entries.map((entry) => [entry.anime.animeId, entry.weight]), [[101, 1.8]]);
+  assert.deepEqual(anilist.entries.map((entry) => [entry.anime.animeId, entry.preference.sentiment,
+    entry.preference.confidence]), [[101, "liked", 0.75]]);
   assert.deepEqual([anilist.history[0].sourceId, anilist.history[0].status,
     anilist.history[0].progressEpisodes, anilist.history[0].scoreScale],
   ["501", "completed", 12, "POINT_10_DECIMAL"]);
@@ -223,16 +227,16 @@ test("mocked username imports keep status, progress, unscored and unmapped provi
     ["myanimelist.net", "graphql.anilist.co"]);
 });
 
-test("AniList import retains native score formats before provisional preference conversion", async () => {
+test("AniList import retains native score formats before preference conversion", async () => {
   const cases = [
-    { scale: "POINT_100", score: 80, weight: 1.6 },
-    { scale: "POINT_10_DECIMAL", score: 8.5, weight: 1.7 },
-    { scale: "POINT_10", score: 8, weight: 1.6 },
-    { scale: "POINT_5", score: 4, weight: 1.6 },
-    { scale: "POINT_3", score: 3, weight: 2 },
-    { scale: "POINT_3", score: 1, weight: null },
+    { scale: "POINT_100", score: 80, sentiment: "liked", confidence: 0.5 },
+    { scale: "POINT_10_DECIMAL", score: 8.5, sentiment: "liked", confidence: 0.63 },
+    { scale: "POINT_10", score: 8, sentiment: "liked", confidence: 0.5 },
+    { scale: "POINT_5", score: 4, sentiment: "liked", confidence: 0.5 },
+    { scale: "POINT_3", score: 3, sentiment: "liked", confidence: 1 },
+    { scale: "POINT_3", score: 1, sentiment: "disliked", confidence: 0.75 },
   ];
-  for (const { scale, score, weight } of cases) {
+  for (const { scale, score, sentiment, confidence } of cases) {
     const fake = fakeRuntime((_url, init) => {
       const query = JSON.parse(String(init?.body)).query as string;
       assert.match(query, /User\(name: \$userName\).*scoreFormat/s);
@@ -249,7 +253,8 @@ test("AniList import retains native score formats before provisional preference 
     const result = await createProviderAdapter(fake.runtime)
       .fetchAniListUsernameImport("fixture-user", index);
     assert.deepEqual([result.history[0].score, result.history[0].scoreScale], [score, scale]);
-    assert.deepEqual(result.entries.map((entry) => entry.weight), weight === null ? [] : [weight]);
+    assert.deepEqual(result.entries.map((entry) =>
+      [entry.preference.sentiment, entry.preference.confidence]), [[sentiment, confidence]]);
   }
 });
 

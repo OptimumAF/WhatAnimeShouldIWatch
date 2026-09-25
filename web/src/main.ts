@@ -11,7 +11,7 @@ import type {
 import type {
   AnimeInfo,
   ConnectedItem,
-  ImportedWatchedEntry,
+  ImportedPreferenceEntry,
   ModelRecommendationIndex,
   RecommendationIndex,
   RecommendationResult,
@@ -19,22 +19,18 @@ import type {
 } from "./domain";
 import {
   MAX_MODEL_BLEND_WEIGHT,
-  MAX_WATCH_WEIGHT,
   MIN_MODEL_BLEND_WEIGHT,
-  MIN_WATCH_WEIGHT,
   applyRecommendationFilters,
-  buildGraphRecommendations,
-  buildModelRecommendations,
+  buildGraphRecommendationsForPreferences,
+  buildModelRecommendationsForPreferences,
   buildRecommendationIndex,
   buildRecommendationIndexFromCompact,
   clampModelBlendWeight,
-  clampWatchWeight,
   combineHybridRecommendations,
   explainRecommendation,
   filterCandidateEligibility,
   formatWeight,
   hasActiveRecommendationFilters,
-  normalizeImportedScoreToWeight,
   normalizeTitle,
 } from "./recommendations";
 import type { RecommendationFilters } from "./recommendations";
@@ -43,7 +39,6 @@ import { createArtifactLoader } from "./artifact-loader";
 import {
   MAX_MAL_XML_IMPORT_BYTES,
   MAX_TEXT_IMPORT_BYTES,
-  historyScoreToTen,
   mergeHistory,
   parseMalXmlHistory,
   parseTextHistory,
@@ -52,6 +47,8 @@ import {
   seenHistoryNodeIds,
 } from "./import-history";
 import type { HistoryEntry, ImportMode, ParsedHistory } from "./import-history";
+import { MAX_IMPORTANCE, MIN_IMPORTANCE, clampImportance, manualPreference, preferenceFromHistory } from "./preferences";
+import type { AnimePreference, PreferenceSentiment } from "./preferences";
 import {
   COMMAND_HISTORY_LIMIT,
   COMMAND_PINNED_LIMIT,
@@ -91,14 +88,13 @@ const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
 const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
-const WATCH_WEIGHT_STEP = 0.1;
+const IMPORTANCE_STEP = 0.1;
 const MODEL_BLEND_WEIGHT_STEP = 0.05;
 const METADATA_PREFETCH_LIMIT = 100;
 const METADATA_PREFETCH_WITH_FILTER_LIMIT = 30;
 const METADATA_PREFETCH_CONCURRENCY = 3;
 const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
-const QUICKSTART_SEASONAL_PICK_LIMIT = 3;
 const NETWORK_MOBILE_COMPACT_MAX_WIDTH = 980;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -187,7 +183,7 @@ app.innerHTML = `
             <button id="tips-dismiss-recommendations" class="ghost-btn" type="button">Dismiss Tips</button>
           </div>
           <ul class="contextual-tip-list">
-            <li>Start with 2-5 watched anime for stronger signal quality.</li>
+            <li>Mark titles you liked or disliked; Seen alone does not become a favorite.</li>
             <li>Use <strong>Hybrid</strong> mode when model data is available for best balance.</li>
             <li>Use Include/Exclude overrides to hard-control candidate results.</li>
             <li>Keyboard: <strong>Alt+/</strong> focuses the main anime input instantly.</li>
@@ -198,16 +194,16 @@ app.innerHTML = `
           <div class="intro-copy">
             <h2>Start in 3 Steps</h2>
             <p class="muted">
-              Add what you watched, tune scoring, then review ranked picks with explainable reasons.
+              Add what you watched, state how you felt, then review ranked picks with explainable reasons.
             </p>
           </div>
           <ol class="intro-steps">
-            <li><strong>Step 1:</strong> Add at least one watched anime.</li>
+            <li><strong>Step 1:</strong> Add a title and mark it Liked, Disliked, or Seen/Unrated.</li>
             <li><strong>Step 2:</strong> Pick Graph, Model, or Hybrid ranking.</li>
             <li><strong>Step 3:</strong> Use filters and inspect recommendation reasons.</li>
           </ol>
           <div class="intro-actions">
-            <button id="quickstart-seasonal" type="button" class="primary-btn">${demoMode ? "Use 3 Demo Picks" : "Use 3 Seasonal Picks"}</button>
+            <button id="quickstart-seasonal" type="button" class="primary-btn">${demoMode ? "Browse Demo Ideas" : "Browse Seasonal Ideas"}</button>
             <button id="quickstart-network" type="button" class="ghost-btn">Open Network Explorer</button>
           </div>
         </section>
@@ -215,7 +211,7 @@ app.innerHTML = `
         <div class="recommend-layout">
           <section class="card">
             <h2>Find Your Next Anime</h2>
-            <p class="muted">${demoMode ? "Choose invented anime, then compare graph edges with a tiny synthetic model." : "Add anime you just watched, then rank next picks with either graph edges or the trained ML model."}</p>
+            <p class="muted">${demoMode ? "Choose invented anime, then compare graph edges with a tiny synthetic model." : "Add anime you have seen, then mark your preference to rank next picks."}</p>
 
             <label class="rec-engine-control" for="rec-method">
               <span>Recommendation engine</span>
@@ -234,16 +230,23 @@ app.innerHTML = `
 
             <form id="add-anime-form" class="add-form">
               <input id="anime-input" type="text" list="anime-options" autocomplete="off" placeholder="Type an anime title" aria-label="Anime title input" />
+              <select id="add-preference" aria-label="Preference for added anime">
+                <option value="seen" selected>Seen / Unrated</option>
+                <option value="liked">Liked</option>
+                <option value="disliked">Disliked</option>
+              </select>
               <button type="submit" class="primary-btn">Add</button>
             </form>
             <datalist id="anime-options"></datalist>
+            <p class="muted" id="preference-guidance">Seen titles are excluded from picks without acting as likes. Liked titles seed graph suggestions; the model also uses dislikes as negative evidence. Importance is your emphasis; confidence records how certain an imported score is. Your manual choice takes precedence over later imports.</p>
+            <p id="preference-migration-notice" class="muted" role="status" hidden></p>
 
             <p id="rec-message" class="rec-message" role="status" aria-live="polite"></p>
             <p id="storage-status" class="storage-status" role="alert" aria-live="assertive"></p>
 
             <div class="selected-head">
-              <h3>Watched List <span id="watched-count" class="count-pill">0</span></h3>
-              <button id="clear-watched" type="button" class="ghost-btn">Clear All</button>
+              <h3>Watched &amp; Preferences <span id="watched-count" class="count-pill">0</span></h3>
+              <button id="clear-watched" type="button" class="ghost-btn">Clear List</button>
             </div>
             <div id="selected-anime" class="selected-anime"></div>
 
@@ -507,6 +510,7 @@ const quickstartNetworkBtn = mustElement<HTMLButtonElement>("#quickstart-network
 
 const addAnimeForm = mustElement<HTMLFormElement>("#add-anime-form");
 const animeInput = mustElement<HTMLInputElement>("#anime-input");
+const addPreferenceSelect = mustElement<HTMLSelectElement>("#add-preference");
 const animeOptions = mustElement<HTMLDataListElement>("#anime-options");
 const recMethodSelect = mustElement<HTMLSelectElement>("#rec-method");
 const recBlendControl = mustElement<HTMLLabelElement>("#rec-blend-control");
@@ -515,6 +519,7 @@ const recBlendValueEl = mustElement<HTMLOutputElement>("#rec-blend-value");
 const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status");
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
 const storageStatusEl = mustElement<HTMLParagraphElement>("#storage-status");
+const preferenceMigrationNoticeEl = mustElement<HTMLParagraphElement>("#preference-migration-notice");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const watchedCountEl = mustElement<HTMLSpanElement>("#watched-count");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
@@ -649,7 +654,7 @@ const recommendationIndex = isCompactGraphData(graphData)
   ? buildRecommendationIndexFromCompact(graphData)
   : buildRecommendationIndex(graphData);
 const selectedAnimeNodeIds: string[] = [];
-const selectedAnimeWeights = new Map<string, number>();
+const selectedAnimePreferences = new Map<string, AnimePreference>();
 const historyEntries: HistoryEntry[] = [];
 const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
@@ -657,11 +662,16 @@ const persistedState = persistence.loadRecommendationState();
 const savedProfiles = persistence.loadRecommendationProfiles();
 const commandActions = buildCommandActions();
 
-for (const entry of persistedState.selected) {
+for (const entry of persistedState.preferences) {
   selectedAnimeNodeIds.push(entry.nodeId);
-  selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
+  selectedAnimePreferences.set(entry.nodeId, entry);
 }
 historyEntries.push(...persistedState.history);
+preferenceMigrationNoticeEl.textContent = persistence.getMigrationNotice() ??
+  (persistedState.preferences.some((item) => item.source === "legacy")
+    ? "Earlier watch weights were migrated conservatively. Unrated watches stay Seen; low scores are Disliked; clear likes are Liked. Review preferences and importance below."
+    : "");
+preferenceMigrationNoticeEl.hidden = !preferenceMigrationNoticeEl.textContent;
 for (const nodeId of persistedState.includeCandidates) {
   includeCandidateNodeIds.push(nodeId);
 }
@@ -885,7 +895,7 @@ quickstartNetworkBtn.addEventListener("click", () => {
 });
 
 quickstartSeasonalBtn.addEventListener("click", () => {
-  addSeasonalStarterPicks();
+  showSeasonalIdeas();
 });
 
 themeToggleBtn.addEventListener("click", () => {
@@ -1108,23 +1118,25 @@ selectedAnimeEl.addEventListener("input", (event) => {
   if (!(target instanceof HTMLInputElement)) {
     return;
   }
-  if (target.dataset.weightNodeId === undefined) {
+  if (target.dataset.importanceNodeId === undefined) {
     return;
   }
 
-  const nodeId = target.dataset.weightNodeId;
+  const nodeId = target.dataset.importanceNodeId;
   if (!nodeId) {
     return;
   }
 
   const parsed = Number.parseFloat(target.value);
-  const clamped = clampWatchWeight(parsed);
-  selectedAnimeWeights.set(nodeId, clamped);
+  const clamped = clampImportance(parsed);
+  const current = selectedAnimePreferences.get(nodeId);
+  if (!current) return;
+  selectedAnimePreferences.set(nodeId, { ...current, importance: clamped });
   persistRecommendationState();
   target.value = clamped.toFixed(1);
 
   const chip = target.closest(".chip-weighted");
-  const valueEl = chip?.querySelector<HTMLOutputElement>(".chip-weight-value");
+  const valueEl = chip?.querySelector<HTMLOutputElement>(".chip-importance-value");
   if (valueEl) {
     valueEl.textContent = `${clamped.toFixed(1)}x`;
   }
@@ -1132,9 +1144,23 @@ selectedAnimeEl.addEventListener("input", (event) => {
   void updateRecommendations();
 });
 
+selectedAnimeEl.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) return;
+  const nodeId = target.dataset.preferenceNodeId;
+  if (!nodeId || !selectedAnimePreferences.has(nodeId)) return;
+  const sentiment = target.value as PreferenceSentiment;
+  if (!["seen", "liked", "disliked"].includes(sentiment)) return;
+  const prior = selectedAnimePreferences.get(nodeId)!;
+  selectedAnimePreferences.set(nodeId, manualPreference(nodeId, sentiment, prior.importance));
+  persistRecommendationState();
+  renderSelectedAnime();
+  void updateRecommendations();
+});
+
 clearWatchedBtn.addEventListener("click", () => {
   selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
-  selectedAnimeWeights.clear();
+  selectedAnimePreferences.clear();
   persistRecommendationState();
   recMessageEl.textContent = "";
   renderSelectedAnime();
@@ -1424,10 +1450,10 @@ function buildCommandActions(): CommandAction[] {
     },
     {
       id: "seasonal-starter",
-      label: "Add Seasonal Starter Picks",
+      label: "Browse Seasonal Ideas",
       group: "Utilities",
       keywords: ["seasonal", "starter", "quickstart"],
-      run: () => addSeasonalStarterPicks(),
+      run: () => showSeasonalIdeas(),
     },
     {
       id: "toggle-network-controls",
@@ -1954,58 +1980,31 @@ function addAnimeById(animeId: number): void {
     recMessageEl.textContent = `Anime ${animeId} is not in the current graph dataset.`;
     return;
   }
-  addAnimeToWatchedList(anime, "Added");
+  addAnimeToWatchedList(anime, "Added", "seen");
 }
 
-function addAnimeToWatchedList(anime: AnimeInfo, prefix: string): void {
+function addAnimeToWatchedList(anime: AnimeInfo, prefix: string, sentiment: PreferenceSentiment): void {
   if (selectedAnimeNodeIds.includes(anime.nodeId)) {
     recMessageEl.textContent = `${anime.label} is already in your watched list.`;
     return;
   }
 
   selectedAnimeNodeIds.push(anime.nodeId);
-  selectedAnimeWeights.set(anime.nodeId, 1);
+  selectedAnimePreferences.set(anime.nodeId, manualPreference(anime.nodeId, sentiment));
   persistRecommendationState();
-  recMessageEl.textContent = `${prefix}: ${anime.label}`;
+  recMessageEl.textContent = `${prefix}: ${anime.label} (${sentiment === "seen" ? "Seen / Unrated" : sentiment}).`;
   renderSelectedAnime();
   void updateRecommendations();
 }
 
-function addSeasonalStarterPicks(): void {
-  const candidates = seasonalItems
-    .map((item) => recommendationIndex.animeByAnimeId.get(item.animeId))
-    .filter((anime): anime is AnimeInfo => Boolean(anime))
-    .slice(0, QUICKSTART_SEASONAL_PICK_LIMIT);
-
-  if (candidates.length === 0) {
+function showSeasonalIdeas(): void {
+  if (seasonalItems.length === 0) {
     recMessageEl.textContent =
-      "Seasonal list is not ready yet. Try again in a moment or add anime manually.";
+      "Seasonal ideas are not ready yet. Try again in a moment.";
     return;
   }
-
-  let added = 0;
-  let skipped = 0;
-  for (const anime of candidates) {
-    if (selectedAnimeNodeIds.includes(anime.nodeId)) {
-      skipped += 1;
-      continue;
-    }
-    selectedAnimeNodeIds.push(anime.nodeId);
-    selectedAnimeWeights.set(anime.nodeId, 1);
-    added += 1;
-  }
-
-  if (added === 0) {
-    recMessageEl.textContent = "Those seasonal starter picks are already in your watched list.";
-    return;
-  }
-
-  persistRecommendationState();
-  renderSelectedAnime();
-  void updateRecommendations();
-  recMessageEl.textContent =
-    `Added ${added} seasonal starter ${added === 1 ? "pick" : "picks"}.` +
-    (skipped > 0 ? ` Skipped ${skipped} already-watched item${skipped === 1 ? "" : "s"}.` : "");
+  seasonalListEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  recMessageEl.textContent = "Browse seasonal ideas below. Add a title only if you have seen it; choose its preference explicitly.";
 }
 
 function addAnimeFromInput(): void {
@@ -2028,7 +2027,9 @@ function addAnimeFromInput(): void {
   }
 
   animeInput.value = "";
-  addAnimeToWatchedList(anime, "Added");
+  const sentiment = addPreferenceSelect.value as PreferenceSentiment;
+  addPreferenceSelect.value = "seen";
+  addAnimeToWatchedList(anime, "Added", ["seen", "liked", "disliked"].includes(sentiment) ? sentiment : "seen");
 }
 
 async function loadBulkImportFile(): Promise<void> {
@@ -2194,17 +2195,25 @@ function renderImportPreview(): void {
   const mode: ImportMode = historyImportModeEl.value === "replace" ? "replace" : "merge";
   const counts = previewHistory(pending.parsed, historyEntries, recommendationIndex, mode);
   const incomingPicks = new Set(pending.parsed.entries
-    .filter((entry) => historyScoreToTen(entry) !== null && entry.status !== "plan_to_watch")
-    .map((entry) => resolveHistoryAnime(entry, recommendationIndex)?.nodeId)
+    .map((entry) => {
+      const nodeId = resolveHistoryAnime(entry, recommendationIndex)?.nodeId;
+      return nodeId && preferenceFromHistory(entry, nodeId) ? nodeId : undefined;
+    })
     .filter((nodeId): nodeId is string => nodeId !== undefined));
   const picksRemoved = mode === "replace"
     ? selectedAnimeNodeIds.filter((nodeId) => !incomingPicks.has(nodeId)).length : 0;
+  const plannedCleared = mode === "merge" ? new Set(pending.parsed.entries
+    .filter((entry) => entry.status === "plan_to_watch")
+    .map((entry) => resolveHistoryAnime(entry, recommendationIndex)?.nodeId)
+    .filter((nodeId): nodeId is string => nodeId !== undefined &&
+      selectedAnimePreferences.get(nodeId)?.source === "import")).size : 0;
   historyImportSummaryEl.textContent =
     `${counts.total} entries (${counts.duplicates} duplicate identities collapsed). ` +
     `Mapped: ${counts.mapped}; unmapped: ${counts.unmapped}; unscored: ${counts.unscored}; ` +
     `seen: ${counts.seen}; planned: ${counts.planned}. ` +
     `History new: ${counts.added}; updated: ${counts.updated}; unchanged: ${counts.unchanged}; ` +
-    `removed by replace: ${counts.removed}. Watched picks removed by replace: ${picksRemoved}.`;
+    `removed by replace: ${counts.removed}. Preferences removed by replace: ${picksRemoved}; ` +
+    `cleared by planned status: ${plannedCleared}.`;
   const unmapped = pending.parsed.entries
     .filter((entry) => !resolveHistoryAnime(entry, recommendationIndex))
     .slice(0, 3).map((entry) => entry.title);
@@ -2218,22 +2227,25 @@ function applyPendingHistoryImport(): void {
   const mode: ImportMode = historyImportModeEl.value === "replace" ? "replace" : "merge";
   const previousHistory = [...historyEntries];
   const previousSelected = [...selectedAnimeNodeIds];
-  const previousWeights = new Map(selectedAnimeWeights);
+  const previousPreferences = new Map(selectedAnimePreferences);
   try {
     const nextHistory = mergeHistory(historyEntries, pending.parsed.entries, mode);
     if (mode === "replace") {
       selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
-      selectedAnimeWeights.clear();
+      selectedAnimePreferences.clear();
     }
-    const ratedMapped: ImportedWatchedEntry[] = [];
+    const mapped: ImportedPreferenceEntry[] = [];
     for (const entry of pending.parsed.entries) {
-      if (entry.status === "plan_to_watch") continue;
-      const scoreTen = historyScoreToTen(entry);
-      if (scoreTen === null) continue;
       const anime = resolveHistoryAnime(entry, recommendationIndex);
-      if (anime) ratedMapped.push({ anime, weight: normalizeImportedScoreToWeight(scoreTen) });
+      if (!anime) continue;
+      const preference = preferenceFromHistory(entry, anime.nodeId);
+      if (preference) mapped.push({ anime, preference });
+      else if (selectedAnimePreferences.get(anime.nodeId)?.source === "import") {
+        selectedAnimePreferences.delete(anime.nodeId);
+        selectedAnimeNodeIds.splice(selectedAnimeNodeIds.indexOf(anime.nodeId), 1);
+      }
     }
-    const selectionSummary = upsertImportedWatchedEntries(ratedMapped);
+    const selectionSummary = upsertImportedPreferences(mapped);
     historyEntries.splice(0, historyEntries.length, ...nextHistory);
     if (!persistRecommendationState()) {
       throw new Error("Browser storage rejected the import; prior history is intact.");
@@ -2245,13 +2257,13 @@ function applyPendingHistoryImport(): void {
       "ready", "Import applied and saved in this browser.");
     recMessageEl.textContent =
       `Import applied: ${pending.parsed.entries.length} history entries; ` +
-      `watched picks added: ${selectionSummary.added}, updated: ${selectionSummary.updated}, ` +
+      `preferences added: ${selectionSummary.added}, updated: ${selectionSummary.updated}, ` +
       `unchanged: ${selectionSummary.skipped}.`;
   } catch (error) {
     historyEntries.splice(0, historyEntries.length, ...previousHistory);
     selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length, ...previousSelected);
-    selectedAnimeWeights.clear();
-    for (const [nodeId, weight] of previousWeights) selectedAnimeWeights.set(nodeId, weight);
+    selectedAnimePreferences.clear();
+    for (const [nodeId, preference] of previousPreferences) selectedAnimePreferences.set(nodeId, preference);
     renderSelectedAnime();
     renderImportedHistory();
     setAsyncStatus(pending.origin === "local" ? bulkImportStatusEl : usernameImportStatusEl,
@@ -2334,7 +2346,7 @@ function setUsernameImportLoading(
     : "Import User List";
 }
 
-function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
+function upsertImportedPreferences(entries: ImportedPreferenceEntry[]): {
   added: number;
   updated: number;
   skipped: number;
@@ -2347,18 +2359,22 @@ function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
     const existingIndex = selectedAnimeNodeIds.indexOf(entry.anime.nodeId);
     if (existingIndex < 0) {
       selectedAnimeNodeIds.push(entry.anime.nodeId);
-      selectedAnimeWeights.set(entry.anime.nodeId, entry.weight);
+      selectedAnimePreferences.set(entry.anime.nodeId, entry.preference);
       added += 1;
       continue;
     }
 
-    const current = clampWatchWeight(selectedAnimeWeights.get(entry.anime.nodeId) ?? 1);
-    if (Math.abs(current - entry.weight) < 0.0001) {
+    const current = selectedAnimePreferences.get(entry.anime.nodeId);
+    if (current?.source === "manual") {
       skipped += 1;
       continue;
     }
-
-    selectedAnimeWeights.set(entry.anime.nodeId, entry.weight);
+    const next = { ...entry.preference, importance: current?.importance ?? 1 };
+    if (current && JSON.stringify(current) === JSON.stringify(next)) {
+      skipped += 1;
+      continue;
+    }
+    selectedAnimePreferences.set(entry.anime.nodeId, next);
     updated += 1;
   }
 
@@ -2371,7 +2387,7 @@ function removeSelectedAnime(nodeId: string): void {
     return;
   }
   selectedAnimeNodeIds.splice(index, 1);
-  selectedAnimeWeights.delete(nodeId);
+  selectedAnimePreferences.delete(nodeId);
   persistRecommendationState();
   recMessageEl.textContent = "";
   renderSelectedAnime();
@@ -2390,23 +2406,35 @@ function renderSelectedAnime(): void {
       const anime = recommendationIndex.animeByNodeId.get(nodeId);
       const label = anime?.label ?? nodeId;
       const missingNote = anime ? "" : `<span class="chip-missing-note">Unavailable in this catalog; kept in your saved list</span>`;
-      const weight = clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1);
+      const preference = selectedAnimePreferences.get(nodeId) ?? manualPreference(nodeId);
+      const importance = clampImportance(preference.importance);
+      const confidence = Math.round(preference.confidence * 100);
       return `
       <div class="chip chip-weighted">
         <span class="chip-title">${escapeHtml(label)}${missingNote}</span>
         <label class="chip-weight-control">
-          <span>Weight</span>
+          <span>Preference</span>
+          <select data-preference-node-id="${escapeHtml(nodeId)}" aria-label="Preference for ${escapeHtml(label)}">
+            <option value="seen"${preference.sentiment === "seen" ? " selected" : ""}>Seen / Unrated</option>
+            <option value="liked"${preference.sentiment === "liked" ? " selected" : ""}>Liked</option>
+            <option value="disliked"${preference.sentiment === "disliked" ? " selected" : ""}>Disliked</option>
+          </select>
+        </label>
+        <label class="chip-weight-control">
+          <span>Importance</span>
           <input
             type="range"
-            min="${MIN_WATCH_WEIGHT}"
-            max="${MAX_WATCH_WEIGHT}"
-            step="${WATCH_WEIGHT_STEP}"
-            value="${weight.toFixed(1)}"
-            data-weight-node-id="${escapeHtml(nodeId)}"
-            aria-label="Weight for ${escapeHtml(label)}"
+            min="${MIN_IMPORTANCE}"
+            max="${MAX_IMPORTANCE}"
+            step="${IMPORTANCE_STEP}"
+            value="${importance.toFixed(1)}"
+            data-importance-node-id="${escapeHtml(nodeId)}"
+            aria-label="Importance for ${escapeHtml(label)}"
+            ${preference.sentiment === "seen" ? "disabled" : ""}
           />
-          <output class="chip-weight-value">${weight.toFixed(1)}x</output>
+          <output class="chip-importance-value">${importance.toFixed(1)}x</output>
         </label>
+        <span class="chip-confidence">${preference.sentiment === "seen" ? "No preference signal" : `${confidence}% confidence`} · ${escapeHtml(preference.source)}</span>
         <button type="button" data-node-id="${escapeHtml(nodeId)}" aria-label="Remove ${escapeHtml(label)}">x</button>
       </div>
     `;
@@ -2526,9 +2554,12 @@ async function updateRecommendations(): Promise<void> {
   const controller = new AbortController();
   recommendationController = controller;
   const runId = ++recommendationRunId;
+  const preferences = selectedAnimeNodeIds
+    .map((nodeId) => selectedAnimePreferences.get(nodeId))
+    .filter((item): item is AnimePreference => item !== undefined);
 
   if (selectedAnimeNodeIds.length === 0) {
-    recSummaryEl.textContent = "Add at least one anime to start.";
+    recSummaryEl.textContent = "Add a title and mark your preference to start.";
     recEngineStatusEl.textContent =
       recommendationMode === "graph"
         ? "Using graph recommendations."
@@ -2541,16 +2572,27 @@ async function updateRecommendations(): Promise<void> {
     return;
   }
 
+  if (!(recommendationMode === "graph"
+    ? preferences.some((item) => item.sentiment === "liked")
+    : preferences.some((item) => item.sentiment !== "seen"))) {
+    recEngineStatusEl.textContent = recommendationMode === "graph"
+      ? "Graph waiting for a Liked title."
+      : "Model waiting for a Liked or Disliked title.";
+    recSummaryEl.textContent = recommendationMode === "graph"
+      ? "Seen and disliked titles are excluded. Mark at least one title Liked for graph suggestions."
+      : "Seen titles are excluded. Mark a title Liked or Disliked for model suggestions.";
+    recResultsEl.innerHTML = "";
+    setMetadataStatus("empty", "Metadata: no preference signal yet.");
+    renderSelectedAnime();
+    return;
+  }
+
   let recommendations: RecommendationResult[] = [];
   setMetadataStatus(demoMode ? "demo" : "loading", demoMode ? "Metadata: synthetic demo catalog." : "Metadata: loading recommendations...");
 
   if (recommendationMode === "graph") {
     recEngineStatusEl.textContent = "Using graph recommendations.";
-    recommendations = buildGraphRecommendations(
-      selectedAnimeNodeIds,
-      selectedAnimeWeights,
-      recommendationIndex,
-    );
+    recommendations = buildGraphRecommendationsForPreferences(preferences, recommendationIndex);
   } else if (recommendationMode === "model") {
     recEngineStatusEl.textContent = "Loading ML model recommendations...";
     const modelIndex = await ensureModelRecommendationIndex();
@@ -2574,12 +2616,7 @@ async function updateRecommendations(): Promise<void> {
       return;
     }
     recEngineStatusEl.textContent = `Using ML model recommendations (${modelIndex.factors} factors).`;
-    recommendations = buildModelRecommendations(
-      selectedAnimeNodeIds,
-      selectedAnimeWeights,
-      recommendationIndex,
-      modelIndex,
-    );
+    recommendations = buildModelRecommendationsForPreferences(preferences, recommendationIndex, modelIndex);
   } else {
     recEngineStatusEl.textContent = "Loading hybrid recommendations...";
     const modelIndex = await ensureModelRecommendationIndex();
@@ -2602,17 +2639,8 @@ async function updateRecommendations(): Promise<void> {
       setMetadataStatus("unavailable", "Metadata: model artifact is unavailable.");
       return;
     }
-    const graphRecommendations = buildGraphRecommendations(
-      selectedAnimeNodeIds,
-      selectedAnimeWeights,
-      recommendationIndex,
-    );
-    const modelRecommendations = buildModelRecommendations(
-      selectedAnimeNodeIds,
-      selectedAnimeWeights,
-      recommendationIndex,
-      modelIndex,
-    );
+    const graphRecommendations = buildGraphRecommendationsForPreferences(preferences, recommendationIndex);
+    const modelRecommendations = buildModelRecommendationsForPreferences(preferences, recommendationIndex, modelIndex);
     recommendations = combineHybridRecommendations(
       graphRecommendations,
       modelRecommendations,
@@ -2625,12 +2653,13 @@ async function updateRecommendations(): Promise<void> {
   recommendations = filterCandidateEligibility(
     recommendations,
     includeCandidateNodeIds,
-    [...excludeCandidateNodeIds, ...seenHistoryNodeIds(historyEntries, recommendationIndex)],
+    [...excludeCandidateNodeIds, ...selectedAnimeNodeIds,
+      ...seenHistoryNodeIds(historyEntries, recommendationIndex)],
   );
 
   if (recommendations.length === 0) {
     recSummaryEl.textContent =
-      "No positive recommendations found from the current watched list. Try adding more anime.";
+      "No eligible recommendations found from these preferences. Try another liked title or review filters.";
     recResultsEl.innerHTML = "";
     setMetadataStatus("empty", "Metadata: no candidates.");
     return;
@@ -2660,7 +2689,7 @@ async function updateRecommendations(): Promise<void> {
   if (filteredRecommendations.length === 0) {
     recSummaryEl.textContent = hasActiveRecommendationFilters(recommendationFilters)
       ? "No recommendations match your current metadata filters."
-      : "No positive recommendations found from the current watched list.";
+      : "No eligible recommendations found from these preferences.";
     recResultsEl.innerHTML = "";
     const metadataState: AsyncUiState = demoMode ? "demo"
       : metadataCandidateAnimeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
@@ -2995,9 +3024,9 @@ function renderSeasonalList(): void {
             type="button"
             data-seasonal-anime-id="${item.animeId}"
             ${inGraph ? "" : "disabled"}
-            title="${inGraph ? "Add to watched list" : "Not available in current graph"}"
+            title="${inGraph ? "Mark as seen" : "Not available in current graph"}"
           >
-            ${inGraph ? "Add" : "N/A"}
+            ${inGraph ? "Mark Seen" : "N/A"}
           </button>
         </li>
       `;
@@ -3928,16 +3957,14 @@ function persistRecommendationState(): boolean {
 }
 
 function buildCurrentRecommendationState(): StoredRecommendationState {
-  const selected = selectedAnimeNodeIds
-    .map((nodeId) => ({
-      nodeId,
-      weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
-    }));
+  const preferences = selectedAnimeNodeIds
+    .map((nodeId) => selectedAnimePreferences.get(nodeId))
+    .filter((item): item is AnimePreference => item !== undefined);
 
   return {
     version: RECOMMENDATION_STORAGE_VERSION,
     mode: recommendationMode,
-    selected,
+    preferences,
     modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
     includeCandidates: [...includeCandidateNodeIds],
     excludeCandidates: [...excludeCandidateNodeIds],
@@ -4048,22 +4075,22 @@ function deleteSelectedProfile(): void {
 
 function applyRecommendationState(state: {
   mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
+  preferences: AnimePreference[];
   modelBlendWeight: number;
   includeCandidates: string[];
   excludeCandidates: string[];
   history?: HistoryEntry[];
 }): void {
   selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
-  selectedAnimeWeights.clear();
+  selectedAnimePreferences.clear();
   includeCandidateNodeIds.splice(0, includeCandidateNodeIds.length);
   excludeCandidateNodeIds.splice(0, excludeCandidateNodeIds.length);
   historyEntries.splice(0, historyEntries.length, ...(state.history ?? []));
   clearPendingHistoryImport();
 
-  for (const entry of state.selected) {
+  for (const entry of state.preferences) {
     selectedAnimeNodeIds.push(entry.nodeId);
-    selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
+    selectedAnimePreferences.set(entry.nodeId, entry);
   }
   for (const nodeId of state.includeCandidates) {
     includeCandidateNodeIds.push(nodeId);

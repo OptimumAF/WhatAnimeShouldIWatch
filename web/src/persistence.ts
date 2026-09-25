@@ -2,6 +2,8 @@
 import { clampModelBlendWeight, clampWatchWeight } from "./recommendations";
 import { validateHistoryEntries } from "./import-history";
 import type { HistoryEntry } from "./import-history";
+import { migrateLegacyPreferences, validatePreferences } from "./preferences";
+import type { AnimePreference } from "./preferences";
 import type { RuntimePorts } from "./runtime";
 
 export type RecommendationMode = "graph" | "model" | "hybrid";
@@ -10,7 +12,7 @@ export type ContrastMode = "normal" | "high";
 export interface StoredRecommendationState {
   version: number;
   mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
+  preferences: AnimePreference[];
   modelBlendWeight?: number;
   includeCandidates?: string[];
   excludeCandidates?: string[];
@@ -30,7 +32,7 @@ export type RecommendationState = Omit<StoredRecommendationState, "version"> & {
   history: HistoryEntry[];
 };
 
-export const RECOMMENDATION_STORAGE_VERSION = 4;
+export const RECOMMENDATION_STORAGE_VERSION = 5;
 
 interface StoredHelpTipsState {
   version: number;
@@ -43,9 +45,12 @@ export const COMMAND_PINNED_LIMIT = 8;
 export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: string) {
   const LEGACY_STATE_KEY = `${storagePrefix}.recommendationState.v1`;
   const LEGACY_PROFILES_KEY = `${storagePrefix}.recommendationProfiles.v1`;
-  const STATE_KEY = `${storagePrefix}.recommendationState.v4`;
-  const PROFILES_KEY = `${storagePrefix}.recommendationProfiles.v4`;
+  const V4_STATE_KEY = `${storagePrefix}.recommendationState.v4`;
+  const V4_PROFILES_KEY = `${storagePrefix}.recommendationProfiles.v4`;
+  const STATE_KEY = `${storagePrefix}.recommendationState.v5`;
+  const PROFILES_KEY = `${storagePrefix}.recommendationProfiles.v5`;
   const storageWarnings = new Map<"state" | "profiles", string>();
+  let migrationNotice: string | null = null;
   const THEME_STORAGE_KEY = `${storagePrefix}.theme.v1`;
   const CONTRAST_STORAGE_KEY = `${storagePrefix}.contrast.v1`;
   const HELP_TIPS_STORAGE_KEY = `${storagePrefix}.helpTips.v1`;
@@ -200,18 +205,25 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
 
   function parseState(value: unknown, versions: number[]): StoredRecommendationState {
     if (!isRecord(value) || !versions.includes(value.version as number) ||
-      (value.mode !== "graph" && value.mode !== "model" && value.mode !== "hybrid") ||
-      !Array.isArray(value.selected)) {
+      (value.mode !== "graph" && value.mode !== "model" && value.mode !== "hybrid")) {
       throw new Error("Invalid recommendation state shape or version");
     }
-    const selected = value.selected.map((entry: unknown) => {
-      if (!isRecord(entry) || typeof entry.nodeId !== "string" || !entry.nodeId ||
-        typeof entry.weight !== "number" || !Number.isFinite(entry.weight) ||
-        clampWatchWeight(entry.weight) !== entry.weight) {
-        throw new Error("Invalid saved selection");
-      }
-      return { nodeId: entry.nodeId, weight: entry.weight };
-    });
+    const history = value.history === undefined ? [] : validateHistoryEntries(value.history);
+    let preferences: AnimePreference[];
+    if (value.version === RECOMMENDATION_STORAGE_VERSION) {
+      preferences = validatePreferences(value.preferences);
+    } else {
+      if (!Array.isArray(value.selected)) throw new Error("Invalid saved selection");
+      const selected = value.selected.map((entry: unknown) => {
+        if (!isRecord(entry) || typeof entry.nodeId !== "string" || !entry.nodeId ||
+          typeof entry.weight !== "number" || !Number.isFinite(entry.weight) ||
+          clampWatchWeight(entry.weight) !== entry.weight) {
+          throw new Error("Invalid saved selection");
+        }
+        return { nodeId: entry.nodeId, weight: entry.weight };
+      });
+      preferences = migrateLegacyPreferences(selected, history);
+    }
     const candidateIds = (field: "includeCandidates" | "excludeCandidates"): string[] => {
       const entries = value[field] === undefined ? [] : value[field];
       if (!Array.isArray(entries) || entries.some((entry) => typeof entry !== "string" || !entry)) {
@@ -227,17 +239,17 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     return {
       version: RECOMMENDATION_STORAGE_VERSION,
       mode: value.mode,
-      selected,
+      preferences,
       modelBlendWeight: blend,
       includeCandidates: candidateIds("includeCandidates"),
       excludeCandidates: candidateIds("excludeCandidates"),
-      history: value.history === undefined ? [] : validateHistoryEntries(value.history),
+      history,
     };
   }
 
-  function parseProfiles(value: unknown, current: boolean): Map<string, RecommendationProfileRecord> {
-    const records = current && isRecord(value) && value.version === RECOMMENDATION_STORAGE_VERSION
-      ? value.profiles : !current ? value : null;
+  function parseProfiles(value: unknown, sourceVersion: 1 | 4 | 5): Map<string, RecommendationProfileRecord> {
+    const records = sourceVersion === 1 ? value :
+      isRecord(value) && value.version === sourceVersion ? value.profiles : null;
     if (!Array.isArray(records)) throw new Error("Invalid saved profiles shape or version");
     const profiles = new Map<string, RecommendationProfileRecord>();
     for (const entry of records) {
@@ -249,7 +261,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       profiles.set(name, {
         name,
         updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : runtime.now().toISOString(),
-        state: parseState(entry.state, current ? [RECOMMENDATION_STORAGE_VERSION] : [1, 2, 3]),
+        state: parseState(entry.state, sourceVersion === 1 ? [1, 2, 3] : [sourceVersion]),
       });
     }
     return profiles;
@@ -273,15 +285,14 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     const existing = runtime.storage.getItem(backupKey);
     // Preserve an older distinct backup; the untouched source key still holds this version.
     if (existing === null) runtime.storage.setItem(backupKey, raw);
-    else if (existing !== raw && key.endsWith(".v4")) runtime.storage.setItem(backupKey, raw);
+    else if (existing !== raw && key.endsWith(".v5")) runtime.storage.setItem(backupKey, raw);
   }
 
   function loadVersioned<T>(
     kind: "state" | "profiles",
     currentKey: string,
-    legacyKey: string,
+    legacySources: { key: string; parse: (raw: string) => T }[],
     parseCurrent: (raw: string) => T,
-    parseLegacy: (raw: string) => T,
     encode: (value: T) => string,
   ): T | null {
     const label = kind === "state" ? "recommendation state" : "saved profiles";
@@ -304,18 +315,27 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
         }
       }
 
-      const legacyRaw = runtime.storage.getItem(legacyKey);
-      const legacyBackup = runtime.storage.getItem(`${legacyKey}.backup`);
       let value: T | null = null;
       let sourceRaw: string | null = null;
-      if (legacyRaw !== null) {
-        try { value = parseLegacy(legacyRaw); sourceRaw = legacyRaw; } catch { /* Try backup. */ }
+      let sourceKey: string | null = null;
+      let foundOlder = false;
+      for (const source of legacySources) {
+        const raw = runtime.storage.getItem(source.key);
+        const backup = runtime.storage.getItem(`${source.key}.backup`);
+        if (raw !== null || backup !== null) foundOlder = true;
+        for (const candidate of [raw, backup]) {
+          if (candidate === null) continue;
+          try {
+            value = source.parse(candidate);
+            sourceRaw = candidate;
+            sourceKey = source.key;
+            break;
+          } catch { /* Try the next intact copy. */ }
+        }
+        if (value !== null) break;
       }
-      if (value === null && legacyBackup !== null) {
-        try { value = parseLegacy(legacyBackup); sourceRaw = legacyBackup; } catch { /* Report below. */ }
-      }
-      if (value === null || sourceRaw === null) {
-        if (currentRaw !== null || legacyRaw !== null || legacyBackup !== null) {
+      if (value === null || sourceRaw === null || sourceKey === null) {
+        if (currentRaw !== null || foundOlder) {
           storageWarnings.set(kind, `Stored ${label} could not be read. Original browser storage was left intact.`);
         }
         return null;
@@ -325,9 +345,10 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
         return value;
       }
       try {
-        backUpRaw(legacyKey, sourceRaw);
+        backUpRaw(sourceKey, sourceRaw);
         runtime.storage.setItem(currentKey, encode(value));
         storageWarnings.delete(kind);
+        migrationNotice = "Earlier watch weights were migrated conservatively. Unrated watches stay Seen; low scores are Disliked; clear likes are Liked. Review preferences and importance below.";
       } catch {
         storageWarnings.set(kind, `Browser storage rejected the ${label} backup or migration. Older data is intact, but changes may be lost on reload.`);
       }
@@ -339,7 +360,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
   }
 
   function persistVersioned(
-    kind: "state" | "profiles", currentKey: string, legacyKey: string,
+    kind: "state" | "profiles", currentKey: string, legacyKeys: string[],
     raw: string, validateCurrent: (raw: string) => unknown,
   ): boolean {
     const label = kind === "state" ? "recommendation state" : "saved profiles";
@@ -362,8 +383,13 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
           if (preserved === null) runtime.storage.setItem(corruptKey, existing);
         }
       } else {
-        const legacy = runtime.storage.getItem(legacyKey);
-        if (legacy !== null) backUpRaw(legacyKey, legacy);
+        for (const key of legacyKeys) {
+          const legacy = runtime.storage.getItem(key);
+          if (legacy !== null) {
+            backUpRaw(key, legacy);
+            break;
+          }
+        }
       }
       runtime.storage.setItem(currentKey, raw);
       storageWarnings.delete(kind);
@@ -376,14 +402,16 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
 
   function loadRecommendationState(): RecommendationState {
     const stored = loadVersioned(
-      "state", STATE_KEY, LEGACY_STATE_KEY,
+      "state", STATE_KEY, [
+        { key: V4_STATE_KEY, parse: (raw) => parseState(JSON.parse(raw) as unknown, [4]) },
+        { key: LEGACY_STATE_KEY, parse: (raw) => parseState(JSON.parse(raw) as unknown, [1, 2, 3]) },
+      ],
       (raw) => parseState(JSON.parse(raw) as unknown, [RECOMMENDATION_STORAGE_VERSION]),
-      (raw) => parseState(JSON.parse(raw) as unknown, [1, 2, 3]),
       (state) => JSON.stringify(state),
     );
     if (stored !== null) {
       return {
-        mode: stored.mode, selected: stored.selected,
+        mode: stored.mode, preferences: stored.preferences,
         modelBlendWeight: stored.modelBlendWeight ?? 0.5,
         includeCandidates: stored.includeCandidates ?? [],
         excludeCandidates: stored.excludeCandidates ?? [],
@@ -391,7 +419,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       };
     }
     return {
-      mode: "graph", selected: [], modelBlendWeight: 0.5,
+      mode: "graph", preferences: [], modelBlendWeight: 0.5,
       includeCandidates: [], excludeCandidates: [],
       history: [],
     };
@@ -399,16 +427,18 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
 
   function persistRecommendationState(payload: StoredRecommendationState): boolean {
     return persistVersioned(
-      "state", STATE_KEY, LEGACY_STATE_KEY, JSON.stringify(payload),
+      "state", STATE_KEY, [V4_STATE_KEY, LEGACY_STATE_KEY], JSON.stringify(payload),
       (raw) => parseState(JSON.parse(raw) as unknown, [RECOMMENDATION_STORAGE_VERSION]),
     );
   }
 
   function loadRecommendationProfiles(): Map<string, RecommendationProfileRecord> {
     return loadVersioned(
-      "profiles", PROFILES_KEY, LEGACY_PROFILES_KEY,
-      (raw) => parseProfiles(JSON.parse(raw) as unknown, true),
-      (raw) => parseProfiles(JSON.parse(raw) as unknown, false),
+      "profiles", PROFILES_KEY, [
+        { key: V4_PROFILES_KEY, parse: (raw) => parseProfiles(JSON.parse(raw) as unknown, 4) },
+        { key: LEGACY_PROFILES_KEY, parse: (raw) => parseProfiles(JSON.parse(raw) as unknown, 1) },
+      ],
+      (raw) => parseProfiles(JSON.parse(raw) as unknown, 5),
       encodeProfiles,
     ) ?? new Map();
   }
@@ -416,8 +446,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
   function persistRecommendationProfiles(profiles: Map<string, RecommendationProfileRecord>): boolean {
     try {
       return persistVersioned(
-        "profiles", PROFILES_KEY, LEGACY_PROFILES_KEY, encodeProfiles(profiles),
-        (raw) => parseProfiles(JSON.parse(raw) as unknown, true),
+        "profiles", PROFILES_KEY, [V4_PROFILES_KEY, LEGACY_PROFILES_KEY], encodeProfiles(profiles),
+        (raw) => parseProfiles(JSON.parse(raw) as unknown, 5),
       );
     } catch {
       storageWarnings.set("profiles", "Saved profiles could not be encoded; existing browser data remains intact.");
@@ -427,6 +457,10 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
 
   function getStorageWarnings(): string[] {
     return [...storageWarnings.values()];
+  }
+
+  function getMigrationNotice(): string | null {
+    return migrationNotice;
   }
 
   return {
@@ -446,5 +480,6 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     loadRecommendationProfiles,
     persistRecommendationProfiles,
     getStorageWarnings,
+    getMigrationNotice,
   };
 }

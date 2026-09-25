@@ -83,9 +83,8 @@ export function historyScoreToTen(entry: HistoryEntry): number | null {
   switch (entry.scoreScale) {
     case "POINT_100": return entry.score / 10;
     case "POINT_5": return entry.score * 2;
-    // Sad/neutral smileys are retained as history, not positive watched picks.
-    // M4.1 owns the complete signed preference mapping.
-    case "POINT_3": return entry.score === 3 ? 10 : null;
+    // AniList smileys are categorical. Keep sad negative and neutral unrated.
+    case "POINT_3": return entry.score === 1 ? 2 : entry.score === 2 ? 5 : 10;
     default: return entry.score;
   }
 }

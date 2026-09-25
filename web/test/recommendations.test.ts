@@ -7,7 +7,9 @@ import type { ModelRecommendationIndex, RecommendationResult } from "../src/doma
 import {
   applyRecommendationFilters,
   buildGraphRecommendations,
+  buildGraphRecommendationsForPreferences,
   buildModelRecommendations,
+  buildModelRecommendationsForPreferences,
   buildRecommendationIndex,
   buildRecommendationIndexFromCompact,
   clampModelBlendWeight,
@@ -19,6 +21,7 @@ import {
   hasActiveRecommendationFilters,
 } from "../src/recommendations.ts";
 import type { RecommendationFilters } from "../src/recommendations.ts";
+import { manualPreference } from "../src/preferences.ts";
 
 const fixtureRoot = new URL("../public/demo-data/", import.meta.url);
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(name, fixtureRoot), "utf8"));
@@ -98,6 +101,29 @@ test("model and hybrid ranking retain their fixture scores and blend endpoints",
   assert.deepEqual(combineHybridRecommendations(graphResults, modelResults, 0)
     .map((item) => item.anime.label), ["Moonlit Workshop"]);
   assert.equal(combineHybridRecommendations(graphResults, modelResults, 1)[0].anime.label, "星の航路");
+});
+
+test("seen is exclusion only, likes seed graph, and dislikes provide signed model evidence", () => {
+  const seen = manualPreference("anime:101");
+  assert.deepEqual(buildGraphRecommendationsForPreferences([seen], index), []);
+  assert.deepEqual(buildModelRecommendationsForPreferences([seen], index, modelIndex), []);
+
+  const liked = { ...manualPreference("anime:101", "liked", 2), confidence: 0.25 };
+  const graphResults = buildGraphRecommendationsForPreferences([liked], index);
+  assert.equal(formatWeight(graphResults[0].score), "+0.292");
+  assert.equal(graphResults[0].contributions[0].weightFactor, 0.5);
+  const disliked = manualPreference("anime:102", "disliked", 1);
+  const graphWithDislike = buildGraphRecommendationsForPreferences([liked, disliked], index);
+  assert.equal(graphWithDislike.some((item) => item.anime.nodeId === "anime:102"), false);
+  assert.deepEqual(buildGraphRecommendationsForPreferences([disliked], index), []);
+
+  const modelResults = buildModelRecommendationsForPreferences([liked, disliked, seen], index, modelIndex);
+  assert.equal(modelResults.some((item) => [101, 102].includes(item.anime.animeId)), false);
+  assert.equal(modelResults.some((item) => item.contributions.some((part) =>
+    part.watched.nodeId === "anime:102" && part.weightFactor < 0)), true);
+  const likedOnly = buildModelRecommendationsForPreferences([liked], index, modelIndex);
+  assert.notDeepEqual(modelResults.map((item) => [item.anime.animeId, item.score]),
+    likedOnly.map((item) => [item.anime.animeId, item.score]));
 });
 
 test("v1 negative pair preference never seeds or penalizes graph candidates", () => {

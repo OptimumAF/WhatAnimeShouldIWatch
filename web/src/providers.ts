@@ -1,9 +1,9 @@
 /** Existing optional public-provider reads behind injectable transport and timing. */
 import type { AnimeMetadata } from "./artifacts";
-import type { ImportedWatchedEntry, RecommendationIndex, SeasonalAnimeItem, UsernameImportResult } from "./domain";
-import { deduplicateHistory, historyScoreToTen, normalizeHistoryStatus } from "./import-history";
+import type { ImportedPreferenceEntry, RecommendationIndex, SeasonalAnimeItem, UsernameImportResult } from "./domain";
+import { deduplicateHistory, normalizeHistoryStatus } from "./import-history";
 import type { HistoryEntry, HistoryScoreScale } from "./import-history";
-import { normalizeImportedScoreToWeight } from "./recommendations";
+import { preferenceFromHistory } from "./preferences";
 import { throwIfAborted } from "./runtime";
 import type { RuntimePorts } from "./runtime";
 import { createProviderScheduler, type Provider, type ProviderScheduler } from "../../shared/provider-scheduler";
@@ -30,24 +30,22 @@ function providerProgress(value: unknown): number | null {
   return value;
 }
 
-function mappedRatedEntries(history: HistoryEntry[], index: RecommendationIndex): {
-  entries: ImportedWatchedEntry[]; ratedCount: number; unmappedCount: number;
+function mappedPreferenceEntries(history: HistoryEntry[], index: RecommendationIndex): {
+  entries: ImportedPreferenceEntry[]; ratedCount: number; unmappedCount: number;
 } {
-  const byNodeId = new Map<string, ImportedWatchedEntry>();
+  const byNodeId = new Map<string, ImportedPreferenceEntry>();
   let ratedCount = 0;
   let unmappedCount = 0;
   for (const entry of history) {
-    if (entry.score === null) continue;
-    ratedCount += 1;
+    if (entry.score !== null) ratedCount += 1;
     if (entry.status === "plan_to_watch") continue;
     const anime = entry.animeId === null ? undefined : index.animeByAnimeId.get(entry.animeId);
     if (!anime) {
       unmappedCount += 1;
       continue;
     }
-    const scoreTen = historyScoreToTen(entry);
-    if (scoreTen === null) continue;
-    byNodeId.set(anime.nodeId, { anime, weight: normalizeImportedScoreToWeight(scoreTen) });
+    const preference = preferenceFromHistory(entry, anime.nodeId);
+    if (preference) byNodeId.set(anime.nodeId, { anime, preference });
   }
   return { entries: [...byNodeId.values()], ratedCount, unmappedCount };
 }
@@ -168,7 +166,7 @@ export function createProviderAdapter(
       }
     }
     const parsed = deduplicateHistory(history);
-    return { ...mappedRatedEntries(parsed.entries, index), history: parsed.entries,
+    return { ...mappedPreferenceEntries(parsed.entries, index), history: parsed.entries,
       duplicateCount: parsed.duplicates };
   }
 
@@ -217,7 +215,7 @@ export function createProviderAdapter(
       });
     }
     const parsed = deduplicateHistory(history);
-    return { ...mappedRatedEntries(parsed.entries, index), history: parsed.entries,
+    return { ...mappedPreferenceEntries(parsed.entries, index), history: parsed.entries,
       duplicateCount: parsed.duplicates };
   }
 

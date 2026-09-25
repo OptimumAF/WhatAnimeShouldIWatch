@@ -64,7 +64,7 @@ async function openNormalAppWithMockedProviders(
   return requests;
 }
 
-test("mocked AniList import stores a native five-star score and converts the watched weight", async ({ page }) => {
+test("mocked AniList import stores a native five-star score and maps a clear like", async ({ page }) => {
   const requests = await openNormalAppWithMockedProviders(page, 200, "[]", JSON.stringify({ data: {
     User: { mediaListOptions: { scoreFormat: "POINT_5" } },
     MediaListCollection: { lists: [{ entries: [{
@@ -78,7 +78,8 @@ test("mocked AniList import stores a native five-star score and converts the wat
   await expect(page.locator("#watched-count")).toHaveText("0");
   await page.locator("#history-import-apply").click();
   await expect(page.locator("#history-list")).toContainText("score: 4 (POINT_5)");
-  await expect(page.locator("#selected-anime input[data-weight-node-id='anime:101']")).toHaveValue("1.6");
+  await expect(page.locator("#selected-anime select[data-preference-node-id='anime:101']")).toHaveValue("liked");
+  await expect(page.locator("#selected-anime .chip-confidence")).toContainText("50% confidence");
   expect(requests.filter((url) => new URL(url).hostname === "graphql.anilist.co")).toHaveLength(1);
 });
 
@@ -126,7 +127,7 @@ test("mocked MAL username history keeps unscored seen and unmapped entries throu
   await expect(page.locator("#history-import-summary")).toContainText("unscored: 2");
   await expect(page.locator("#watched-count")).toHaveText("0");
   await page.locator("#history-import-apply").click();
-  await expect(page.locator("#watched-count")).toHaveText("1");
+  await expect(page.locator("#watched-count")).toHaveText("2");
   await expect(page.locator("#history-count")).toHaveText("3");
   await expect(page.locator("#history-list")).toContainText("Unknown Fixture — 6; episodes: 0; score: unscored (mal-10); unmapped, kept");
   await expect(page.locator("#rec-results")).not.toContainText("Moonlit Workshop");

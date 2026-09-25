@@ -7,6 +7,7 @@ import type {
   RecommendationIndex,
   RecommendationResult,
 } from "./domain";
+import type { AnimePreference } from "./preferences";
 
 export interface RecommendationFilters {
   genre: string;
@@ -159,7 +160,25 @@ export function buildGraphRecommendations(
   selectedWeights: Map<string, number>,
   index: RecommendationIndex,
 ): RecommendationResult[] {
-  const selected = new Set(selectedNodeIds);
+  return scoreGraphRecommendations(selectedNodeIds.map((nodeId) => ({
+    nodeId, weight: clampWatchWeight(selectedWeights.get(nodeId) ?? 1),
+  })), selectedNodeIds, index);
+}
+
+export function buildGraphRecommendationsForPreferences(
+  preferences: readonly AnimePreference[], index: RecommendationIndex,
+): RecommendationResult[] {
+  return scoreGraphRecommendations(preferences
+    .filter((item) => item.sentiment === "liked")
+    .map((item) => ({ nodeId: item.nodeId, weight: item.importance * item.confidence })),
+  preferences.map((item) => item.nodeId), index);
+}
+
+function scoreGraphRecommendations(
+  seeds: readonly { nodeId: string; weight: number }[],
+  excludedNodeIds: readonly string[], index: RecommendationIndex,
+): RecommendationResult[] {
+  const selected = new Set(excludedNodeIds);
   const scored = new Map<
     string,
     {
@@ -173,8 +192,7 @@ export function buildGraphRecommendations(
     }
   >();
 
-  for (const selectedNodeId of selectedNodeIds) {
-    const weightFactor = clampWatchWeight(selectedWeights.get(selectedNodeId) ?? 1);
+  for (const { nodeId: selectedNodeId, weight: weightFactor } of seeds) {
     const neighbors = index.adjacency.get(selectedNodeId) ?? [];
     for (const neighbor of neighbors) {
       if (selected.has(neighbor.otherNodeId)) {
@@ -266,8 +284,29 @@ export function buildModelRecommendations(
   index: RecommendationIndex,
   modelIndex: ModelRecommendationIndex,
 ): RecommendationResult[] {
-  const watchedEntries = selectedNodeIds
-    .map((nodeId) => {
+  return scoreModelRecommendations(selectedNodeIds.map((nodeId) => ({
+    nodeId, weight: clampWatchWeight(selectedWeights.get(nodeId) ?? 1),
+  })), selectedNodeIds, index, modelIndex);
+}
+
+export function buildModelRecommendationsForPreferences(
+  preferences: readonly AnimePreference[], index: RecommendationIndex,
+  modelIndex: ModelRecommendationIndex,
+): RecommendationResult[] {
+  return scoreModelRecommendations(preferences
+    .filter((item) => item.sentiment !== "seen")
+    .map((item) => ({ nodeId: item.nodeId,
+      weight: (item.sentiment === "disliked" ? -1 : 1) * item.importance * item.confidence })),
+  preferences.map((item) => item.nodeId), index, modelIndex);
+}
+
+function scoreModelRecommendations(
+  seeds: readonly { nodeId: string; weight: number }[],
+  excludedNodeIds: readonly string[], index: RecommendationIndex,
+  modelIndex: ModelRecommendationIndex,
+): RecommendationResult[] {
+  const watchedEntries = seeds
+    .map(({ nodeId, weight }) => {
       const anime = index.animeByNodeId.get(nodeId);
       if (!anime) {
         return null;
@@ -279,7 +318,7 @@ export function buildModelRecommendations(
       return {
         anime,
         modelAnime,
-        weight: clampWatchWeight(selectedWeights.get(nodeId) ?? 1),
+        weight,
       };
     })
     .filter(
@@ -301,7 +340,7 @@ export function buildModelRecommendations(
     return [];
   }
 
-  const watchedAnimeIds = new Set(watchedEntries.map((entry) => entry.anime.animeId));
+  const watchedAnimeIds = new Set(excludedNodeIds.map((nodeId) => index.animeByNodeId.get(nodeId)?.animeId));
   const userVector = new Float32Array(factors);
   let denominator = 0;
 
@@ -520,19 +559,6 @@ export function clampWatchWeight(value: number): number {
     return 1;
   }
   return Math.min(Math.max(value, MIN_WATCH_WEIGHT), MAX_WATCH_WEIGHT);
-}
-
-export function normalizeImportedScoreToWeight(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 1;
-  }
-
-  if (value <= MAX_WATCH_WEIGHT) {
-    return clampWatchWeight(value);
-  }
-
-  const mapped = 1 + (value - 5) / 5;
-  return clampWatchWeight(mapped);
 }
 
 export function clampModelBlendWeight(value: number): number {

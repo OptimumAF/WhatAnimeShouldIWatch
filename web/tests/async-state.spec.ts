@@ -66,8 +66,10 @@ test("a delayed username import cannot overwrite a newer loaded profile", async 
   await expect(page.locator("#selected-anime")).toContainText("Copper Comet");
   await expect(page.locator("#selected-anime")).not.toContainText("Moonlit Workshop");
   await expect(page.locator("#rec-message")).toContainText("Loaded profile");
-  const selected = await page.evaluate(() => JSON.parse(localStorage.getItem("wasiw.recommendationState.v4") ?? "null")?.selected);
-  expect(selected).toEqual([{ nodeId: "anime:101", weight: 1 }]);
+  const preferences = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("wasiw.recommendationState.v5") ?? "null")?.preferences);
+  expect(preferences).toEqual([{ nodeId: "anime:101", sentiment: "seen",
+    importance: 1, confidence: 0, source: "manual" }]);
 });
 
 test("canceling during provider backoff prevents a later retry", async ({ page }) => {
@@ -108,6 +110,7 @@ test("superseded metadata cannot enter the cache or replace current status", asy
     await jsonRoute(route, { data: [] });
   });
   await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await expect.poll(() => metadataRequests).toBeGreaterThan(0);
   await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", "loading");
@@ -115,6 +118,7 @@ test("superseded metadata cannot enter the cache or replace current status", asy
   await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", "empty");
   releaseFirst?.();
   await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await expect.poll(() => metadataRequests).toBeGreaterThan(1);
   await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", "ready");
@@ -127,6 +131,7 @@ for (const [responseStatus, expectedState] of [[404, "unavailable"], [400, "fail
         url.pathname.startsWith("/v4/anime/") ? responseStatus : 200);
     });
     await page.locator("#anime-input").fill("Copper Comet");
+    await page.locator("#add-preference").selectOption("liked");
     await page.locator("#add-anime-form button").click();
     await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", expectedState);
   });
