@@ -258,23 +258,6 @@ if (!app) {
   throw new Error("Missing #app container");
 }
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .getRegistrations()
-      .then((registrations) =>
-        Promise.all(
-          registrations
-            .filter((registration) => registration.scope.startsWith(window.location.origin))
-            .map((registration) => registration.unregister()),
-        ),
-      )
-      .catch((error) => {
-        console.warn("Service worker cleanup failed.", error);
-      });
-  });
-}
-
 app.innerHTML = `
   <div class="app-shell">
     <header class="topbar">
