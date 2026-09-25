@@ -38,7 +38,7 @@ import {
   normalizeTitle,
 } from "./recommendations";
 import type { RecommendationFilters } from "./recommendations";
-import { createProviderAdapter } from "./providers";
+import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { createArtifactLoader } from "./artifact-loader";
 import {
   COMMAND_HISTORY_LIMIT,
@@ -53,7 +53,7 @@ import type {
   StoredRecommendationState,
   ThemeMode,
 } from "./persistence";
-import { createBrowserRuntime } from "./runtime";
+import { createBrowserRuntime, isAbortError } from "./runtime";
 import "./style.css";
 
 const runtime = createBrowserRuntime();
@@ -64,6 +64,7 @@ const persistence = createPersistenceAdapter(runtime, demoMode ? "wasiw.demo" : 
 
 type AppView = "recommendations" | "network";
 type UsernameImportProvider = "anilist" | "mal";
+type AsyncUiState = "idle" | "loading" | "ready" | "empty" | "unavailable" | "failed" | "stale" | "demo";
 type CommandMatchReason =
   | "pinned"
   | "exact"
@@ -247,6 +248,7 @@ app.innerHTML = `
                     <span>Import Watched Entries</span>
                   </button>
                 </form>
+                <p id="bulk-import-status" class="muted" role="status" aria-live="polite" data-state="idle"></p>
               </section>
 
               <section class="username-import">
@@ -263,6 +265,7 @@ app.innerHTML = `
                     <span id="username-import-submit-label">Import User List</span>
                   </button>
                 </form>
+                <p id="username-import-status" class="muted" role="status" aria-live="polite" data-state="idle"></p>
               </section>
 
               <section class="profiles">
@@ -338,7 +341,7 @@ app.innerHTML = `
                 </label>
                 <div class="rec-filter-actions">
                   <button id="clear-rec-filters" type="button" class="ghost-btn">Clear Filters</button>
-                  <span id="metadata-status" class="metadata-status" role="status" aria-live="polite">Metadata: idle</span>
+                  <span id="metadata-status" class="metadata-status" role="status" aria-live="polite" data-state="idle">Metadata: idle</span>
                 </div>
               </section>
             </details>
@@ -350,7 +353,7 @@ app.innerHTML = `
                 <h3>${demoMode ? "Demo Suggestions" : "Seasonal Trending"}</h3>
                 <button id="refresh-seasonal" type="button" class="ghost-btn">Refresh</button>
               </div>
-              <p id="seasonal-status" class="muted" role="status" aria-live="polite">Loading current season...</p>
+              <p id="seasonal-status" class="muted" role="status" aria-live="polite" data-state="idle">Seasonal data: idle.</p>
               <ul id="seasonal-list" class="seasonal-list"></ul>
             </section>
           </section>
@@ -486,11 +489,13 @@ const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
 const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
 const bulkImportFile = mustElement<HTMLInputElement>("#bulk-import-file");
 const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
+const bulkImportStatusEl = mustElement<HTMLParagraphElement>("#bulk-import-status");
 const usernameImportForm = mustElement<HTMLFormElement>("#username-import-form");
 const usernameImportProvider = mustElement<HTMLSelectElement>("#username-import-provider");
 const usernameImportInput = mustElement<HTMLInputElement>("#username-import-input");
 const usernameImportSubmit = mustElement<HTMLButtonElement>("#username-import-submit");
 const usernameImportSubmitLabel = mustElement<HTMLSpanElement>("#username-import-submit-label");
+const usernameImportStatusEl = mustElement<HTMLParagraphElement>("#username-import-status");
 const profileSaveForm = mustElement<HTMLFormElement>("#profile-save-form");
 const profileNameInput = mustElement<HTMLInputElement>("#profile-name-input");
 const profileSelect = mustElement<HTMLSelectElement>("#profile-select");
@@ -550,6 +555,10 @@ let activeView: AppView = "recommendations";
 let recommendationMode: RecommendationMode = "graph";
 let modelBlendWeight = 0.5;
 let recommendationRunId = 0;
+let recommendationController: AbortController | null = null;
+let activeUsernameImport: { controller: AbortController; provider: UsernameImportProvider } | null = null;
+let bulkFileLoadId = 0;
+let activeBulkFileLoadId: number | null = null;
 let graphRenderRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
 let modelLoadError: string | null = null;
@@ -561,16 +570,18 @@ const recommendationFilters: RecommendationFilters = {
 };
 const animeMetadataCache = new Map<number, AnimeMetadata>();
 const animeMetadataUnavailable = new Set<number>();
-const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
+const animeMetadataFailed = new Set<number>();
 const demoCatalog = demoMode ? await loadRequiredArtifact(artifactLoader.fetchDemoCatalog()) : null;
 if (demoCatalog) {
   for (const item of demoCatalog) animeMetadataCache.set(item.animeId, item);
   usernameImportProvider.disabled = true;
   usernameImportInput.disabled = true;
   usernameImportSubmit.disabled = true;
+  setAsyncStatus(usernameImportStatusEl, "demo", "Username imports are unavailable in the offline demo.");
 }
 let seasonalItems: SeasonalAnimeItem[] = [];
 let seasonalLoadingPromise: Promise<void> | null = null;
+let seasonalController: AbortController | null = null;
 let activeTheme: ThemeMode = persistence.loadThemeModePreference(
   () => window.matchMedia("(prefers-color-scheme: light)").matches,
 );
@@ -891,6 +902,10 @@ bulkImportForm.addEventListener("submit", (event) => {
 
 bulkImportFile.addEventListener("change", () => {
   void loadBulkImportFile();
+});
+
+bulkImportInput.addEventListener("input", () => {
+  cancelBulkFileLoad();
 });
 
 usernameImportForm.addEventListener("submit", (event) => {
@@ -1965,20 +1980,41 @@ async function loadBulkImportFile(): Promise<void> {
   if (!file) {
     return;
   }
+  const loadId = ++bulkFileLoadId;
+  activeBulkFileLoadId = loadId;
   bulkImportFile.value = "";
   if (!file.name.toLowerCase().endsWith(".txt") || file.size > 128 * 1024) {
+    activeBulkFileLoadId = null;
+    setAsyncStatus(bulkImportStatusEl, "failed", "Choose a .txt file no larger than 128 KiB.");
     recMessageEl.textContent = "Choose a .txt file no larger than 128 KiB.";
     return;
   }
+  setAsyncStatus(bulkImportStatusEl, "loading", "Reading local file...");
   try {
-    bulkImportInput.value = await file.text();
-    recMessageEl.textContent = `Loaded local file "${file.name}". Review the entries, then select Import Watched Entries.`;
+    const content = await file.text();
+    if (activeBulkFileLoadId !== loadId) return;
+    activeBulkFileLoadId = null;
+    bulkImportInput.value = content;
+    if (content.trim()) {
+      setAsyncStatus(bulkImportStatusEl, "ready", "Local file loaded. Review the entries before importing.");
+      recMessageEl.textContent = `Loaded local file "${file.name}". Review the entries, then select Import Watched Entries.`;
+    } else {
+      setAsyncStatus(bulkImportStatusEl, "empty", "The local file has no entries to import.");
+      recMessageEl.textContent = `Local file "${file.name}" is empty.`;
+    }
   } catch {
+    if (activeBulkFileLoadId !== loadId) return;
+    activeBulkFileLoadId = null;
+    setAsyncStatus(bulkImportStatusEl, "failed", "Unable to read that local file.");
     recMessageEl.textContent = "Unable to read that local file.";
   }
 }
 
 function importWatchedFromBulkInput(): void {
+  if (activeBulkFileLoadId !== null) {
+    recMessageEl.textContent = "Wait for the local file to finish loading before importing.";
+    return;
+  }
   const raw = bulkImportInput.value.trim();
   if (!raw) {
     recMessageEl.textContent = "Paste at least one line to import.";
@@ -2037,6 +2073,7 @@ function importWatchedFromBulkInput(): void {
   persistRecommendationState();
   renderSelectedAnime();
   void updateRecommendations();
+  setAsyncStatus(bulkImportStatusEl, "ready", "Local entries imported into this browser.");
 
   const unresolvedNote =
     unresolved > 0
@@ -2049,6 +2086,7 @@ function importWatchedFromBulkInput(): void {
 
 async function importWatchedFromUsername(): Promise<void> {
   if (demoMode) {
+    setAsyncStatus(usernameImportStatusEl, "demo", "Username imports are unavailable in the offline demo.");
     recMessageEl.textContent = "Username imports are unavailable in the offline demo.";
     return;
   }
@@ -2059,14 +2097,27 @@ async function importWatchedFromUsername(): Promise<void> {
     return;
   }
 
+  cancelActiveUsernameImport();
+  const controller = new AbortController();
+  activeUsernameImport = { controller, provider };
   setUsernameImportLoading(true, provider);
+  setAsyncStatus(usernameImportStatusEl, "loading", `Importing from ${providerLabel(provider)}...`);
   recMessageEl.textContent = `Importing rated anime from ${providerLabel(provider)} user "${username}"...`;
 
   try {
     const result =
       provider === "anilist"
-        ? await providerAdapter.fetchAniListUsernameImport(username, recommendationIndex)
-        : await providerAdapter.fetchMalUsernameImport(username, recommendationIndex);
+        ? await providerAdapter.fetchAniListUsernameImport(username, recommendationIndex, controller.signal)
+        : await providerAdapter.fetchMalUsernameImport(username, recommendationIndex, controller.signal);
+
+    if (controller.signal.aborted || activeUsernameImport?.controller !== controller) return;
+    activeUsernameImport = null;
+    setUsernameImportLoading(false, provider);
+    if (result.ratedCount === 0) {
+      setAsyncStatus(usernameImportStatusEl, "empty", `No rated entries returned by ${providerLabel(provider)}.`);
+      recMessageEl.textContent = `No rated entries returned by ${providerLabel(provider)}; the watched list was left intact.`;
+      return;
+    }
 
     const summary = upsertImportedWatchedEntries(result.entries);
     persistRecommendationState();
@@ -2078,13 +2129,49 @@ async function importWatchedFromUsername(): Promise<void> {
       `Rated: ${result.ratedCount}, matched in graph: ${result.entries.length}, ` +
       `added: ${summary.added}, updated: ${summary.updated}, skipped: ${summary.skipped}, ` +
       `unmapped: ${result.unmappedCount}.`;
+    setAsyncStatus(usernameImportStatusEl, "ready", `Imported ${result.ratedCount} rated entries from ${providerLabel(provider)}.`);
   } catch (error) {
+    if (controller.signal.aborted || activeUsernameImport?.controller !== controller) return;
+    if (isAbortError(error)) {
+      setAsyncStatus(usernameImportStatusEl, "stale", "Username import request was canceled.");
+      recMessageEl.textContent = "Username import request was canceled; the watched list was left intact.";
+      return;
+    }
+    setAsyncStatus(
+      usernameImportStatusEl,
+      error instanceof ProviderUnavailableError ? "unavailable" : "failed",
+      error instanceof ProviderUnavailableError ? `${providerLabel(provider)} import is unavailable.` : `${providerLabel(provider)} import failed.`,
+    );
     const message =
       error instanceof Error ? error.message : "Unable to import this username.";
     recMessageEl.textContent = `Username import failed: ${message}`;
   } finally {
-    setUsernameImportLoading(false, provider);
+    if (activeUsernameImport?.controller === controller) {
+      activeUsernameImport = null;
+      setUsernameImportLoading(false, provider);
+    }
   }
+}
+
+function setAsyncStatus(element: HTMLElement, state: AsyncUiState, message: string): void {
+  element.dataset.state = state;
+  element.textContent = message;
+}
+
+function cancelActiveUsernameImport(): void {
+  const active = activeUsernameImport;
+  if (!active) return;
+  activeUsernameImport = null;
+  active.controller.abort();
+  setUsernameImportLoading(false, active.provider);
+  setAsyncStatus(usernameImportStatusEl, "stale", "Previous username import canceled after recommendation state changed.");
+}
+
+function cancelBulkFileLoad(): void {
+  if (activeBulkFileLoadId === null) return;
+  ++bulkFileLoadId;
+  activeBulkFileLoadId = null;
+  setAsyncStatus(bulkImportStatusEl, "stale", "Previous local file read was superseded.");
 }
 
 function parseUsernameImportProvider(raw: string): UsernameImportProvider {
@@ -2330,6 +2417,11 @@ function renderCandidateChips(
 }
 
 async function updateRecommendations(): Promise<void> {
+  recommendationController?.abort();
+  // A later user action can retry transient metadata failures; unavailable IDs stay known.
+  animeMetadataFailed.clear();
+  const controller = new AbortController();
+  recommendationController = controller;
   const runId = ++recommendationRunId;
 
   if (selectedAnimeNodeIds.length === 0) {
@@ -2341,12 +2433,13 @@ async function updateRecommendations(): Promise<void> {
           ? "Using ML model recommendations."
           : `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model).`;
     recResultsEl.innerHTML = "";
-    setMetadataStatus("Metadata: add anime to begin.");
+    setMetadataStatus("empty", "Metadata: add anime to begin.");
     renderSelectedAnime();
     return;
   }
 
   let recommendations: RecommendationResult[] = [];
+  setMetadataStatus(demoMode ? "demo" : "loading", demoMode ? "Metadata: synthetic demo catalog." : "Metadata: loading recommendations...");
 
   if (recommendationMode === "graph") {
     recEngineStatusEl.textContent = "Using graph recommendations.";
@@ -2366,6 +2459,7 @@ async function updateRecommendations(): Promise<void> {
         recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
         recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
         recResultsEl.innerHTML = "";
+        setMetadataStatus("failed", "Metadata: model artifact is invalid.");
         return;
       }
       recEngineStatusEl.textContent =
@@ -2373,6 +2467,7 @@ async function updateRecommendations(): Promise<void> {
       recSummaryEl.textContent =
         "Model recommendations are unavailable until model data is exported to the web data folder.";
       recResultsEl.innerHTML = "";
+      setMetadataStatus("unavailable", "Metadata: model artifact is unavailable.");
       return;
     }
     recEngineStatusEl.textContent = `Using ML model recommendations (${modelIndex.factors} factors).`;
@@ -2393,6 +2488,7 @@ async function updateRecommendations(): Promise<void> {
         recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
         recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
         recResultsEl.innerHTML = "";
+        setMetadataStatus("failed", "Metadata: model artifact is invalid.");
         return;
       }
       recEngineStatusEl.textContent =
@@ -2400,6 +2496,7 @@ async function updateRecommendations(): Promise<void> {
       recSummaryEl.textContent =
         "Hybrid mode needs model data. Export model data or switch to graph-only mode.";
       recResultsEl.innerHTML = "";
+      setMetadataStatus("unavailable", "Metadata: model artifact is unavailable.");
       return;
     }
     const graphRecommendations = buildGraphRecommendations(
@@ -2432,7 +2529,7 @@ async function updateRecommendations(): Promise<void> {
     recSummaryEl.textContent =
       "No positive recommendations found from the current watched list. Try adding more anime.";
     recResultsEl.innerHTML = "";
-    setMetadataStatus("Metadata: no candidates.");
+    setMetadataStatus("empty", "Metadata: no candidates.");
     return;
   }
 
@@ -2444,8 +2541,8 @@ async function updateRecommendations(): Promise<void> {
     ? METADATA_PREFETCH_WITH_FILTER_LIMIT
     : Math.min(12, metadataCandidateAnimeIds.length);
   if (metadataPrefetchLimit > 0) {
-    await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit);
-    if (runId !== recommendationRunId) {
+    await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit, controller.signal);
+    if (runId !== recommendationRunId || controller.signal.aborted) {
       return;
     }
   }
@@ -2462,10 +2559,15 @@ async function updateRecommendations(): Promise<void> {
       ? "No recommendations match your current metadata filters."
       : "No positive recommendations found from the current watched list.";
     recResultsEl.innerHTML = "";
-    setMetadataStatus(
-      hasActiveRecommendationFilters(recommendationFilters) && filterResult.missingMetadataCount > 0
-        ? `Metadata: ${filterResult.missingMetadataCount} candidate(s) skipped due to missing metadata.`
-        : "Metadata: no matches after filters.",
+    const metadataState: AsyncUiState = demoMode ? "demo"
+      : metadataCandidateAnimeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
+        : metadataCandidateAnimeIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "empty";
+    setMetadataStatus(metadataState,
+      metadataState === "failed" ? "Metadata request failed; some candidates could not be checked."
+        : metadataState === "unavailable" ? "Metadata is unavailable for some candidates."
+          : hasActiveRecommendationFilters(recommendationFilters) && filterResult.missingMetadataCount > 0
+            ? `Metadata: ${filterResult.missingMetadataCount} candidate(s) skipped due to missing metadata.`
+            : "Metadata: no matches after filters.",
     );
     return;
   }
@@ -2492,16 +2594,24 @@ async function updateRecommendations(): Promise<void> {
     .filter(
       (item) =>
         !animeMetadataCache.has(item.anime.animeId) &&
-        !animeMetadataUnavailable.has(item.anime.animeId),
+        !animeMetadataUnavailable.has(item.anime.animeId) &&
+        !animeMetadataFailed.has(item.anime.animeId),
     ).length;
   const missingNote =
     filterResult.missingMetadataCount > 0
       ? ` | skipped (missing metadata): ${filterResult.missingMetadataCount}`
       : "";
-  setMetadataStatus(
+  const visibleIds = filteredRecommendations.slice(0, MAX_RECOMMENDATIONS).map((item) => item.anime.animeId);
+  const metadataState: AsyncUiState = demoMode ? "demo"
+    : visibleIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
+      : visibleIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "ready";
+  const providerNote = metadataState === "failed" ? " | some metadata requests failed"
+    : metadataState === "unavailable" ? " | some metadata unavailable"
+      : metadataState === "demo" ? " | synthetic demo data" : "";
+  setMetadataStatus(metadataState,
     `Metadata loaded for ${visibleWithMetadata}/${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} visible recommendations` +
       `${visibleMissingMetadata > 0 ? ` | pending: ${visibleMissingMetadata}` : ""}` +
-      missingNote,
+      missingNote + providerNote,
   );
 }
 
@@ -2562,8 +2672,8 @@ function formatRecommendationMetadataMeta(metadata: AnimeMetadata | null): strin
   return parts.join(" | ");
 }
 
-function setMetadataStatus(message: string): void {
-  metadataStatusEl.textContent = message;
+function setMetadataStatus(state: AsyncUiState, message: string): void {
+  setAsyncStatus(metadataStatusEl, state, message);
 }
 
 function formatActiveFilterSummary(): string {
@@ -2619,13 +2729,15 @@ function updateGenreFilterOptions(recommendations: RecommendationResult[]): void
 async function hydrateMetadataForAnimeIds(
   animeIds: number[],
   maxToFetch: number,
+  signal: AbortSignal,
 ): Promise<void> {
   const uniqueTargets = [...new Set(animeIds)]
     .filter(
       (animeId) =>
         animeId > 0 &&
         !animeMetadataCache.has(animeId) &&
-        !animeMetadataUnavailable.has(animeId),
+        !animeMetadataUnavailable.has(animeId) &&
+        !animeMetadataFailed.has(animeId),
     )
     .slice(0, maxToFetch);
   if (uniqueTargets.length === 0) {
@@ -2639,12 +2751,12 @@ async function hydrateMetadataForAnimeIds(
   for (let i = 0; i < workerCount; i += 1) {
     workers.push(
       (async () => {
-        while (queue.length > 0) {
+        while (queue.length > 0 && !signal.aborted) {
           const animeId = queue.shift();
           if (animeId === undefined) {
             return;
           }
-          await ensureAnimeMetadata(animeId);
+          await ensureAnimeMetadata(animeId, signal);
         }
       })(),
     );
@@ -2653,7 +2765,7 @@ async function hydrateMetadataForAnimeIds(
   await Promise.all(workers);
 }
 
-async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | null> {
+async function ensureAnimeMetadata(animeId: number, signal: AbortSignal): Promise<AnimeMetadata | null> {
   const cached = animeMetadataCache.get(animeId);
   if (cached) {
     return cached;
@@ -2662,26 +2774,24 @@ async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | nul
   if (animeMetadataUnavailable.has(animeId)) {
     return null;
   }
-  const inflight = animeMetadataInFlight.get(animeId);
-  if (inflight) {
-    return inflight;
+  if (animeMetadataFailed.has(animeId) || signal.aborted) return null;
+  try {
+    const outcome = await providerAdapter.fetchAnimeMetadataFromJikan(animeId, signal);
+    if (signal.aborted) return null;
+    if (outcome.state === "unavailable") {
+      animeMetadataUnavailable.add(animeId);
+      return null;
+    }
+    if (outcome.state === "failed") {
+      animeMetadataFailed.add(animeId);
+      return null;
+    }
+    animeMetadataCache.set(animeId, outcome.metadata);
+    return outcome.metadata;
+  } catch (error) {
+    if (!signal.aborted) animeMetadataFailed.add(animeId);
+    return null;
   }
-
-  const promise = providerAdapter.fetchAnimeMetadataFromJikan(animeId)
-    .then((metadata) => {
-      if (!metadata) {
-        animeMetadataUnavailable.add(animeId);
-        return null;
-      }
-      animeMetadataCache.set(animeId, metadata);
-      return metadata;
-    })
-    .finally(() => {
-      animeMetadataInFlight.delete(animeId);
-    });
-
-  animeMetadataInFlight.set(animeId, promise);
-  return await promise;
 }
 
 function truncateText(value: string, maxLength: number): string {
@@ -2698,7 +2808,7 @@ async function loadSeasonalTrending(force: boolean): Promise<void> {
       animeId: item.animeId, title: item.title, score: item.score,
       year: item.year, season: null, imageUrl: "",
     }));
-    seasonalStatusEl.textContent = "Invented titles from the local demo catalog.";
+    setAsyncStatus(seasonalStatusEl, "demo", "Invented titles from the local demo catalog.");
     renderSeasonalList();
     return;
   }
@@ -2706,25 +2816,39 @@ async function loadSeasonalTrending(force: boolean): Promise<void> {
     return seasonalLoadingPromise;
   }
 
+  seasonalController?.abort();
+  const controller = new AbortController();
+  seasonalController = controller;
   refreshSeasonalBtn.disabled = true;
-  seasonalStatusEl.textContent = "Loading current season...";
+  setAsyncStatus(seasonalStatusEl, "loading", "Loading current season...");
 
   const promise = (async () => {
     try {
-      seasonalItems = await providerAdapter.fetchSeasonalAnime(SEASONAL_LIST_LIMIT);
-      seasonalStatusEl.textContent =
+      const items = await providerAdapter.fetchSeasonalAnime(SEASONAL_LIST_LIMIT, controller.signal);
+      if (controller.signal.aborted || seasonalController !== controller) return;
+      seasonalItems = items;
+      setAsyncStatus(seasonalStatusEl, items.length > 0 ? "ready" : "empty",
         seasonalItems.length > 0
           ? `Loaded ${seasonalItems.length} seasonal anime from Jikan.`
-          : "No seasonal anime returned.";
+          : "No seasonal anime returned.");
       renderSeasonalList();
     } catch (error) {
+      if (controller.signal.aborted || seasonalController !== controller) return;
+      if (isAbortError(error)) {
+        setAsyncStatus(seasonalStatusEl, "stale", "Seasonal request was canceled.");
+        return;
+      }
       const message = error instanceof Error ? error.message : "Request failed.";
-      seasonalStatusEl.textContent = `Unable to load seasonal anime: ${message}`;
+      setAsyncStatus(seasonalStatusEl, error instanceof ProviderUnavailableError ? "unavailable" : "failed",
+        `Unable to load seasonal anime: ${message}`);
       seasonalItems = [];
       renderSeasonalList();
     } finally {
-      refreshSeasonalBtn.disabled = false;
-      seasonalLoadingPromise = null;
+      if (seasonalController === controller) {
+        refreshSeasonalBtn.disabled = false;
+        seasonalController = null;
+        seasonalLoadingPromise = null;
+      }
     }
   })();
 
@@ -3677,6 +3801,10 @@ function renderStorageWarnings(): void {
 }
 
 function persistRecommendationState(): boolean {
+  cancelActiveUsernameImport();
+  cancelBulkFileLoad();
+  recommendationController?.abort();
+  ++recommendationRunId;
   const saved = persistence.persistRecommendationState(buildCurrentRecommendationState());
   renderStorageWarnings();
   return saved;

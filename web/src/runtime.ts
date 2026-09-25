@@ -11,7 +11,7 @@ export interface RuntimePorts {
   now(): Date;
   monotonicNow(): number;
   random(): number;
-  sleep(ms: number): Promise<void>;
+  sleep(ms: number, signal?: AbortSignal): Promise<void>;
   schedule(callback: () => void, ms: number): void;
   frame(callback: FrameRequestCallback): void;
 }
@@ -28,10 +28,33 @@ export function createBrowserRuntime(): RuntimePorts {
     now: () => new Date(),
     monotonicNow: () => performance.now(),
     random: () => Math.random(),
-    sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+    sleep: (ms, signal) => new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Operation canceled", "AbortError"));
+        return;
+      }
+      const finish = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const onAbort = () => {
+        window.clearTimeout(timer);
+        reject(new DOMException("Operation canceled", "AbortError"));
+      };
+      const timer = window.setTimeout(finish, ms);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    }),
     schedule: (callback, ms) => { window.setTimeout(callback, ms); },
     frame: (callback) => { window.requestAnimationFrame(callback); },
   };
+}
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException("Operation canceled", "AbortError");
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 /** Deterministic non-cryptographic source for synthetic tests. */

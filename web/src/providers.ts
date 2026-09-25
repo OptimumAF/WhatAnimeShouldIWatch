@@ -2,6 +2,7 @@
 import type { AnimeMetadata } from "./artifacts";
 import type { ImportedWatchedEntry, RecommendationIndex, SeasonalAnimeItem, UsernameImportResult } from "./domain";
 import { normalizeImportedScoreToWeight } from "./recommendations";
+import { throwIfAborted } from "./runtime";
 import type { RuntimePorts } from "./runtime";
 
 const USERNAME_IMPORT_MAX_RETRIES = 3;
@@ -9,10 +10,20 @@ const USERNAME_IMPORT_PAGE_SIZE = 300;
 const USERNAME_IMPORT_PAGE_DELAY_MS = 350;
 const METADATA_MAX_RETRIES = 2;
 
+export type MetadataReadResult =
+  | { state: "ready"; metadata: AnimeMetadata }
+  | { state: "unavailable" }
+  | { state: "failed" };
+
+export class ProviderUnavailableError extends Error {
+  readonly name = "ProviderUnavailableError";
+}
+
 export function createProviderAdapter(runtime: RuntimePorts) {
   async function fetchAniListUsernameImport(
     username: string,
     index: RecommendationIndex,
+    signal?: AbortSignal,
   ): Promise<UsernameImportResult> {
     const query = `
       query ($userName: String) {
@@ -53,19 +64,15 @@ export function createProviderAdapter(runtime: RuntimePorts) {
         query,
         variables: { userName: username },
       }),
-    });
+    }, USERNAME_IMPORT_MAX_RETRIES, signal);
 
     if (payload.errors && payload.errors.length > 0) {
       const message = payload.errors[0]?.message ?? "AniList API returned an error.";
       throw new Error(message);
     }
 
-    const lists = payload.data?.MediaListCollection?.lists ?? [];
-    if (lists.length === 0) {
-      throw new Error(
-        "No AniList anime list found for that user (private, empty, or not found).",
-      );
-    }
+    const lists = payload.data?.MediaListCollection?.lists;
+    if (!lists) throw new ProviderUnavailableError("No AniList anime list was available for that user.");
 
     let ratedCount = 0;
     let unmappedCount = 0;
@@ -102,12 +109,14 @@ export function createProviderAdapter(runtime: RuntimePorts) {
   async function fetchMalUsernameImport(
     username: string,
     index: RecommendationIndex,
+    signal?: AbortSignal,
   ): Promise<UsernameImportResult> {
     const allEntries: Array<{ anime_id?: number; score?: number }> = [];
     let offset = 0;
 
     while (true) {
-      const page = await fetchMalUsernamePage(username, offset);
+      throwIfAborted(signal);
+      const page = await fetchMalUsernamePage(username, offset, signal);
       if (!Array.isArray(page) || page.length === 0) {
         break;
       }
@@ -118,12 +127,9 @@ export function createProviderAdapter(runtime: RuntimePorts) {
       }
 
       offset += page.length;
-      await runtime.sleep(USERNAME_IMPORT_PAGE_DELAY_MS);
+      await runtime.sleep(USERNAME_IMPORT_PAGE_DELAY_MS, signal);
     }
-
-    if (allEntries.length === 0) {
-      throw new Error("No rated MAL entries found for that user (private, empty, or not found).");
-    }
+    throwIfAborted(signal);
 
     let ratedCount = 0;
     let unmappedCount = 0;
@@ -157,6 +163,7 @@ export function createProviderAdapter(runtime: RuntimePorts) {
   async function fetchMalUsernamePage(
     username: string,
     offset: number,
+    signal?: AbortSignal,
   ): Promise<Array<{ anime_id?: number; score?: number }>> {
     const malUrl = new URL(
       `https://myanimelist.net/animelist/${encodeURIComponent(username)}/load.json`,
@@ -173,15 +180,19 @@ export function createProviderAdapter(runtime: RuntimePorts) {
           },
         },
         USERNAME_IMPORT_MAX_RETRIES,
+        signal,
       );
       if (!Array.isArray(page)) {
         throw new Error("Unexpected MAL response shape.");
       }
       return page as Array<{ anime_id?: number; score?: number }>;
-    } catch {
-      throw new Error(
-        "Direct MAL import failed. Browser access may be blocked, the profile may be private, or MAL may be rate limiting. No proxy was contacted. Try the local file or text import above, or AniList.",
-      );
+    } catch (error) {
+      throwIfAborted(signal);
+      const message = "Direct MAL import failed. Browser access may be blocked, the profile may be private, or MAL may be rate limiting. No proxy was contacted. Try the local file or text import above, or AniList.";
+      if (error instanceof ProviderUnavailableError) {
+        throw new ProviderUnavailableError(message);
+      }
+      throw new Error(message);
     }
   }
 
@@ -189,18 +200,26 @@ export function createProviderAdapter(runtime: RuntimePorts) {
     url: string,
     init?: RequestInit,
     maxRetries = USERNAME_IMPORT_MAX_RETRIES,
+    signal?: AbortSignal,
   ): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      const response = await runtime.fetch(url, init);
+      throwIfAborted(signal);
+      const response = await runtime.fetch(url, { ...init, signal });
+      throwIfAborted(signal);
       if (response.ok) {
-        return (await response.json()) as T;
+        const payload = (await response.json()) as T;
+        throwIfAborted(signal);
+        return payload;
       }
 
       if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
+        if (response.status === 403 || response.status === 404) {
+          throw new ProviderUnavailableError(`Request unavailable (${response.status}) for ${url}`);
+        }
         throw new Error(`Request failed (${response.status}) for ${url}`);
       }
 
-      await runtime.sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(runtime.random() * 200));
+      await runtime.sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(runtime.random() * 200), signal);
     }
 
     throw new Error("Request retries exhausted.");
@@ -212,38 +231,45 @@ export function createProviderAdapter(runtime: RuntimePorts) {
 
   async function fetchAnimeMetadataFromJikan(
     animeId: number,
-  ): Promise<AnimeMetadata | null> {
+    signal?: AbortSignal,
+  ): Promise<MetadataReadResult> {
     const url = `https://api.jikan.moe/v4/anime/${animeId}/full`;
 
     for (let attempt = 0; attempt <= METADATA_MAX_RETRIES; attempt += 1) {
+      throwIfAborted(signal);
       try {
         const response = await runtime.fetch(url, {
           headers: {
             Accept: "application/json",
           },
+          signal,
         });
+        throwIfAborted(signal);
         if (response.ok) {
           const payload = (await response.json()) as {
             data?: Record<string, unknown>;
           };
-          return parseAnimeMetadataPayload(animeId, payload.data);
+          throwIfAborted(signal);
+          const metadata = parseAnimeMetadataPayload(animeId, payload.data);
+          return metadata ? { state: "ready", metadata } : { state: "failed" };
         }
-        if (response.status === 404) {
-          return null;
+        if (response.status === 403 || response.status === 404) {
+          return { state: "unavailable" };
         }
         if (!isRetryableStatus(response.status) || attempt >= METADATA_MAX_RETRIES) {
-          return null;
+          return { state: "failed" };
         }
       } catch {
+        throwIfAborted(signal);
         if (attempt >= METADATA_MAX_RETRIES) {
-          return null;
+          return { state: "failed" };
         }
       }
 
-      await runtime.sleep(Math.min(800 * 2 ** attempt, 5000) + Math.floor(runtime.random() * 220));
+      await runtime.sleep(Math.min(800 * 2 ** attempt, 5000) + Math.floor(runtime.random() * 220), signal);
     }
 
-    return null;
+    return { state: "failed" };
   }
 
   function parseAnimeMetadataPayload(
@@ -311,12 +337,14 @@ export function createProviderAdapter(runtime: RuntimePorts) {
     return values;
   }
 
-  async function fetchSeasonalAnime(limit: number): Promise<SeasonalAnimeItem[]> {
+  async function fetchSeasonalAnime(limit: number, signal?: AbortSignal): Promise<SeasonalAnimeItem[]> {
     const payload = await fetchJsonWithRetries<{
       data?: Array<Record<string, unknown>>;
     }>(
       `https://api.jikan.moe/v4/seasons/now?limit=${limit}`,
       { headers: { Accept: "application/json" } },
+      USERNAME_IMPORT_MAX_RETRIES,
+      signal,
     );
     const incoming = Array.isArray(payload.data) ? payload.data : [];
     return incoming

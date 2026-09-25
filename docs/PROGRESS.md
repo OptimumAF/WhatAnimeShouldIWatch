@@ -200,3 +200,21 @@
 **Plan revisions and reasons:** Checked M1.4 after direct migration/failure tests and browser reload/profile journeys passed. Version 4 is a new state key and a versioned profile envelope because the old `.v1` keys held several state schema versions and an unversioned profile array. Keeping the old bytes and backup copies allows recovery without silently filtering catalog-missing IDs. M6.6 scope and all later acceptance criteria are unchanged. Merged storage guidance into the existing `AGENTS.md`.
 
 **Single next task:** M1.5 — define cancellation and state rules so obsolete imports/metadata responses cannot overwrite a newer profile, using synthetic delayed providers.
+
+## Session 2026-09-24 — M1.5
+
+**Branch / starting commit:** `codex/async-cancellation` from clean `3b32912` on draft PR #9; PR #9's final-head fixture CI and GitGuardian checks passed. Re-read `AGENTS.md`, the plan and prior handoff, provider permission decision 0001, the active provider/runtime/UI paths, mocked import tests, branch/commit, and worktree before editing.
+
+**Completed:** M1.5. Username imports now pass an abort signal through provider fetches, pagination, and retry waits; a recommendation-state or profile change aborts the active import before its response can alter the watched list. Delayed local file reads use a generation guard, so another file or profile load supersedes them. Each recommendation run cancels older metadata requests and checks its signal before caching or rendering results; transient failures can retry on a later user action. Seasonal loads also guard their result against a newer request. The import, file, metadata, and seasonal UI now distinguishes loading, empty, unavailable, failed, stale, ready, and demo states with readable status text.
+
+**Verification commands and actual results:** The two new browser cases first failed against the previous UI. After implementation, `npx playwright test tests/async-state.spec.ts tests/mal-import.spec.ts tests/demo.spec.ts --reporter=line` passed 13 focused tests, including delayed profile replacement, cancellation during retry backoff, metadata cache isolation, local file supersession, empty imports, and unavailable/failed/demo states. `npm run data:fixture` generated 7 invented users, 8 anime, and 11 pairs; `npm run data:fixture:check` verified them. `npm run typecheck` passed pipeline and web; `npm test` passed 4 pipeline and 26 web unit tests; `npm run test:python` passed 2; `python -m unittest discover -s scripts/tests -v` passed 5 workflow gate tests; `npm run build:web` passed; `npm run test:e2e` passed all 25 browser tests. Direct adapter tests verify abort signals on delayed fetches, no retry after cancellation, delayed metadata discard, and empty versus unavailable AniList collections. Final staged diff check follows.
+
+**Files changed:** `web/src/runtime.ts`, `web/src/providers.ts`, `web/src/main.ts`, `web/src/style.css`, `web/test/adapters.test.ts`, `web/tests/async-state.spec.ts`, `web/tests/mal-import.spec.ts`, `web/tests/demo.spec.ts`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
+
+**Commit / PR and CI:** Local verification passed; commit and draft PR reference will be recorded after creation.
+
+**Checks not run / blockers:** No real username/history, provider request, production artifact regeneration, model training, release publication, or deployment. No production-scale benchmark or desktop run. M1.7's rendering, external URL, and dependency audit is still required before the M1 exit gate. M2.4 still requires provider-wide scheduling, timeouts, `Retry-After`, and retry budgets; this slice only adds cancellation to existing fetch/retry paths. Provider permissions and public-asset remedies remain unresolved.
+
+**Plan revisions and reasons:** Checked M1.5 after mocked delayed-provider and full browser journeys passed. Kept provider-wide rate-policy work in M2.4 and complete import fidelity in M2.8 without lowering either task's acceptance criteria. Merged async workflow guidance into the existing `AGENTS.md`.
+
+**Single next task:** M1.7 — audit UI text rendering and external URL schemes with malicious synthetic strings, then remove renderer dependencies only if confirmed unused.
