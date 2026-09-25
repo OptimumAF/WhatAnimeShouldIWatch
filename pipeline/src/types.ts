@@ -1,9 +1,3 @@
-export interface MalAnimeEntry {
-  anime_id: number;
-  anime_title: string;
-  score: number;
-}
-
 export interface AnimeRating {
   animeId: number;
   title: string;

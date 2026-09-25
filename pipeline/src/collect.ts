@@ -1,14 +1,9 @@
 import path from "node:path";
 import { Command } from "commander";
 import { anonymizeUsername } from "./anonymize.js";
-import {
-  openDatabase,
-  recomputeNormalizedScores,
-  upsertAnime,
-  upsertRating,
-  upsertUser,
-} from "./db.js";
-import { fetchMalRatings } from "./mal.js";
+import { collectUserSnapshot } from "./collection.js";
+import { openDatabase } from "./db.js";
+import { fetchMalPage } from "./mal.js";
 import { getRepoRoot } from "./paths.js";
 
 interface CollectOptions {
@@ -32,7 +27,7 @@ const program = new Command()
   .option("--delay-ms <milliseconds>", "Delay between MAL page requests per user")
   .option(
     "--max-pages-per-user <count>",
-    "Maximum MAL pages to fetch per user (0 = unlimited)",
+    "Maximum MAL pages per user in this run (0 = unlimited; full pages checkpoint)",
   );
 
 program.parse(process.argv);
@@ -76,33 +71,33 @@ const controller = new AbortController();
 process.once("SIGINT", () => controller.abort());
 process.once("SIGTERM", () => controller.abort());
 
-const insertTx = db.transaction(
-  (
-    userId: string,
-    ratings: { anime_id: number; anime_title: string; score: number }[],
-  ) => {
-    upsertUser(db, userId);
-    for (const rating of ratings) {
-      upsertAnime(db, rating.anime_id, rating.anime_title);
-      upsertRating(db, userId, rating.anime_id, rating.score);
-    }
-  },
-);
-
 try {
-  for (const username of userNames) {
-    if (controller.signal.aborted) throw new Error("Collection canceled");
+  let incomplete = 0;
+  for (const [index, username] of userNames.entries()) {
+    if (controller.signal.aborted) {
+      process.exitCode = 130;
+      break;
+    }
     const anonymizedId = anonymizeUsername(username, salt);
-    process.stdout.write(`Fetching MAL list for "${username}"... `);
-    const ratings = await fetchMalRatings(username, delayMs, maxPagesPerUser, controller.signal);
-    process.stdout.write(`done (${ratings.length} scored anime)\n`);
-
-    insertTx(anonymizedId, ratings);
+    const result = await collectUserSnapshot(
+      db,
+      anonymizedId,
+      (offset, signal) => fetchMalPage(username, offset, delayMs, signal),
+      { maxPages: maxPagesPerUser, signal: controller.signal },
+    );
+    process.stdout.write(
+      `User ${index + 1}: ${result.outcome}; pages=${result.pagesFetched}, ` +
+      `next offset=${result.nextOffset}, ` +
+      `${result.outcome === "complete" ? "committed" : "staged"} scored=${result.scoredCount}\n`,
+    );
+    if (result.outcome !== "complete") incomplete += 1;
+    if (result.outcome === "canceled") {
+      process.exitCode = 130;
+      break;
+    }
   }
-
-  process.stdout.write("Recomputing normalized scores... ");
-  recomputeNormalizedScores(db);
-  process.stdout.write("done\n");
+  if (incomplete > 0 && !process.exitCode) process.exitCode = 1;
+  process.stdout.write(`Incomplete user fetches: ${incomplete}\n`);
   process.stdout.write(`Database written: ${dbPath}\n`);
 } finally {
   db.close();

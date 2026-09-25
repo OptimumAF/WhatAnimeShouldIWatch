@@ -81,14 +81,16 @@ Notes:
 
 - Keep the anonymization salt private and stable if you want deterministic IDs over time.
 - If you change salt, remove `data/anime.sqlite` first (or use a new DB path), otherwise the same user may be imported as a new anonymized user ID.
-- Only rated entries (`score > 0`) are imported.
+- Only rated entries (`score > 0`) enter the committed ratings table. The collector validates every returned entry, stages full 300-entry pages, and resumes from the last committed page checkpoint after a failure or page cap. `--max-pages-per-user` limits pages **per run**; a full capped page does not replace ratings.
+- A nonempty short page closes the snapshot. The collector then replaces that user's ratings and normalized scores in one SQLite transaction, including changed scores and removed entries. Empty/private, malformed, failed, and interrupted responses keep the last complete ratings. Because an empty response cannot prove whether a list is genuinely empty, a list with exactly a multiple of 300 entries remains unresolved on this site route.
+- `collection_status` records the latest per-user outcome and last completion under an anonymized ID; `collection_pages` and `collection_staged_entries` hold only incomplete pages. Incomplete runs exit nonzero. The site endpoint has no snapshot version, so a list changing during offset pagination can still produce a mixed response; source approval and a versioned provider route are separate decisions.
 
 ### Grow the Network Automatically
 
 This crawls outward from seed users and discovers more users through shared anime activity:
 
 ```bash
-npm run expand:network -- "Gigguk,TheAnimeMan" "your-private-salt" 150 "data/anime.sqlite"
+npm run expand:network -- "invented-user,example-neighbor" "your-private-salt" 150 "data/anime.sqlite"
 ```
 
 Positional arguments:
@@ -104,7 +106,7 @@ Useful env/config flags:
 - `--updates-pages-per-anime` (default `1`)
 - `--fallback-users-pages` (default `2`)
 - `--min-scored-anime` (default `30`)
-- `--max-mal-pages-per-user` (default `0`, unlimited)
+- `--max-mal-pages-per-user` (default `0`, unlimited; a full capped page is checkpointed for a later run)
 
 ### One-Command 100x Scale-Up
 
@@ -117,7 +119,7 @@ npm run expand:100x
 Optional overrides:
 
 - `--target-total-users <count>` for an explicit target
-- `--max-mal-pages-per-user <count>` to cap MAL pages per user for faster, lighter expansion
+- `--max-mal-pages-per-user <count>` to cap MAL pages per user per run; capped users remain deferred until a later run completes their snapshot
 
 ## 2) Build Dataset + Graph JSON
 
