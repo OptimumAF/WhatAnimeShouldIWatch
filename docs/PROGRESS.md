@@ -40,3 +40,21 @@
 **Plan revisions and reasons:** Added explicit Vite demo mode with ignored generated files, separate local storage keys, and a local catalog/model so ordinary work needs no release download or contamination of normal dev preferences. Added optional fourth compact anime-pair tuple value for support while preserving three-value readers; formal format/semantic migration remains M3.7. First-encounter edge and first-N per-user caps remain M3.5–M3.6. M0.6 was checked only after its PR run passed.
 
 **Single next task:** M2.3 — remove the silent MAL proxy fallback with a mocked-provider regression test and an explicit user-facing import error. This privacy fix is independent of broader M1 extraction and was elevated ahead of lower-risk refactors as allowed by the plan.
+
+## Session 2026-09-24 — M2.3
+
+**Branch / starting commit:** `codex/mal-import-proxy` from `9218864df1b5d89b7d76f6e716960894789e0704`; clean worktree. Draft PR #1 for the base slice is open with passing checks.
+
+**Completed:** M2.3. A mocked MAL 403 test failed before the fix and recorded the prior `r.jina.ai` request. The fallback and its text parser were removed. Direct MAL failure now gives an actionable error without changing the current watched list. The recommended first import route is a local `.txt` file (128 KiB maximum) or pasted text; selecting a file fills the existing bulk-import area for review before applying it. The UI identifies where a username goes when a provider is selected. Existing direct MAL success remains covered.
+
+**Verification commands and actual results:** `npx playwright test tests/mal-import.spec.ts` — 4 passed; `npm run data:fixture:check` — verified 7 synthetic users, 8 anime, 11 pairs; `npm run typecheck` — both workspaces passed; `npm test` — 4 pipeline tests passed; `npm run test:python` — 2 passed; `npm run build:web` — passed; `npm run test:e2e` — 5 passed (demo smoke plus 4 mocked-provider/import tests); `git diff --check` — passed; `rg -n 'r\.jina|fetchTextWithRetries|parseJinaMarkdownJson' web/src` — no matches. The browser tests cover direct success, HTTP 403, transport failure, local file size rejection, review before apply, and no proxy/provider request during file import.
+
+**Files changed:** `.github/workflows/ci.yml`, `README.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`, `web/playwright.config.ts`, `web/src/main.ts`, `web/src/style.css`, `web/tests/mal-import.spec.ts`.
+
+**Commit / PR and CI:** Implementation commit `7f7b501` in draft [PR #2](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/2), stacked on draft PR #1. [Fixture and fast checks run 36089266868](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36089266868) passed on the PR, including fixture generation, both workspace typechecks, pipeline/Python tests, build, and browser tests; GitGuardian also passed.
+
+**Checks not run / blockers:** No live MAL or AniList username was used; browser provider responses were mocked. No production dataset, crawl, release, deploy, or public artifact change. M2.1 still needs a provider-by-provider permissions review, especially AniList's restriction on competing list/tracker services; M2.8 still needs supported export formats, complete status/progress/score retention, unmapped-entry handling, and preview/merge semantics. M2 milestone exit gate is not met.
+
+**Plan revisions and reasons:** M2.3 is checked because the recommended import route is now an explicit local file and the silent proxy path is removed and tested. The file parser deliberately reuses the existing one-line bulk format; it is not claimed to parse Crunchyroll or MAL exports. PR CI now includes `codex/**` base branches so this isolated slice can be checked while stacked on the M0 branch. The AniList route remains existing optional functionality, with product-use permission pending M2.1.
+
+**Single next task:** M2.1 — document current provider permissions and the public/private boundary before expanding any provider-dependent activity.

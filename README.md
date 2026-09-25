@@ -48,7 +48,13 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The Python smoke tests require NumPy (`python -m pip install "numpy>=2,<3"`). The Playwright install is needed once per machine. The browser smoke test starts the synthetic demo and blocks external requests. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
+The Python smoke tests require NumPy (`python -m pip install "numpy>=2,<3"`). The Playwright install is needed once per machine. Browser tests use the synthetic demo or a normal-mode app with mocked providers; no real usernames are queried. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
+
+## Local watched-list import
+
+In **Import & Profiles**, the recommended import path accepts a local `.txt` file up to 128 KiB or pasted text. Use one graph anime ID or title per line, optionally followed by a comma and score (for example, the synthetic demo accepts `101, 9`). The browser loads a selected file into the text area for review; **Import Watched Entries** applies it. This simple format does not yet preserve provider status, progress, or unmatched entries; full export-format support is tracked in M2.8.
+
+Username import is optional. The entered username goes directly to the selected AniList or MAL provider to fetch a public rated list. If direct MAL access fails, the app reports the failure and keeps the current watched list; it does not try a proxy. Provider permissions and broader import fidelity remain open in M2.1 and M2.8.
 
 ## 1) Collect MAL Data into Anonymized SQLite
 

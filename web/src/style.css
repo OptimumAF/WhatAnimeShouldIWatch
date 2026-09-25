@@ -909,6 +909,16 @@ button:hover,
   gap: 0.45rem;
 }
 
+.bulk-import-form label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.bulk-import-form input[type="file"] {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
 .bulk-import-form textarea {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
