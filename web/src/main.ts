@@ -39,6 +39,8 @@ import {
 } from "./recommendations";
 import type { CandidateEligibilityPolicy, EligibilityRankingMode, GenreOverlapRecommendation, RecommendationExplanation, RecommendationFilters } from "./recommendations";
 import { ProviderUnavailableError, createProviderAdapter } from "./providers";
+import { selectFranchiseDiverseRecommendations } from "./franchise-diversity";
+import type { FranchiseSelection } from "./franchise-diversity";
 import { createArtifactLoader } from "./artifact-loader";
 import {
   MAX_MAL_XML_IMPORT_BYTES,
@@ -48,6 +50,7 @@ import {
   parseTextHistory,
   previewHistory,
   resolveHistoryAnime,
+  seenHistoryAnimeIds,
 } from "./import-history";
 import type { HistoryEntry, ImportMode, ParsedHistory } from "./import-history";
 import { MAX_IMPORTANCE, MIN_IMPORTANCE, clampImportance, manualPreference, preferenceFromHistory } from "./preferences";
@@ -231,6 +234,11 @@ app.innerHTML = `
               <input id="rec-blend" type="range" min="${MIN_MODEL_BLEND_WEIGHT}" max="${MAX_MODEL_BLEND_WEIGHT}" step="${MODEL_BLEND_WEIGHT_STEP}" value="0.50" />
               <output id="rec-blend-value">50% model / 50% graph</output>
             </label>
+            <label class="rec-diversity-control" for="allow-related-titles">
+              <input id="allow-related-titles" type="checkbox" />
+              <span>Allow related titles and known sequels</span>
+            </label>
+            <p class="muted rec-diversity-help">By default, show one title per known or title-suggested series and withhold known sequels whose immediate prequel is not in watched history. Relationship checks are incomplete; switch this on to see the original eligible order with warnings.</p>
             <label class="rec-engine-control" for="discovery-view">
               <span>Discovery view</span>
               <select id="discovery-view">
@@ -533,6 +541,7 @@ const addPreferenceSelect = mustElement<HTMLSelectElement>("#add-preference");
 const animeOptions = mustElement<HTMLDataListElement>("#anime-options");
 const recMethodSelect = mustElement<HTMLSelectElement>("#rec-method");
 const discoveryViewSelect = mustElement<HTMLSelectElement>("#discovery-view");
+const allowRelatedInput = mustElement<HTMLInputElement>("#allow-related-titles");
 const recBlendControl = mustElement<HTMLLabelElement>("#rec-blend-control");
 const recBlendInput = mustElement<HTMLInputElement>("#rec-blend");
 const recBlendValueEl = mustElement<HTMLOutputElement>("#rec-blend-value");
@@ -623,6 +632,7 @@ let recommendationMode: RecommendationMode = "graph";
 let discoveryView: DiscoveryView = "auto";
 let discoveryMetadataBatchRequested = false;
 let modelBlendWeight = 0.5;
+let allowRelatedTitles = false;
 let recommendationRunId = 0;
 let recommendationController: AbortController | null = null;
 let activeUsernameImport: { controller: AbortController; provider: UsernameImportProvider } | null = null;
@@ -705,6 +715,8 @@ for (const nodeId of persistedState.excludeCandidates) {
 }
 recommendationMode = persistedState.mode;
 modelBlendWeight = clampModelBlendWeight(persistedState.modelBlendWeight ?? 0.5);
+allowRelatedTitles = persistedState.allowRelatedTitles;
+allowRelatedInput.checked = allowRelatedTitles;
 recMethodSelect.value = recommendationMode;
 recBlendInput.value = modelBlendWeight.toFixed(2);
 renderModelBlendValue();
@@ -1234,6 +1246,12 @@ recBlendInput.addEventListener("input", () => {
   if (recommendationMode === "hybrid") {
     void updateRecommendations();
   }
+});
+
+allowRelatedInput.addEventListener("change", () => {
+  allowRelatedTitles = allowRelatedInput.checked;
+  persistRecommendationState();
+  void updateRecommendations();
 });
 
 clearSelectionBtn.addEventListener("click", () => {
@@ -2575,6 +2593,26 @@ function renderCandidateChips(
   container.innerHTML = html;
 }
 
+function selectVisibleFranchises(eligible: readonly RecommendationResult[]): FranchiseSelection {
+  const seen = new Set(seenHistoryAnimeIds(historyEntries, recommendationIndex));
+  for (const nodeId of selectedAnimeNodeIds) {
+    const rawId = /^anime:([1-9]\d*)$/.exec(nodeId)?.[1];
+    const animeId = recommendationIndex.animeByNodeId.get(nodeId)?.animeId ??
+      (rawId ? Number(rawId) : undefined);
+    if (animeId !== undefined && Number.isSafeInteger(animeId)) seen.add(animeId);
+  }
+  const titles = new Map(recommendationIndex.animeList.map((item) => [item.animeId, item.label]));
+  return selectFranchiseDiverseRecommendations(
+    eligible, animeMetadataCache, seen, allowRelatedTitles, titles);
+}
+
+function franchiseSelectionSummary(selection: FranchiseSelection, eligibleCount: number): string {
+  const coverage = `Relationship entries checked for ${selection.relationshipPayloadCount}/${eligibleCount} eligible titles; missing or empty entries do not prove there are no prerequisites.`;
+  if (allowRelatedTitles) return `Related titles allowed in original eligible order. ${coverage}`;
+  return `Prefer variety withheld ${selection.knownPrequelHidden} known-unwatched sequel(s) and ` +
+    `${selection.repeatedFranchiseHidden} repeated known/title-suggested series entry(ies). ${coverage}`;
+}
+
 async function updateRecommendations(): Promise<void> {
   recommendationController?.abort();
   // A later user action can retry transient metadata failures; unavailable IDs stay known.
@@ -2809,7 +2847,8 @@ async function updateRecommendations(): Promise<void> {
     }
   }
   updateGenreFilterOptions(structuralCandidates);
-  const filteredRecommendations = finalEligibility.recommendations;
+  const franchiseSelection = selectVisibleFranchises(finalEligibility.recommendations);
+  const filteredRecommendations = franchiseSelection.recommendations;
   const effectiveFusion = activeRankingMode === "hybrid" ? filteredRecommendations[0]?.fusion : undefined;
   if (effectiveFusion &&
       (effectiveFusion.modelWeight !== modelBlendWeight ||
@@ -2821,9 +2860,11 @@ async function updateRecommendations(): Promise<void> {
       "Rank points are relative, not probabilities.";
   }
   if (filteredRecommendations.length === 0) {
-    recSummaryEl.textContent = hasActiveRecommendationFilters(recommendationFilters)
-      ? "No recommendations match your current metadata filters."
-      : "No eligible recommendations found from these preferences.";
+    recSummaryEl.textContent = finalEligibility.recommendations.length > 0
+      ? `Known immediate prequels block all currently eligible titles. Turn on Allow related titles to inspect them. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}`
+      : hasActiveRecommendationFilters(recommendationFilters)
+        ? "No recommendations match your current metadata filters."
+        : "No eligible recommendations found from these preferences.";
     recResultsEl.innerHTML = "";
     const metadataState: AsyncUiState = demoMode ? "demo"
       : metadataCandidateAnimeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
@@ -2846,11 +2887,12 @@ async function updateRecommendations(): Promise<void> {
   const fallbackScopeNote = usingFallback && currentFallbackDisplay() === "related" && !demoMode
     ? " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles by sampled rating count."
     : "";
-  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${filteredRecommendations.length} candidates (${methodLabel})${filterSummary}.${fallbackScopeNote}`;
+  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${finalEligibility.recommendations.length} eligible candidates (${methodLabel})${filterSummary}. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}${fallbackScopeNote}`;
 
   const visibleRecommendations = filteredRecommendations
     .slice(0, MAX_RECOMMENDATIONS)
-    .map((item) => renderRecommendationCard(item, usingFallback ? currentFallbackDisplay() : "ranking"));
+    .map((item) => renderRecommendationCard(item, usingFallback ? currentFallbackDisplay() : "ranking",
+      franchiseSelection.notesByAnimeId.get(item.anime.animeId)));
   recResultsEl.innerHTML = visibleRecommendations.join("");
 
   const visibleWithMetadata = filteredRecommendations
@@ -2934,13 +2976,16 @@ async function renderCatalogExploration(
       : buildGenreOverlapExploration(preferences, recommendationIndex, animeMetadataCache);
   const finalEligibility = rankEligibleCandidates("fallback", { fallback: explorationResults },
     policy, animeMetadataCache);
-  const results = finalEligibility.recommendations;
+  const franchiseSelection = selectVisibleFranchises(finalEligibility.recommendations);
+  const results = franchiseSelection.recommendations;
   const heading = view === "popularity" ? "catalog popularity proxy"
     : view === "quality" ? "community-score exploration"
       : "shared-genre content baseline";
   recEngineStatusEl.textContent = `Using ${heading}; selected recommendation engine remains ${recommendationMode}.`;
   if (results.length === 0) {
-    recSummaryEl.textContent = view === "related" && !hasLikedSource
+    recSummaryEl.textContent = finalEligibility.recommendations.length > 0
+      ? `Known immediate prequels block all currently eligible titles. Turn on Allow related titles to inspect them. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}`
+      : view === "related" && !hasLikedSource
       ? "Mark a title Liked to explore shared genres. Seen and Disliked titles are still excluded."
       : view === "quality"
         ? "No eligible catalog titles with a known community score match these filters. Check more metadata or explore sampled rating counts."
@@ -2956,9 +3001,11 @@ async function renderCatalogExploration(
         : "Scores sum exact shared genres with Liked titles, weighted by importance and confidence.";
     recSummaryEl.textContent =
       `Showing top ${Math.min(MAX_RECOMMENDATIONS, results.length)} of ${results.length} eligible titles ` +
-      `(${heading})${formatActiveFilterSummary()}. ${scopeNote}`;
+      `(${heading})${formatActiveFilterSummary()}. ${scopeNote} ` +
+      franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length);
     recResultsEl.innerHTML = results.slice(0, MAX_RECOMMENDATIONS)
-      .map((item) => renderRecommendationCard(item, view)).join("");
+      .map((item) => renderRecommendationCard(item, view,
+        franchiseSelection.notesByAnimeId.get(item.anime.animeId))).join("");
   }
   const metadataState: AsyncUiState = demoMode ? "demo"
     : metadataScopeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
@@ -2974,6 +3021,7 @@ async function renderCatalogExploration(
 function renderRecommendationCard(
   item: RecommendationResult,
   display: "ranking" | "coverage" | "popularity" | "quality" | "related" = "ranking",
+  relationshipNote?: string,
 ): string {
   const metadata = animeMetadataCache.get(item.anime.animeId) ?? null;
   const imageUrl = safeExternalImageUrl(metadata?.imageUrl ?? "");
@@ -3032,6 +3080,7 @@ function renderRecommendationCard(
             <div class="rec-meta rec-meta-details">${escapeHtml(metadataMeta)}</div>
             <p class="${synopsisClass}">${escapeHtml(synopsisText)}</p>
             <div class="rec-why">${reason}</div>
+            <div class="rec-relationship">${escapeHtml(relationshipNote ?? "Prerequisites unverified; relationship data may be incomplete.")}</div>
           </div>
         </div>
         <div class="rec-score">${score}</div>
@@ -4232,6 +4281,7 @@ function buildCurrentRecommendationState(): StoredRecommendationState {
     mode: recommendationMode,
     preferences,
     modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
+    allowRelatedTitles,
     includeCandidates: [...includeCandidateNodeIds],
     excludeCandidates: [...excludeCandidateNodeIds],
     history: [...historyEntries],
@@ -4300,6 +4350,7 @@ function loadSelectedProfile(): void {
   applyRecommendationState({
     ...profile.state,
     modelBlendWeight: profile.state.modelBlendWeight ?? 0.5,
+    allowRelatedTitles: profile.state.allowRelatedTitles ?? false,
     includeCandidates: profile.state.includeCandidates ?? [],
     excludeCandidates: profile.state.excludeCandidates ?? [],
     history: profile.state.history ?? [],
@@ -4343,6 +4394,7 @@ function applyRecommendationState(state: {
   mode: RecommendationMode;
   preferences: AnimePreference[];
   modelBlendWeight: number;
+  allowRelatedTitles: boolean;
   includeCandidates: string[];
   excludeCandidates: string[];
   history?: HistoryEntry[];
@@ -4367,6 +4419,8 @@ function applyRecommendationState(state: {
 
   recommendationMode = state.mode;
   modelBlendWeight = clampModelBlendWeight(state.modelBlendWeight);
+  allowRelatedTitles = state.allowRelatedTitles;
+  allowRelatedInput.checked = allowRelatedTitles;
   recMethodSelect.value = recommendationMode;
   recBlendInput.value = modelBlendWeight.toFixed(2);
   renderModelBlendValue();

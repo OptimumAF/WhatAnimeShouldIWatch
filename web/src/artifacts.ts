@@ -112,6 +112,12 @@ export type CompactGraphData = CompactGraphDataV1 | CompactGraphDataV2;
 
 export type LoadedGraphData = GraphData | CompactGraphData;
 
+export interface AnimeRelation {
+  kind: "prequel" | "sequel" | "alternative-version" | "side-story" | "spin-off";
+  animeId: number;
+  title: string;
+}
+
 export interface AnimeMetadata {
   animeId: number;
   year: number | null;
@@ -121,6 +127,8 @@ export interface AnimeMetadata {
   synopsis: string;
   imageUrl: string;
   season: string | null;
+  /** Missing or null means unchecked; even [] is not proof that prerequisites do not exist. */
+  relations?: AnimeRelation[] | null;
 }
 
 export interface DemoCatalogItem extends AnimeMetadata {
@@ -527,6 +535,17 @@ export function parseDemoCatalog(value: unknown, label: string): DemoCatalogItem
     text(item.synopsis, label, `anime[${i}].synopsis`);
     text(item.imageUrl, label, `anime[${i}].imageUrl`);
     if (item.season !== null) nonemptyText(item.season, label, `anime[${i}].season`);
+    if (item.relations !== undefined && item.relations !== null) {
+      list(item.relations, label, `anime[${i}].relations`).forEach((entry, j) => {
+        const location = `anime[${i}].relations[${j}]`;
+        const relation = record(entry, label, location);
+        if (!["prequel", "sequel", "alternative-version", "side-story", "spin-off"].includes(
+          relation.kind as string)) invalid(label, `${location}.kind`, "must be a supported anime relationship");
+        const relatedId = safeInteger(relation.animeId, label, `${location}.animeId`, 1);
+        if (relatedId === id) invalid(label, `${location}.animeId`, "cannot refer to itself");
+        nonemptyText(relation.title, label, `${location}.title`);
+      });
+    }
   });
   return anime as DemoCatalogItem[];
 }

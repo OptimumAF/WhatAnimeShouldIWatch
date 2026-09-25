@@ -1,5 +1,5 @@
 /** Existing optional public-provider reads behind injectable transport and timing. */
-import type { AnimeMetadata } from "./artifacts";
+import type { AnimeMetadata, AnimeRelation } from "./artifacts";
 import type { ImportedPreferenceEntry, RecommendationIndex, SeasonalAnimeItem, UsernameImportResult } from "./domain";
 import { deduplicateHistory, normalizeHistoryStatus } from "./import-history";
 import type { HistoryEntry, HistoryScoreScale } from "./import-history";
@@ -327,6 +327,7 @@ export function createProviderAdapter(
     const season = typeof raw.season === "string" ? raw.season : null;
     const genres = parseNameList(raw.genres);
     const studios = parseNameList(raw.studios);
+    const relations = parseAnimeRelations(raw.relations, animeId);
 
     const images = raw.images as Record<string, unknown> | undefined;
     const webp = images?.webp as Record<string, unknown> | undefined;
@@ -347,7 +348,36 @@ export function createProviderAdapter(
       synopsis,
       imageUrl: imageUrl ?? "",
       season,
+      relations,
     };
+  }
+
+  function parseAnimeRelations(raw: unknown, animeId: number): AnimeRelation[] | null {
+    if (!Array.isArray(raw)) return null;
+    const kinds = new Map<string, AnimeRelation["kind"]>([
+      ["prequel", "prequel"], ["sequel", "sequel"],
+      ["alternative version", "alternative-version"], ["side story", "side-story"],
+      ["spin-off", "spin-off"], ["spin off", "spin-off"],
+    ]);
+    const relations = new Map<string, AnimeRelation>();
+    for (const group of raw) {
+      if (!group || typeof group !== "object" || Array.isArray(group)) return null;
+      const relation = group as Record<string, unknown>;
+      if (typeof relation.relation !== "string" || !Array.isArray(relation.entry)) return null;
+      const kind = kinds.get(relation.relation.trim().toLowerCase());
+      if (!kind) continue;
+      for (const entry of relation.entry) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+        const related = entry as Record<string, unknown>;
+        if (typeof related.type !== "string" || related.type.toLowerCase() !== "anime") continue;
+        const id = related.mal_id;
+        const title = related.name;
+        if (!Number.isSafeInteger(id) || (id as number) <= 0 || id === animeId ||
+            typeof title !== "string" || !title.trim()) return null;
+        relations.set(`${kind}:${id}`, { kind, animeId: id as number, title: title.trim() });
+      }
+    }
+    return [...relations.values()];
   }
 
   function parseNameList(raw: unknown): string[] {

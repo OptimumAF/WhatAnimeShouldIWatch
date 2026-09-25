@@ -1,6 +1,6 @@
 # 0013 — Known-franchise diversity and prerequisite protocol
 
-**Status:** Protocol fixed before implementation or synthetic evaluation. M4.8 remains unchecked until the runtime behavior, user option, uncertainty copy, and fixture/browser gates pass.
+**Status:** Protocol committed as `4413308` before implementation or synthetic evaluation. The synthetic gate and runtime/browser checks passed on 2026-09-25.
 
 ## Inputs and limits
 
@@ -16,4 +16,6 @@ Use an eight-title, invented scored list with two related entries near the top, 
 
 ## Result
 
-Pending implementation and measurement.
+The eight invented candidates gave baseline top-three IDs `[201, 202, 203]`, relevance gains `[3, 2, 2]`, two distinct known/suggested families, and NDCG@3 `1.000000`. Prefer variety gave `[201, 203, 204]`, gains `[3, 2, 1]`, three distinct families, and NDCG@3 `0.904977`. The absolute NDCG loss was `0.095023`, within the fixed `0.10` limit. Allow related exactly restored all eight original IDs and scores. Without watched prequel 200, the known sequel 201 was withheld. These authored gains test selector behavior only; they are not a production relevance estimate.
+
+`npm run eval:franchise-diversity:fixture` reproduces the comparison after fixture validation. Unit tests cover missing/empty/malformed relationships, reverse-only and transitive links, duplicate names, false title cues, imported completed predecessors outside the graph, exact restoration, and score preservation. Browser tests cover demo discovery and model paths, normal graph metadata, profile/reload persistence, escaped relation names, and no extra metadata requests; the central eligibility suite and all fallback journeys remained green. See `docs/PROGRESS.md` for the full gate commands and results.

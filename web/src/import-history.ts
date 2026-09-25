@@ -269,3 +269,10 @@ export function seenHistoryNodeIds(entries: readonly HistoryEntry[], index: Reco
     .map((entry) => resolveHistoryAnime(entry, index)?.nodeId)
     .filter((nodeId): nodeId is string => nodeId !== undefined);
 }
+
+/** MAL-compatible anime IDs still count as watched prerequisites outside the graph catalog. */
+export function seenHistoryAnimeIds(entries: readonly HistoryEntry[], index: RecommendationIndex): number[] {
+  return entries.filter(isSeenHistoryEntry)
+    .map((entry) => entry.animeId ?? resolveHistoryAnime(entry, index)?.animeId)
+    .filter((animeId): animeId is number => animeId !== undefined && animeId !== null);
+}
