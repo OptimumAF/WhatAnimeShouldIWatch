@@ -396,9 +396,11 @@ app.innerHTML = `
             <details class="accordion">
               <summary>Import & Profiles</summary>
               <section class="bulk-import">
-                <h3>Bulk Import</h3>
-                <p class="muted">One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>.</p>
+                <h3>Import From Local File or Text (Recommended)</h3>
+                <p class="muted">Choose a local plain-text file or paste entries below. One entry per line: <code>animeId[, score]</code>, <code>anime:ID[, score]</code>, or <code>title[, score]</code>. The file is read in this browser; review the entries before importing.</p>
                 <form id="bulk-import-form" class="bulk-import-form">
+                  <label for="bulk-import-file">Local .txt file (up to 128 KiB)</label>
+                  <input id="bulk-import-file" type="file" accept=".txt,text/plain" />
                   <textarea id="bulk-import-input" rows="6" placeholder="5114, 9&#10;anime:9253, 7.5&#10;Steins;Gate"></textarea>
                   <button type="submit">
                     <span class="icon icon-import" aria-hidden="true"></span>
@@ -409,11 +411,11 @@ app.innerHTML = `
 
               <section class="username-import">
                 <h3>Import From Username</h3>
-                <p class="muted">${demoMode ? "Username imports are unavailable in the offline demo." : "Load rated anime from a public AniList or MAL profile."}</p>
+                <p class="muted">${demoMode ? "Username imports are unavailable in the offline demo." : "Your entered username is sent directly to the selected provider to read its public rated anime list. MAL may block browser requests; no third-party proxy is used. The local file or text import above needs no provider username."}</p>
                 <form id="username-import-form" class="username-import-form">
                   <select id="username-import-provider" aria-label="Import provider">
                     <option value="anilist" selected>AniList</option>
-                    <option value="mal">MyAnimeList (MAL)</option>
+                    <option value="mal">MyAnimeList (MAL, direct)</option>
                   </select>
                   <input id="username-import-input" type="text" autocomplete="off" placeholder="Enter username" />
                   <button id="username-import-submit" type="submit">
@@ -641,6 +643,7 @@ const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const watchedCountEl = mustElement<HTMLSpanElement>("#watched-count");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
 const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
+const bulkImportFile = mustElement<HTMLInputElement>("#bulk-import-file");
 const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
 const usernameImportForm = mustElement<HTMLFormElement>("#username-import-form");
 const usernameImportProvider = mustElement<HTMLSelectElement>("#username-import-provider");
@@ -1039,6 +1042,10 @@ addAnimeForm.addEventListener("submit", (event) => {
 bulkImportForm.addEventListener("submit", (event) => {
   event.preventDefault();
   importWatchedFromBulkInput();
+});
+
+bulkImportFile.addEventListener("change", () => {
+  void loadBulkImportFile();
 });
 
 usernameImportForm.addEventListener("submit", (event) => {
@@ -2162,6 +2169,24 @@ function addAnimeFromInput(): void {
   addAnimeToWatchedList(anime, "Added");
 }
 
+async function loadBulkImportFile(): Promise<void> {
+  const file = bulkImportFile.files?.[0];
+  if (!file) {
+    return;
+  }
+  bulkImportFile.value = "";
+  if (!file.name.toLowerCase().endsWith(".txt") || file.size > 128 * 1024) {
+    recMessageEl.textContent = "Choose a .txt file no larger than 128 KiB.";
+    return;
+  }
+  try {
+    bulkImportInput.value = await file.text();
+    recMessageEl.textContent = `Loaded local file "${file.name}". Review the entries, then select Import Watched Entries.`;
+  } catch {
+    recMessageEl.textContent = "Unable to read that local file.";
+  }
+}
+
 function importWatchedFromBulkInput(): void {
   const raw = bulkImportInput.value.trim();
   if (!raw) {
@@ -2449,7 +2474,7 @@ async function fetchMalUsernamePage(
   malUrl.searchParams.set("offset", String(offset));
 
   try {
-    return await fetchJsonWithRetries<Array<{ anime_id?: number; score?: number }>>(
+    const page = await fetchJsonWithRetries<unknown>(
       malUrl.toString(),
       {
         headers: {
@@ -2458,33 +2483,14 @@ async function fetchMalUsernamePage(
       },
       USERNAME_IMPORT_MAX_RETRIES,
     );
-  } catch {
-    const jinaUrl = `https://r.jina.ai/http://${malUrl.host}${malUrl.pathname}${malUrl.search}`;
-    const text = await fetchTextWithRetries(jinaUrl);
-    const parsed = parseJinaMarkdownJson<Array<{ anime_id?: number; score?: number }>>(text);
-    if (!Array.isArray(parsed)) {
-      throw new Error(
-        "Unable to read MAL list data. The profile may be private or blocked by CORS/rate limits.",
-      );
+    if (!Array.isArray(page)) {
+      throw new Error("Unexpected MAL response shape.");
     }
-    return parsed;
-  }
-}
-
-function parseJinaMarkdownJson<T>(content: string): T | null {
-  const marker = "Markdown Content:";
-  const markerIndex = content.indexOf(marker);
-  if (markerIndex < 0) {
-    return null;
-  }
-  const jsonText = content.slice(markerIndex + marker.length).trim();
-  if (!jsonText) {
-    return null;
-  }
-  try {
-    return JSON.parse(jsonText) as T;
+    return page as Array<{ anime_id?: number; score?: number }>;
   } catch {
-    return null;
+    throw new Error(
+      "Direct MAL import failed. Browser access may be blocked, the profile may be private, or MAL may be rate limiting. No proxy was contacted. Try the local file or text import above, or AniList.",
+    );
   }
 }
 
@@ -2528,28 +2534,6 @@ async function fetchJsonWithRetries<T>(
     const response = await fetch(url, init);
     if (response.ok) {
       return (await response.json()) as T;
-    }
-
-    if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
-      throw new Error(`Request failed (${response.status}) for ${url}`);
-    }
-
-    await sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(Math.random() * 200));
-  }
-
-  throw new Error("Request retries exhausted.");
-}
-
-async function fetchTextWithRetries(
-  url: string,
-  maxRetries = USERNAME_IMPORT_MAX_RETRIES,
-): Promise<string> {
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const response = await fetch(url, {
-      headers: { Accept: "text/plain" },
-    });
-    if (response.ok) {
-      return await response.text();
     }
 
     if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
