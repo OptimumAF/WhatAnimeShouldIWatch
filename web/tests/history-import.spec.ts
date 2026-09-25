@@ -52,7 +52,7 @@ test("local MAL XML previews and retains unscored, status, progress, scale, unma
   await expect(page.locator("#history-count")).toHaveText("0");
 
   await page.locator("#history-import-apply").click();
-  await expect(page.locator("#watched-count")).toHaveText("1");
+  await expect(page.locator("#watched-count")).toHaveText("2");
   await expect(page.locator("#history-count")).toHaveText("3");
   await expect(page.locator("#history-list")).toContainText("Moonlit Workshop — Watching; episodes: 3; score: unscored (mal-10)");
   await expect(page.locator("#history-list")).toContainText("unmapped, kept");
@@ -85,7 +85,7 @@ test("merge and replace preview their effect and named profiles restore imported
   await expect(page.locator("#history-import-summary")).toContainText("removed by replace: 0");
   await page.locator("#history-import-mode").selectOption("replace");
   await expect(page.locator("#history-import-summary")).toContainText("removed by replace: 1");
-  await expect(page.locator("#history-import-summary")).toContainText("Watched picks removed by replace: 2");
+  await expect(page.locator("#history-import-summary")).toContainText("Preferences removed by replace: 2");
   await page.locator("#history-import-apply").click();
   await expect(page.locator("#history-count")).toHaveText("1");
   await expect(page.locator("#watched-count")).toHaveText("1");
@@ -102,7 +102,7 @@ test("merge and replace preview their effect and named profiles restore imported
 test("malformed XML, DTDs, oversized files, and storage failure preserve prior history", async ({ page }) => {
   await openDemo(page);
   await applyText(page, "101, 9, Completed, 12");
-  const key = "wasiw.demo.recommendationState.v4";
+  const key = "wasiw.demo.recommendationState.v5";
   const previous = await page.evaluate((storageKey) => localStorage.getItem(storageKey), key);
 
   await setXmlFile(page, '<!DOCTYPE myanimelist [<!ENTITY x "bad">]><myanimelist><anime>&x;</anime></myanimelist>');
@@ -120,7 +120,7 @@ test("malformed XML, DTDs, oversized files, and storage failure preserve prior h
   await page.evaluate(() => {
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function (storageKey, value) {
-      if (storageKey === "wasiw.demo.recommendationState.v4") throw new Error("synthetic quota");
+      if (storageKey === "wasiw.demo.recommendationState.v5") throw new Error("synthetic quota");
       return original.call(this, storageKey, value);
     };
   });

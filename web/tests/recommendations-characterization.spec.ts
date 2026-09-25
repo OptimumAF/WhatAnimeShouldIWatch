@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test("synthetic recommendation modes retain their visible ranking and explanations", async ({ page }) => {
   await page.goto("/");
   await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
 
   const expected = {
@@ -58,6 +59,7 @@ test("recommendation explanation renders an invented unsafe label as text", asyn
   });
   await page.goto("/");
   await page.locator("#anime-input").fill("101");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await expect(page.locator("#rec-results .rec-why").first()).toContainText(unsafeLabel);
   await expect(page.locator("#rec-results .rec-why img")).toHaveCount(0);

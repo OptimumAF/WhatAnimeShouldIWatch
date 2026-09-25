@@ -21,6 +21,7 @@ test("catalog metadata stays text and unsafe recommendation images are omitted",
 
   await page.goto("/");
   await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   const card = page.locator("#rec-results .rec-item").filter({ hasText: "Moonlit Workshop" });
   await expect(card.locator(".rec-synopsis")).toContainText(unsafeMarkup);

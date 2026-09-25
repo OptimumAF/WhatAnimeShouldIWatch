@@ -3,8 +3,9 @@ import { expect, test } from "@playwright/test";
 test("synthetic selection, overrides, mode, and named profile survive reload", async ({ page }) => {
   await page.goto("/");
   await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
-  await page.locator("#selected-anime input[data-weight-node-id='anime:101']").evaluate((input) => {
+  await page.locator("#selected-anime input[data-importance-node-id='anime:101']").evaluate((input) => {
     (input as HTMLInputElement).value = "1.7";
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
@@ -24,15 +25,16 @@ test("synthetic selection, overrides, mode, and named profile survive reload", a
   await page.locator("#profile-name-input").fill("Fixture Profile");
   await page.locator("#profile-save-submit").click();
   const before = await page.evaluate(() => ({
-    state: JSON.parse(localStorage.getItem("wasiw.demo.recommendationState.v4") ?? "null"),
-    profiles: JSON.parse(localStorage.getItem("wasiw.demo.recommendationProfiles.v4") ?? "null"),
+    state: JSON.parse(localStorage.getItem("wasiw.demo.recommendationState.v5") ?? "null"),
+    profiles: JSON.parse(localStorage.getItem("wasiw.demo.recommendationProfiles.v5") ?? "null"),
   }));
   expect(before.state).toMatchObject({
-    version: 4, mode: "hybrid", modelBlendWeight: 0.35,
-    selected: [{ nodeId: "anime:101", weight: 1.7 }],
+    version: 5, mode: "hybrid", modelBlendWeight: 0.35,
+    preferences: [{ nodeId: "anime:101", sentiment: "liked", importance: 1.7,
+      confidence: 1, source: "manual" }],
     includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"],
   });
-  expect(before.profiles.version).toBe(4);
+  expect(before.profiles.version).toBe(5);
   expect(before.profiles.profiles).toHaveLength(1);
   expect(before.profiles.profiles[0].name).toBe("Fixture Profile");
   expect(before.profiles.profiles[0].state).toEqual(before.state);
@@ -50,7 +52,7 @@ test("synthetic selection, overrides, mode, and named profile survive reload", a
   await page.locator("#profile-select").selectOption("Fixture Profile");
   await page.locator("#profile-load-btn").click();
   await expect(page.locator("#watched-count")).toHaveText("1");
-  await expect(page.locator("#selected-anime .chip-weight-value")).toHaveText("1.7x");
+  await expect(page.locator("#selected-anime .chip-importance-value")).toHaveText("1.7x");
 });
 
 test("legacy profiles keep catalog-missing selections and overrides through load and save", async ({ page }) => {
@@ -71,16 +73,24 @@ test("legacy profiles keep catalog-missing selections and overrides through load
   await expect(page.locator("#watched-count")).toHaveText("2");
   await expect(page.locator("#selected-anime")).toContainText("anime:999");
   await expect(page.locator("#selected-anime")).toContainText("Unavailable in this catalog");
-  await expect(page.locator("#selected-anime input[data-weight-node-id='anime:999']")).toHaveValue("2.4");
+  await expect(page.locator("#selected-anime input[data-importance-node-id='anime:999']")).toHaveValue("2.4");
   await page.locator("summary").filter({ hasText: "Candidate Overrides" }).click();
   await expect(page.locator("#include-anime")).toContainText("anime:998");
   await expect(page.locator("#exclude-anime")).toContainText("anime:997");
   const migrated = await page.evaluate(() => ({
-    state: JSON.parse(localStorage.getItem("wasiw.demo.recommendationState.v4") ?? "null"),
+    state: JSON.parse(localStorage.getItem("wasiw.demo.recommendationState.v5") ?? "null"),
     stateBackup: localStorage.getItem("wasiw.demo.recommendationState.v1.backup"),
     profileBackup: localStorage.getItem("wasiw.demo.recommendationProfiles.v1.backup"),
   }));
-  expect(migrated.state).toEqual({ ...legacy, version: 4, history: [] });
+  expect(migrated.state).toEqual({
+    version: 5, mode: "hybrid", modelBlendWeight: 0.35,
+    preferences: [
+      { nodeId: "anime:101", sentiment: "liked", importance: 1.7, confidence: 0.5, source: "legacy" },
+      { nodeId: "anime:999", sentiment: "liked", importance: 2.4, confidence: 0.5, source: "legacy" },
+    ],
+    includeCandidates: ["anime:998"], excludeCandidates: ["anime:997"], history: [],
+  });
+  await expect(page.locator("#preference-migration-notice")).toContainText("migrated conservatively");
   expect(migrated.stateBackup).toBe(JSON.stringify(legacy));
   expect(migrated.profileBackup).toContain("Fixture Profile");
 
@@ -91,16 +101,16 @@ test("legacy profiles keep catalog-missing selections and overrides through load
   await expect(page.locator("#watched-count")).toHaveText("2");
   await page.locator("#profile-name-input").fill("Copied Profile");
   await page.locator("#profile-save-submit").click();
-  const copied = await page.evaluate(() => JSON.parse(localStorage.getItem("wasiw.demo.recommendationProfiles.v4") ?? "null"));
+  const copied = await page.evaluate(() => JSON.parse(localStorage.getItem("wasiw.demo.recommendationProfiles.v5") ?? "null"));
   expect(copied.profiles.find((profile: { name: string }) => profile.name === "Copied Profile").state)
-    .toMatchObject({ ...legacy, version: 4 });
+    .toMatchObject(migrated.state);
 });
 
 test("a rejected profile write reports failure instead of claiming it was saved", async ({ page }) => {
   await page.addInitScript(() => {
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {
-      if (key.endsWith(".recommendationProfiles.v4")) {
+      if (key.endsWith(".recommendationProfiles.v5")) {
         throw new DOMException("Synthetic quota exceeded", "QuotaExceededError");
       }
       return original.call(this, key, value);
@@ -118,9 +128,10 @@ test("a rejected profile write reports failure instead of claiming it was saved"
 test("a corrupt current copy restores its backup and shows a durable warning", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => {
-    localStorage.setItem("wasiw.demo.recommendationState.v4", "{broken");
-    localStorage.setItem("wasiw.demo.recommendationState.v4.backup", JSON.stringify({
-      version: 4, mode: "graph", selected: [{ nodeId: "anime:999", weight: 2.4 }],
+    localStorage.setItem("wasiw.demo.recommendationState.v5", "{broken");
+    localStorage.setItem("wasiw.demo.recommendationState.v5.backup", JSON.stringify({
+      version: 5, mode: "graph", preferences: [{ nodeId: "anime:999", sentiment: "liked",
+        importance: 2.4, confidence: 0.5, source: "legacy" }],
       modelBlendWeight: 0.5, includeCandidates: [], excludeCandidates: [],
     }));
   });
@@ -128,5 +139,5 @@ test("a corrupt current copy restores its backup and shows a durable warning", a
   await expect(page.locator("#watched-count")).toHaveText("1");
   await expect(page.locator("#selected-anime")).toContainText("anime:999");
   await expect(page.locator("#storage-status")).toContainText("Recovered recommendation state from a backup");
-  expect(await page.evaluate(() => localStorage.getItem("wasiw.demo.recommendationState.v4"))).toBe("{broken");
+  expect(await page.evaluate(() => localStorage.getItem("wasiw.demo.recommendationState.v5"))).toBe("{broken");
 });

@@ -1,5 +1,6 @@
 import type { EdgeType, ModelRecommendationAnime, NodeType } from "./artifacts";
 import type { HistoryEntry } from "./import-history";
+import type { AnimePreference } from "./preferences";
 
 export interface ConnectedItem {
   nodeId: string;
@@ -54,13 +55,13 @@ export interface SeasonalAnimeItem {
   imageUrl: string;
 }
 
-export interface ImportedWatchedEntry {
+export interface ImportedPreferenceEntry {
   anime: AnimeInfo;
-  weight: number;
+  preference: AnimePreference;
 }
 
 export interface UsernameImportResult {
-  entries: ImportedWatchedEntry[];
+  entries: ImportedPreferenceEntry[];
   history: HistoryEntry[];
   duplicateCount: number;
   ratedCount: number;

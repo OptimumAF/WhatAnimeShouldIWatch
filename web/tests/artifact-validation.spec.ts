@@ -73,6 +73,7 @@ test("a model with the wrong embedding width remains unavailable", async ({ page
 
   await page.goto("/");
   await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText(
@@ -112,6 +113,7 @@ test("normal mode still loads valid unversioned legacy graph and model artifacts
 
   await page.goto(normalAppUrl);
   await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations (2 factors)");

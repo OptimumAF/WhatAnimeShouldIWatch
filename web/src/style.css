@@ -676,6 +676,20 @@ button:hover,
   gap: 0.5rem;
 }
 
+#add-anime-form {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+@media (max-width: 600px) {
+  #add-anime-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  #add-anime-form #anime-input {
+    grid-column: 1 / -1;
+  }
+}
+
 .add-form-compact {
   margin-top: 0.45rem;
 }
@@ -723,7 +737,9 @@ button:hover,
   font-size: 0.82rem;
 }
 
-.add-form input {
+.add-form input,
+.add-form select,
+.chip-weight-control select {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: var(--surface-strong);
@@ -1181,16 +1197,27 @@ button:hover,
   width: 100%;
 }
 
-.chip-weight-value {
+.chip-weight-control select {
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+}
+
+.chip-importance-value {
   min-width: 2.7rem;
   text-align: right;
   color: var(--accent-soft);
   font-family: "IBM Plex Mono", monospace;
 }
 
+.chip-confidence {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .chip button {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 4;
   border: 0;
   background: transparent;
   color: var(--muted);
