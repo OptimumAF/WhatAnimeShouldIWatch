@@ -121,7 +121,7 @@
 
 **Files changed:** `web/src/main.ts`, `web/tests/service-worker-cleanup.spec.ts`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Pending draft PR and remote fixture CI at this point in the log.
+**Commit / PR and CI:** Commit `14c12bc` in draft [PR #5](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/5), stacked on PR #4. [Fixture and fast checks run 36091765484](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36091765484) passed, including all 6 browser tests; GitGuardian passed.
 
 **Checks not run / blockers:** No real sibling app was installed on the origin. The test directly observes the unregister call using a mocked registration; the app has no known service-worker scope to retain. Provider-data permissions and current public assets are unchanged. M1's artifact, recommendation, adapter, migration, async-state, and rendering tasks and exit gate remain open.
 
