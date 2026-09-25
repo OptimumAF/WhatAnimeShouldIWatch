@@ -57,6 +57,20 @@ test("accepts current synthetic compact and legacy contracts, including three-va
   assert.equal(parseCompactGraph(oldPairs, "three-value graph"), oldPairs);
 });
 
+test("v1 contracts accept a selected pair subset with true support and matching counts", () => {
+  const compact = fixture("graph.compact.json");
+  compact.aa = [compact.aa[0]];
+  compact.edgeCount = compact.ua.length + 1;
+  assert.equal(parseCompactGraph(compact, "selected compact graph"), compact);
+  assert.equal(compact.aa[0][3], 3);
+
+  const legacy = legacyGraph();
+  legacy.edges = legacy.edges.filter((edge: { edgeType: string }) => edge.edgeType === "user-anime")
+    .concat([legacy.edges.find((edge: { edgeType: string }) => edge.edgeType === "anime-anime")]);
+  legacy.edgeCount = legacy.edges.length;
+  assert.equal(parseLegacyGraph(legacy, "selected legacy graph"), legacy);
+});
+
 test("rejects unsupported versions, malformed tuples, duplicate IDs, and broken graph references", () => {
   const original = fixture("graph.compact.json");
   const cases: [string, (value: any) => void, RegExp][] = [

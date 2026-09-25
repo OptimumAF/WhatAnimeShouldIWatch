@@ -73,3 +73,20 @@ test("network explorer distinguishes signed v1 pair preference without calling i
   await expect(page.locator("#network-edge-legend")).toContainText("pair preference");
   await expect(page.locator("#network-edge-legend")).not.toContainText("similarity");
 });
+
+test("a valid selected-pair graph still loads recommendations and the network", async ({ page }) => {
+  await page.route("**/demo-data/graph.compact.json", async (route) => {
+    const response = await route.fetch();
+    const graph = await response.json();
+    graph.aa = [graph.aa[0]];
+    graph.edgeCount = graph.ua.length + graph.aa.length;
+    await route.fulfill({ response, json: graph });
+  });
+  await page.goto("/");
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-anime-form button").click();
+  await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop"]);
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#graph svg")).toBeVisible();
+  await expect(page.locator("#network-render-status")).toContainText("edges");
+});

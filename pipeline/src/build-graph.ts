@@ -3,7 +3,13 @@ import path from "node:path";
 import { Command } from "commander";
 import { loadDatasetFromDb, openDatabase } from "./db.js";
 import { getRepoRoot } from "./paths.js";
-import { aggregateAnimePairs } from "./core/pair-aggregation.js";
+import {
+  aggregateAnimePairs,
+  DEFAULT_MAX_CANDIDATE_PAIRS,
+  DEFAULT_MAX_PAIR_VISITS,
+  type PairSelectionOptions,
+  type PairSelectionStats,
+} from "./core/pair-aggregation.js";
 import type {
   CompactAnonymizedDataset,
   CompactGraphData,
@@ -20,6 +26,10 @@ interface BuildGraphOptions {
   outGraphCompact?: string;
   maxRatingsPerUser?: string;
   maxAnimeAnimeEdges?: string;
+  maxPairVisits?: string;
+  maxPairCandidates?: string;
+  minPairSupport?: string;
+  maxNeighborsPerAnime?: string;
   prettyJson?: boolean;
   compact?: boolean;
   compactOnly?: boolean;
@@ -54,7 +64,23 @@ const program = new Command()
   )
   .option(
     "--max-anime-anime-edges <count>",
-    "Maximum number of unique anime-anime edges to keep (0 = unlimited)",
+    "Maximum selected anime-anime edges after exact pair aggregation (0 = unlimited)",
+  )
+  .option(
+    "--max-pair-visits <count>",
+    "Hard budget for pair observations before enumeration",
+  )
+  .option(
+    "--max-pair-candidates <count>",
+    "Hard budget for distinct candidate pair keys in memory",
+  )
+  .option(
+    "--min-pair-support <count>",
+    "Minimum co-rater count before a pair can be selected",
+  )
+  .option(
+    "--max-neighbors-per-anime <count>",
+    "Maximum selected pair degree per anime (0 = unlimited)",
   )
   .option(
     "--pretty-json",
@@ -104,31 +130,35 @@ const outGraphCompactPath = path.resolve(
     process.env.GRAPH_COMPACT_OUT ??
     "data/graph.compact.json",
 );
-const maxRatingsPerUser = Number.parseInt(
+const maxRatingsPerUser = parseCount(
   options.maxRatingsPerUser ??
     process.env.GRAPH_MAX_RATINGS_PER_USER ??
     argMaxRatingsPerUser ??
     "0",
-  10,
+  "max ratings per user",
 );
-if (Number.isNaN(maxRatingsPerUser) || maxRatingsPerUser < 0) {
-  throw new Error(
-    `Invalid max ratings value: ${
-      options.maxRatingsPerUser ?? argMaxRatingsPerUser
-    }`,
-  );
-}
-const maxAnimeAnimeEdges = Number.parseInt(
+const maxAnimeAnimeEdges = parseCount(
   options.maxAnimeAnimeEdges ??
     process.env.GRAPH_MAX_ANIME_ANIME_EDGES ??
     "2000000",
-  10,
+  "max anime-anime edges",
 );
-if (Number.isNaN(maxAnimeAnimeEdges) || maxAnimeAnimeEdges < 0) {
-  throw new Error(
-    `Invalid max anime-anime edge value: ${options.maxAnimeAnimeEdges}`,
-  );
-}
+const maxPairVisits = parseCount(
+  options.maxPairVisits ?? process.env.GRAPH_MAX_PAIR_VISITS ?? String(DEFAULT_MAX_PAIR_VISITS),
+  "max pair visits", 1,
+);
+const maxPairCandidates = parseCount(
+  options.maxPairCandidates ?? process.env.GRAPH_MAX_PAIR_CANDIDATES ?? String(DEFAULT_MAX_CANDIDATE_PAIRS),
+  "max pair candidates", 1,
+);
+const minPairSupport = parseCount(
+  options.minPairSupport ?? process.env.GRAPH_MIN_PAIR_SUPPORT ?? "1",
+  "min pair support", 1,
+);
+const maxNeighborsPerAnime = parseCount(
+  options.maxNeighborsPerAnime ?? process.env.GRAPH_MAX_NEIGHBORS_PER_ANIME ?? "0",
+  "max neighbors per anime",
+);
 const prettyJson =
   options.prettyJson === true || isTruthy(process.env.GRAPH_PRETTY_JSON);
 const writeCompact =
@@ -153,6 +183,12 @@ try {
     dataset,
     maxRatingsPerUser,
     maxAnimeAnimeEdges,
+    {
+      maxPairVisits,
+      maxCandidatePairs: maxPairCandidates,
+      minSupport: minPairSupport,
+      maxNeighborsPerAnime,
+    },
   );
   const graph = graphResult.graph;
   if (writeLegacy) {
@@ -188,11 +224,17 @@ try {
   process.stdout.write(
     `Graph stats: ${graph.userCount} users, ${graph.animeCount} anime, ${graph.edgeCount} edges\n`,
   );
-  if (graphResult.skippedNewAnimeAnimePairs > 0) {
-    process.stdout.write(
-      `Anime-anime edge guard hit: skipped ${graphResult.skippedNewAnimeAnimePairs} new pair keys after reaching cap=${graphResult.maxAnimeAnimeEdges}\n`,
-    );
-  }
+  const pairStats = graphResult.pairStats;
+  process.stdout.write(
+    `Pair selection: ${pairStats.pairVisits} visits, ${pairStats.candidatePairs} candidate keys, ` +
+    `${pairStats.eligiblePairs} with support >= ${minPairSupport}, ${pairStats.selectedPairs} retained; ` +
+    `${pairStats.excludedBySupport} below support, ${pairStats.excludedByNeighborLimit} neighbor-limited, ` +
+    `${pairStats.excludedByOutputLimit} output-limited, ${pairStats.ratingsSkippedByUserCap} ratings skipped by the legacy per-user cap.\n`,
+  );
+  process.stdout.write(
+    `Pair budgets: visits=${maxPairVisits}, candidate keys=${maxPairCandidates}, ` +
+    `output edges=${maxAnimeAnimeEdges || "unlimited"}, neighbors/anime=${maxNeighborsPerAnime || "unlimited"}.\n`,
+  );
 } finally {
   db.close();
 }
@@ -210,10 +252,10 @@ function createGraph(
   },
   maxRatingsPerUser: number,
   maxAnimeAnimeEdges: number,
+  pairOptions: PairSelectionOptions,
 ): {
   graph: GraphData;
-  skippedNewAnimeAnimePairs: number;
-  maxAnimeAnimeEdges: number;
+  pairStats: PairSelectionStats;
 } {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
@@ -251,7 +293,7 @@ function createGraph(
     }
   }
 
-  const pairResult = aggregateAnimePairs(dataset.users, maxRatingsPerUser, maxAnimeAnimeEdges);
+  const pairResult = aggregateAnimePairs(dataset.users, maxRatingsPerUser, maxAnimeAnimeEdges, pairOptions);
   for (const [pair, aggregate] of pairResult.pairs.entries()) {
     const [low, high] = pair.split(":");
     edges.push({
@@ -278,9 +320,20 @@ function createGraph(
       nodes: nodeList,
       edges,
     },
-    skippedNewAnimeAnimePairs: pairResult.skippedNewPairs,
-    maxAnimeAnimeEdges,
+    pairStats: pairResult.stats,
   };
+}
+
+function parseCount(raw: string, label: string, minimum = 0): number {
+  const trimmed = raw.trim();
+  if (!/^(0|[1-9]\d*)$/.test(trimmed)) {
+    throw new Error(`Invalid ${label}: expected a ${minimum === 0 ? "nonnegative" : "positive"} safe integer.`);
+  }
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`Invalid ${label}: expected a ${minimum === 0 ? "nonnegative" : "positive"} safe integer.`);
+  }
+  return value;
 }
 
 function roundWeight(value: number): number {

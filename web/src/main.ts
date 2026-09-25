@@ -4138,7 +4138,9 @@ function getDefaultMinAnimeAnimeWeight(
 
   value = Math.min(Math.max(value, min), max);
   if (step > 0 && Number.isFinite(step)) {
-    value = Math.round(value / step) * step;
+    // Round down so a sparse selected graph still shows at least its
+    // strongest edge at the initial threshold.
+    value = min + Math.floor((value - min) / step) * step;
   }
 
   return Number(value.toFixed(2));

@@ -1,0 +1,10 @@
+{
+  "description": "Invented centered ratings: the first observed pair is weak, while a later pair has three co-raters. Every row sums to zero.",
+  "users": [
+    { "userId": "u-a", "ratings": [{ "animeId": 1, "normalizedScore": 1 }, { "animeId": 2, "normalizedScore": -1 }] },
+    { "userId": "u-b", "ratings": [{ "animeId": 3, "normalizedScore": 2 }, { "animeId": 4, "normalizedScore": -2 }] },
+    { "userId": "u-c", "ratings": [{ "animeId": 3, "normalizedScore": 2 }, { "animeId": 4, "normalizedScore": 2 }, { "animeId": 5, "normalizedScore": -4 }] },
+    { "userId": "u-d", "ratings": [{ "animeId": 3, "normalizedScore": 1 }, { "animeId": 4, "normalizedScore": 1 }, { "animeId": 6, "normalizedScore": -2 }] }
+  ],
+  "expected": { "pairVisits": 8, "candidatePairs": 6, "topPair": "3:4", "topSupport": 3, "topWeight": 1 }
+}

@@ -13,60 +13,174 @@ export interface PairAggregate {
   support: number;
 }
 
+export interface PairSelectionOptions {
+  /** Fail before pair enumeration when this exact observation bound is exceeded. */
+  maxPairVisits?: number;
+  /** Fail instead of evicting or silently omitting candidate statistics. */
+  maxCandidatePairs?: number;
+  minSupport?: number;
+  /** Greedy degree limit after ranking by support, magnitude, then numeric IDs. */
+  maxNeighborsPerAnime?: number;
+}
+
+export interface PairSelectionStats {
+  pairVisits: number;
+  candidatePairs: number;
+  eligiblePairs: number;
+  selectedPairs: number;
+  excludedBySupport: number;
+  excludedByNeighborLimit: number;
+  excludedByOutputLimit: number;
+  ratingsSkippedByUserCap: number;
+}
+
+export const DEFAULT_MAX_PAIR_VISITS = 20_000_000;
+export const DEFAULT_MAX_CANDIDATE_PAIRS = 2_500_000;
+
+interface CandidatePair {
+  key: string;
+  low: number;
+  high: number;
+  sum: number;
+  count: number;
+  weight: number;
+}
+
+function requireSafeInteger(name: string, value: number, minimum: number): void {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${name} must be a ${minimum === 0 ? "nonnegative" : "positive"} safe integer.`);
+  }
+}
+
+/** Exact v1 pair means, with independent work/key budgets and deterministic output selection. */
 export function aggregateAnimePairs(
   users: PairUser[],
   maxRatingsPerUser: number,
   maxAnimeAnimeEdges: number,
-): { pairs: Map<string, PairAggregate>; skippedNewPairs: number } {
-  const pairStats = new Map<string, { sum: number; count: number }>();
-  let skippedNewPairs = 0;
+  options: PairSelectionOptions = {},
+): { pairs: Map<string, PairAggregate>; stats: PairSelectionStats } {
+  const maxPairVisits = options.maxPairVisits ?? DEFAULT_MAX_PAIR_VISITS;
+  const maxCandidatePairs = options.maxCandidatePairs ?? DEFAULT_MAX_CANDIDATE_PAIRS;
+  const minSupport = options.minSupport ?? 1;
+  const maxNeighborsPerAnime = options.maxNeighborsPerAnime ?? 0;
+  requireSafeInteger("maxRatingsPerUser", maxRatingsPerUser, 0);
+  requireSafeInteger("maxAnimeAnimeEdges", maxAnimeAnimeEdges, 0);
+  requireSafeInteger("maxPairVisits", maxPairVisits, 1);
+  requireSafeInteger("maxCandidatePairs", maxCandidatePairs, 1);
+  requireSafeInteger("minSupport", minSupport, 1);
+  requireSafeInteger("maxNeighborsPerAnime", maxNeighborsPerAnime, 0);
 
-  // Keep the existing first-N cap policy, then make traversal independent of
-  // input ordering for uncapped data and of user ordering for capped data.
+  // Count input work before building any pair keys. The first-N user cap is a
+  // legacy approximation; M3.6 will replace its selection policy.
+  let pairVisits = 0;
+  let ratingsSkippedByUserCap = 0;
+  for (const user of users) {
+    const selectedCount = maxRatingsPerUser > 0
+      ? Math.min(user.ratings.length, maxRatingsPerUser) : user.ratings.length;
+    ratingsSkippedByUserCap += user.ratings.length - selectedCount;
+    if (!Number.isSafeInteger(ratingsSkippedByUserCap)) {
+      throw new Error("Skipped-rating count exceeds the safe integer range.");
+    }
+    pairVisits += selectedCount * (selectedCount - 1) / 2;
+    if (!Number.isSafeInteger(pairVisits) || pairVisits > maxPairVisits) {
+      throw new Error(`Pair-visit budget exceeded: ${pairVisits} observations exceed limit ${maxPairVisits}. Raise --max-pair-visits or use a deliberate per-user selection policy.`);
+    }
+  }
+
+  const candidates = new Map<string, CandidatePair>();
   const sortedUsers = [...users].sort((a, b) =>
     a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0,
   );
+  let previousUserId: string | null = null;
   for (const user of sortedUsers) {
+    if (user.userId === previousUserId) {
+      throw new Error("Duplicate user ID in pair input.");
+    }
+    previousUserId = user.userId;
     const selected = maxRatingsPerUser > 0
-      ? user.ratings.slice(0, maxRatingsPerUser)
-      : user.ratings;
+      ? user.ratings.slice(0, maxRatingsPerUser) : user.ratings;
     const ratings = [...selected].sort((a, b) => a.animeId - b.animeId);
+    for (let i = 0; i < ratings.length; i += 1) {
+      const rating = ratings[i];
+      if (!Number.isSafeInteger(rating.animeId) || rating.animeId <= 0 ||
+          !Number.isFinite(rating.normalizedScore)) {
+        throw new Error("Invalid anime ID or centered score in pair input.");
+      }
+      if (i > 0 && ratings[i - 1].animeId === rating.animeId) {
+        throw new Error(`Duplicate anime ID ${rating.animeId} in one user's pair input.`);
+      }
+    }
 
     for (let i = 0; i < ratings.length; i += 1) {
       for (let j = i + 1; j < ratings.length; j += 1) {
         const low = ratings[i].animeId;
         const high = ratings[j].animeId;
         const key = `${low}:${high}`;
-        const userPairScore =
-          (ratings[i].normalizedScore + ratings[j].normalizedScore) / 2;
-        const current = pairStats.get(key);
-        if (
-          current === undefined &&
-          maxAnimeAnimeEdges > 0 &&
-          pairStats.size >= maxAnimeAnimeEdges
-        ) {
-          skippedNewPairs += 1;
-          continue;
+        let current = candidates.get(key);
+        if (!current) {
+          if (candidates.size >= maxCandidatePairs) {
+            throw new Error(`Candidate-key budget exceeded: limit ${maxCandidatePairs}. No partial pair graph was produced.`);
+          }
+          current = { key, low, high, sum: 0, count: 0, weight: 0 };
+          candidates.set(key, current);
         }
-        pairStats.set(key, {
-          sum: (current?.sum ?? 0) + userPairScore,
-          count: (current?.count ?? 0) + 1,
-        });
+        const pairScore = ratings[i].normalizedScore / 2 + ratings[j].normalizedScore / 2;
+        current.sum += pairScore;
+        current.count += 1;
+        if (!Number.isFinite(current.sum)) {
+          throw new Error(`Non-finite pair sum for ${key}.`);
+        }
       }
     }
   }
 
-  const sortedPairs = [...pairStats].sort(([a], [b]) => {
-      const [aLow, aHigh] = a.split(":").map(Number);
-      const [bLow, bHigh] = b.split(":").map(Number);
-      return aLow - bLow || aHigh - bHigh;
-  });
-  const pairs = new Map<string, PairAggregate>(sortedPairs.map(([key, stats]) => [key, {
-      weight: stats.sum / stats.count,
-      support: stats.count,
+  const ranked: CandidatePair[] = [];
+  for (const pair of candidates.values()) {
+    if (pair.count >= minSupport) {
+      pair.weight = pair.sum / pair.count;
+      ranked.push(pair);
+    }
+  }
+  ranked.sort((a, b) =>
+    b.count - a.count || Math.abs(b.weight) - Math.abs(a.weight) ||
+    a.low - b.low || a.high - b.high,
+  );
+
+  const degree = new Map<number, number>();
+  const selected: CandidatePair[] = [];
+  let excludedByNeighborLimit = 0;
+  let excludedByOutputLimit = 0;
+  for (const pair of ranked) {
+    if (maxNeighborsPerAnime > 0 &&
+        ((degree.get(pair.low) ?? 0) >= maxNeighborsPerAnime ||
+         (degree.get(pair.high) ?? 0) >= maxNeighborsPerAnime)) {
+      excludedByNeighborLimit += 1;
+      continue;
+    }
+    if (maxAnimeAnimeEdges > 0 && selected.length >= maxAnimeAnimeEdges) {
+      excludedByOutputLimit += 1;
+      continue;
+    }
+    selected.push(pair);
+    degree.set(pair.low, (degree.get(pair.low) ?? 0) + 1);
+    degree.set(pair.high, (degree.get(pair.high) ?? 0) + 1);
+  }
+  selected.sort((a, b) => a.low - b.low || a.high - b.high);
+  const pairs = new Map<string, PairAggregate>(selected.map((pair) => [pair.key, {
+    weight: pair.weight,
+    support: pair.count,
   }]));
   return {
     pairs,
-    skippedNewPairs,
+    stats: {
+      pairVisits,
+      candidatePairs: candidates.size,
+      eligiblePairs: ranked.length,
+      selectedPairs: selected.length,
+      excludedBySupport: candidates.size - ranked.length,
+      excludedByNeighborLimit,
+      excludedByOutputLimit,
+      ratingsSkippedByUserCap,
+    },
   };
 }

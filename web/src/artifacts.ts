@@ -15,6 +15,7 @@ export interface GraphEdge {
   target: string;
   edgeType: EdgeType;
   weight: number;
+  /** Co-raters in the producer's processed rows; a v1 edge set may be selected/capped. */
   support?: number;
 }
 
@@ -34,7 +35,7 @@ export type CompactAnimeAnimeEdge = [
   leftAnimeIndex: number,
   rightAnimeIndex: number,
   weight: number,
-  support?: number,
+  support?: number, // co-raters in processed rows, not proof that all pair keys were exported
 ];
 
 export interface CompactGraphData {

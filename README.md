@@ -145,7 +145,8 @@ Note:
 - JSON exports are minified by default to reduce disk size.
 - Use `--pretty-json` if you need human-readable formatting.
 - Use `--compact-only` to write only compact files.
-- A safety guard now limits unique anime-anime edges during build to prevent memory blowups on very large datasets. Default cap: `2,000,000` (set `--max-anime-anime-edges 0` for unlimited).
+- `--max-anime-anime-edges` limits the selected output to 2,000,000 pairs by default (`0` means no output cap). Exact candidates are ranked by co-rater support, absolute pair mean, then numeric IDs; `--max-neighbors-per-anime` optionally limits selected degree (`0` by default).
+- Separate fail-closed input limits are `--max-pair-visits 20000000` and `--max-pair-candidates 2500000`. If either is exceeded, graph building fails before writing new artifacts instead of returning a biased partial graph. `--min-pair-support` defaults to 1. The CLI reports visits, candidate keys, support/neighbor/output exclusions, and ratings omitted by the legacy per-user cap.
 
 Graph rules implemented:
 
@@ -159,10 +160,11 @@ Graph rules implemented:
   as a fourth value: `[leftIndex, rightIndex, weight, support]`.
 
 This is a corrected compatibility statistic, not a correlation or a validated
-similarity measure. The unique-pair cap still keeps first-encountered pairs and
-the per-user rating cap still takes the first N ratings. Their selection bias and
-work budget are tracked in M3.5–M3.6; do not treat capped graph output as order
-independent yet. [Decision 0005](docs/decisions/0005-graph-edge-semantics.md)
+similarity measure. The output cap now selects deterministically from exact
+candidate statistics within its independent input budgets. The per-user rating
+cap still takes the first N ratings; M3.6 must replace that policy and measure
+approximation, runtime, memory, and coverage. Do not treat per-user-capped graph
+output as input-order independent yet. [Decision 0005](docs/decisions/0005-graph-edge-semantics.md)
 compares this pair preference with a support-shrunk, user-centered item cosine
 on an invented fixture (`node --import tsx --test pipeline/test/edge-semantics.benchmark.test.ts`).
 The proposed similarity is not wired into v1 exports, browser ranking, or training.
