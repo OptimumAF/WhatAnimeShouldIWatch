@@ -211,7 +211,7 @@
 
 **Files changed:** `web/src/runtime.ts`, `web/src/providers.ts`, `web/src/main.ts`, `web/src/style.css`, `web/test/adapters.test.ts`, `web/tests/async-state.spec.ts`, `web/tests/mal-import.spec.ts`, `web/tests/demo.spec.ts`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Local verification passed; commit and draft PR reference will be recorded after creation.
+**Commit / PR and CI:** Implementation commit `751483a` in draft [PR #10](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/10), stacked on PR #9. [Fixture and fast checks run 36097625947](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36097625947) passed from a fresh PR checkout, including fixture generation/check, TypeScript/Python/workflow tests, web build, and all 25 browser tests; GitGuardian passed.
 
 **Checks not run / blockers:** No real username/history, provider request, production artifact regeneration, model training, release publication, or deployment. No production-scale benchmark or desktop run. M1.7's rendering, external URL, and dependency audit is still required before the M1 exit gate. M2.4 still requires provider-wide scheduling, timeouts, `Retry-After`, and retry budgets; this slice only adds cancellation to existing fetch/retry paths. Provider permissions and public-asset remedies remain unresolved.
 
