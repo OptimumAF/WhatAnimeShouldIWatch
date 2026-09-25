@@ -1,0 +1,24 @@
+{
+  "description": "Invented, user-centered scores for comparing graph edge meanings. Every user's full row sums to zero.",
+  "users": [
+    { "userId": "fixture-1", "ratings": [
+      { "animeId": 1, "normalizedScore": 2 },
+      { "animeId": 2, "normalizedScore": -2 },
+      { "animeId": 3, "normalizedScore": 2 },
+      { "animeId": 4, "normalizedScore": -4 },
+      { "animeId": 5, "normalizedScore": 2 }
+    ] },
+    { "userId": "fixture-2", "ratings": [
+      { "animeId": 1, "normalizedScore": -2 },
+      { "animeId": 2, "normalizedScore": 2 },
+      { "animeId": 3, "normalizedScore": -2 },
+      { "animeId": 4, "normalizedScore": 2 }
+    ] },
+    { "userId": "fixture-3", "ratings": [
+      { "animeId": 1, "normalizedScore": 2 },
+      { "animeId": 2, "normalizedScore": -2 },
+      { "animeId": 3, "normalizedScore": 2 },
+      { "animeId": 4, "normalizedScore": -2 }
+    ] }
+  ]
+}

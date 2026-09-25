@@ -162,7 +162,10 @@ This is a corrected compatibility statistic, not a correlation or a validated
 similarity measure. The unique-pair cap still keeps first-encountered pairs and
 the per-user rating cap still takes the first N ratings. Their selection bias and
 work budget are tracked in M3.5–M3.6; do not treat capped graph output as order
-independent yet.
+independent yet. [Decision 0005](docs/decisions/0005-graph-edge-semantics.md)
+compares this pair preference with a support-shrunk, user-centered item cosine
+on an invented fixture (`node --import tsx --test pipeline/test/edge-semantics.benchmark.test.ts`).
+The proposed similarity is not wired into v1 exports, browser ranking, or training.
 
 ## 3) Run Web App
 
