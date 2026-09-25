@@ -193,7 +193,7 @@
 
 **Files changed:** `web/src/persistence.ts`, `web/src/main.ts`, `web/src/style.css`, `web/test/adapters.test.ts`, `web/test/persistence-migration.test.ts`, `web/tests/persistence-characterization.spec.ts`, `web/tests/demo.spec.ts`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Local verification passed; commit and draft PR reference will be recorded after creation.
+**Commit / PR and CI:** Implementation commit `0508b65` in draft [PR #9](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/9), stacked on PR #8. [Fixture and fast checks run 36096376864](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36096376864) passed from a fresh PR checkout, including fixture generation/check, TypeScript/Python/workflow tests, web build, and all 17 browser tests; GitGuardian passed.
 
 **Checks not run / blockers:** No real username/history, provider request, production data regeneration, model training, release publication, or deployment. No production-scale benchmark or desktop run. M1.5 must still cancel stale asynchronous work; M1.7 must audit rendering and external URLs; the M1 exit gate stays open. Full profile export/import, merge preview, reset, and recovery controls remain M6.6. Provider permission and public-asset remedies remain unresolved.
 
