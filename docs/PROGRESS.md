@@ -103,7 +103,7 @@
 
 **Files changed:** `.github/workflows/ci.yml`, `.github/workflows/ml-retrain.yml`, `.github/workflows/publish-data-release.yml`, `.github/workflows/deploy-web.yml`, `scripts/verify_provider_data_approval.py`, `scripts/tests/test_verify_provider_data_approval.py`, `scripts/tests/test_provider_workflow_conditions.py`, `docs/approvals/provider-data.json`, `docs/decisions/0002-provider-workflow-gates.md`, `docs/decisions/0001-provider-data-permissions.md`, `AGENTS.md`, `README.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Pending reviewable draft PR and remote fixture CI at this point in the log.
+**Commit / PR and CI:** Implementation commit `06a0797` in draft [PR #4](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/4), stacked on PR #3. [Fixture and fast checks run 36091467488](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36091467488) passed, including the new gate tests, existing fixture/typecheck/Python checks, web build, and browser tests; GitGuardian passed.
 
 **Checks not run / blockers:** No enabled GitHub Actions job was dispatched; the enabled path was verified with synthetic approval records and local expression cases. No real provider request, production ratings fetch, training, public artifact update, or Pages deployment occurred. These gates are not active on `master` until merged. The existing public release and Pages graph remain available; source rights, a remedy for those copies, and any owner approval are unresolved. The M2 exit gate remains open.
 
