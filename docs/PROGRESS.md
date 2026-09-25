@@ -157,7 +157,7 @@
 
 **Files changed:** `web/src/recommendations.ts`, `web/src/main.ts`, `web/test/recommendations.test.ts`, `web/tests/recommendations-characterization.spec.ts`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Local checks passed; record the commit, draft PR, and CI result after publishing this reviewable slice.
+**Commit / PR and CI:** Implementation commit `b6c07a9` in draft [PR #7](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/7), stacked on PR #6. [Fixture and fast checks run 36094091753](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36094091753) passed from a fresh PR checkout, including fixture generation/check, TypeScript/Python/workflow tests, web build, and all 13 browser tests; GitGuardian passed.
 
 **Checks not run / blockers:** No real username/history, provider request, production data regeneration, model experiment, release publication, or deployment. No production-scale browser benchmark or desktop run; those are outside M1.2. Graph negative evidence still depends on watched selection order: a negative edge is included in the explanation only after a positive candidate exists, while its score remains unchanged. Min-max hybrid blending still drops the minimum component score, including at a zero endpoint. Both are characterized as existing behavior for M3.4/M4.6 to decide. M1.3–M1.5, M1.7, and M1's exit gate remain open; provider permissions and public-asset remedies are also unresolved.
 
