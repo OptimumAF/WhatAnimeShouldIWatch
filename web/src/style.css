@@ -909,6 +909,21 @@ button:hover,
   gap: 0.45rem;
 }
 
+.storage-status:not(:empty) {
+  margin: 0.55rem 0;
+  padding: 0.7rem;
+  border: 1px solid var(--accent-soft);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.chip-missing-note {
+  display: block;
+  color: var(--accent-soft);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
 .bulk-import-form label {
   font-size: 0.78rem;
   color: var(--muted);

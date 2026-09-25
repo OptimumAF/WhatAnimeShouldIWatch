@@ -43,6 +43,7 @@ import { createArtifactLoader } from "./artifact-loader";
 import {
   COMMAND_HISTORY_LIMIT,
   COMMAND_PINNED_LIMIT,
+  RECOMMENDATION_STORAGE_VERSION,
   createPersistenceAdapter,
 } from "./persistence";
 import type {
@@ -224,6 +225,7 @@ app.innerHTML = `
             <datalist id="anime-options"></datalist>
 
             <p id="rec-message" class="rec-message" role="status" aria-live="polite"></p>
+            <p id="storage-status" class="storage-status" role="alert" aria-live="assertive"></p>
 
             <div class="selected-head">
               <h3>Watched List <span id="watched-count" class="count-pill">0</span></h3>
@@ -477,6 +479,7 @@ const recBlendInput = mustElement<HTMLInputElement>("#rec-blend");
 const recBlendValueEl = mustElement<HTMLOutputElement>("#rec-blend-value");
 const recEngineStatusEl = mustElement<HTMLParagraphElement>("#rec-engine-status");
 const recMessageEl = mustElement<HTMLParagraphElement>("#rec-message");
+const storageStatusEl = mustElement<HTMLParagraphElement>("#storage-status");
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const watchedCountEl = mustElement<HTMLSpanElement>("#watched-count");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
@@ -598,8 +601,8 @@ const selectedAnimeNodeIds: string[] = [];
 const selectedAnimeWeights = new Map<string, number>();
 const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
-const persistedState = persistence.loadRecommendationState(recommendationIndex);
-const savedProfiles = persistence.loadRecommendationProfiles(recommendationIndex);
+const persistedState = persistence.loadRecommendationState();
+const savedProfiles = persistence.loadRecommendationProfiles();
 const commandActions = buildCommandActions();
 
 for (const entry of persistedState.selected) {
@@ -625,6 +628,7 @@ renderSelectedAnime();
 renderIncludeCandidates();
 renderExcludeCandidates();
 renderProfileOptions(savedProfiles);
+renderStorageWarnings();
 renderFilterControls();
 renderSeasonalList();
 renderContextualTips();
@@ -2192,13 +2196,14 @@ function renderSelectedAnime(): void {
   }
 
   const html = selectedAnimeNodeIds
-    .map((nodeId) => recommendationIndex.animeByNodeId.get(nodeId))
-    .filter((anime): anime is AnimeInfo => Boolean(anime))
-    .map((anime) => {
-      const weight = clampWatchWeight(selectedAnimeWeights.get(anime.nodeId) ?? 1);
+    .map((nodeId) => {
+      const anime = recommendationIndex.animeByNodeId.get(nodeId);
+      const label = anime?.label ?? nodeId;
+      const missingNote = anime ? "" : `<span class="chip-missing-note">Unavailable in this catalog; kept in your saved list</span>`;
+      const weight = clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1);
       return `
       <div class="chip chip-weighted">
-        <span class="chip-title">${escapeHtml(anime.label)}</span>
+        <span class="chip-title">${escapeHtml(label)}${missingNote}</span>
         <label class="chip-weight-control">
           <span>Weight</span>
           <input
@@ -2207,12 +2212,12 @@ function renderSelectedAnime(): void {
             max="${MAX_WATCH_WEIGHT}"
             step="${WATCH_WEIGHT_STEP}"
             value="${weight.toFixed(1)}"
-            data-weight-node-id="${anime.nodeId}"
-            aria-label="Weight for ${escapeHtml(anime.label)}"
+            data-weight-node-id="${escapeHtml(nodeId)}"
+            aria-label="Weight for ${escapeHtml(label)}"
           />
           <output class="chip-weight-value">${weight.toFixed(1)}x</output>
         </label>
-        <button type="button" data-node-id="${anime.nodeId}" aria-label="Remove ${escapeHtml(anime.label)}">x</button>
+        <button type="button" data-node-id="${escapeHtml(nodeId)}" aria-label="Remove ${escapeHtml(label)}">x</button>
       </div>
     `;
     })
@@ -2309,16 +2314,17 @@ function renderCandidateChips(
 
   const dataAttrName = mode === "include" ? "data-include-node-id" : "data-exclude-node-id";
   const html = nodeIds
-    .map((nodeId) => recommendationIndex.animeByNodeId.get(nodeId))
-    .filter((anime): anime is AnimeInfo => Boolean(anime))
-    .map(
-      (anime) => `
+    .map((nodeId) => {
+      const anime = recommendationIndex.animeByNodeId.get(nodeId);
+      const label = anime?.label ?? nodeId;
+      const missingNote = anime ? "" : `<span class="chip-missing-note">Unavailable in this catalog; kept in your saved list</span>`;
+      return `
       <div class="chip">
-        <span class="chip-title">${escapeHtml(anime.label)}</span>
-        <button type="button" ${dataAttrName}="${anime.nodeId}" aria-label="Remove ${escapeHtml(anime.label)}">x</button>
+        <span class="chip-title">${escapeHtml(label)}${missingNote}</span>
+        <button type="button" ${dataAttrName}="${escapeHtml(nodeId)}" aria-label="Remove ${escapeHtml(label)}">x</button>
       </div>
-    `,
-    )
+    `;
+    })
     .join("");
   container.innerHTML = html;
 }
@@ -3666,29 +3672,30 @@ function onMediaQueryChange(
   }
 }
 
-function persistRecommendationState(): void {
-  persistence.persistRecommendationState(buildCurrentRecommendationState());
+function renderStorageWarnings(): void {
+  storageStatusEl.textContent = persistence.getStorageWarnings().join(" ");
+}
+
+function persistRecommendationState(): boolean {
+  const saved = persistence.persistRecommendationState(buildCurrentRecommendationState());
+  renderStorageWarnings();
+  return saved;
 }
 
 function buildCurrentRecommendationState(): StoredRecommendationState {
   const selected = selectedAnimeNodeIds
-    .filter((nodeId) => recommendationIndex.animeByNodeId.has(nodeId))
     .map((nodeId) => ({
       nodeId,
       weight: clampWatchWeight(selectedAnimeWeights.get(nodeId) ?? 1),
     }));
 
   return {
-    version: 3,
+    version: RECOMMENDATION_STORAGE_VERSION,
     mode: recommendationMode,
     selected,
     modelBlendWeight: clampModelBlendWeight(modelBlendWeight),
-    includeCandidates: includeCandidateNodeIds.filter((nodeId) =>
-      recommendationIndex.animeByNodeId.has(nodeId),
-    ),
-    excludeCandidates: excludeCandidateNodeIds.filter((nodeId) =>
-      recommendationIndex.animeByNodeId.has(nodeId),
-    ),
+    includeCandidates: [...includeCandidateNodeIds],
+    excludeCandidates: [...excludeCandidateNodeIds],
   };
 }
 
@@ -3719,12 +3726,20 @@ function saveCurrentProfile(): void {
 
   const state = buildCurrentRecommendationState();
   const now = runtime.now().toISOString();
+  const previous = savedProfiles.get(profileName);
   savedProfiles.set(profileName, {
     name: profileName,
     updatedAt: now,
     state,
   });
-  persistence.persistRecommendationProfiles(savedProfiles);
+  if (!persistence.persistRecommendationProfiles(savedProfiles)) {
+    if (previous) savedProfiles.set(profileName, previous);
+    else savedProfiles.delete(profileName);
+    renderStorageWarnings();
+    recMessageEl.textContent = `Could not save profile "${profileName}".`;
+    return;
+  }
+  renderStorageWarnings();
   renderProfileOptions(savedProfiles);
   profileSelect.value = profileName;
   profileNameInput.value = "";
@@ -3743,14 +3758,20 @@ function loadSelectedProfile(): void {
     return;
   }
 
-  const sanitized = persistence.sanitizeRecommendationState(profile.state, recommendationIndex);
-  applyRecommendationState(sanitized);
-  persistRecommendationState();
+  applyRecommendationState({
+    ...profile.state,
+    modelBlendWeight: profile.state.modelBlendWeight ?? 0.5,
+    includeCandidates: profile.state.includeCandidates ?? [],
+    excludeCandidates: profile.state.excludeCandidates ?? [],
+  });
+  const saved = persistRecommendationState();
   renderSelectedAnime();
   renderIncludeCandidates();
   renderExcludeCandidates();
   void updateRecommendations();
-  recMessageEl.textContent = `Loaded profile "${name}".`;
+  recMessageEl.textContent = saved
+    ? `Loaded profile "${name}".`
+    : `Loaded profile "${name}" for this session; browser storage rejected the change.`;
 }
 
 function deleteSelectedProfile(): void {
@@ -3764,8 +3785,15 @@ function deleteSelectedProfile(): void {
     return;
   }
 
+  const previous = savedProfiles.get(name);
   savedProfiles.delete(name);
-  persistence.persistRecommendationProfiles(savedProfiles);
+  if (!persistence.persistRecommendationProfiles(savedProfiles)) {
+    if (previous) savedProfiles.set(name, previous);
+    renderStorageWarnings();
+    recMessageEl.textContent = `Could not delete profile "${name}".`;
+    return;
+  }
+  renderStorageWarnings();
   renderProfileOptions(savedProfiles);
   recMessageEl.textContent = `Deleted profile "${name}".`;
 }
@@ -3783,21 +3811,14 @@ function applyRecommendationState(state: {
   excludeCandidateNodeIds.splice(0, excludeCandidateNodeIds.length);
 
   for (const entry of state.selected) {
-    if (!recommendationIndex.animeByNodeId.has(entry.nodeId)) {
-      continue;
-    }
     selectedAnimeNodeIds.push(entry.nodeId);
     selectedAnimeWeights.set(entry.nodeId, clampWatchWeight(entry.weight));
   }
   for (const nodeId of state.includeCandidates) {
-    if (recommendationIndex.animeByNodeId.has(nodeId)) {
-      includeCandidateNodeIds.push(nodeId);
-    }
+    includeCandidateNodeIds.push(nodeId);
   }
   for (const nodeId of state.excludeCandidates) {
-    if (recommendationIndex.animeByNodeId.has(nodeId)) {
-      excludeCandidateNodeIds.push(nodeId);
-    }
+    excludeCandidateNodeIds.push(nodeId);
   }
 
   recommendationMode = state.mode;
