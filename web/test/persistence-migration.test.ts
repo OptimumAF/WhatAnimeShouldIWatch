@@ -38,6 +38,7 @@ const migrated = migrateLegacyPreferences(oldState.selected, []);
 const v5State = {
   version: 5, mode: oldState.mode, preferences: migrated,
   modelBlendWeight: oldState.modelBlendWeight,
+  allowRelatedTitles: false,
   includeCandidates: oldState.includeCandidates,
   excludeCandidates: oldState.excludeCandidates,
   history: [],
@@ -52,7 +53,7 @@ test("legacy state and named profiles migrate with exact raw backups and unknown
   const persistence = createPersistenceAdapter(fake.runtime, "wasiw.demo");
 
   assert.deepEqual(persistence.loadRecommendationState(), {
-    mode: "hybrid", preferences: migrated, modelBlendWeight: 0.35,
+    mode: "hybrid", preferences: migrated, modelBlendWeight: 0.35, allowRelatedTitles: false,
     includeCandidates: oldState.includeCandidates, excludeCandidates: oldState.excludeCandidates,
     history: [],
   });
@@ -87,9 +88,24 @@ test("v1 and v2 state defaults migrate without dropping watched weights", () => 
     assert.deepEqual(state, {
       mode: "model", preferences: [{ nodeId: "anime:999", sentiment: "liked", importance: 2.2,
         confidence: 0.5, source: "legacy" }],
-      modelBlendWeight: 0.5, includeCandidates: [], excludeCandidates: [], history: [],
+      modelBlendWeight: 0.5, allowRelatedTitles: false,
+      includeCandidates: [], excludeCandidates: [], history: [],
     });
   }
+});
+
+test("related-title option persists in state and profiles without a storage-version change", () => {
+  const fake = storageRuntime();
+  const persistence = createPersistenceAdapter(fake.runtime, "wasiw.demo");
+  const state = { ...v5State, mode: "hybrid" as const, allowRelatedTitles: true };
+  assert.equal(persistence.persistRecommendationState(state), true);
+  assert.equal(persistence.persistRecommendationProfiles(new Map([["Variety override", {
+    name: "Variety override", updatedAt: "2026-09-25T00:00:00Z", state,
+  }]])), true);
+  const reopened = createPersistenceAdapter(fake.runtime, "wasiw.demo");
+  assert.equal(reopened.loadRecommendationState().allowRelatedTitles, true);
+  assert.equal(reopened.loadRecommendationProfiles().get("Variety override")?.state.allowRelatedTitles, true);
+  assert.equal(persistence.persistRecommendationState({ ...state, allowRelatedTitles: "yes" } as any), false);
 });
 
 test("full imported history survives state and profile reload without dropping unknown identities", () => {

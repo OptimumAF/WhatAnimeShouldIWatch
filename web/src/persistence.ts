@@ -14,6 +14,7 @@ export interface StoredRecommendationState {
   mode: RecommendationMode;
   preferences: AnimePreference[];
   modelBlendWeight?: number;
+  allowRelatedTitles?: boolean;
   includeCandidates?: string[];
   excludeCandidates?: string[];
   history?: HistoryEntry[];
@@ -27,6 +28,7 @@ export interface RecommendationProfileRecord {
 
 export type RecommendationState = Omit<StoredRecommendationState, "version"> & {
   modelBlendWeight: number;
+  allowRelatedTitles: boolean;
   includeCandidates: string[];
   excludeCandidates: string[];
   history: HistoryEntry[];
@@ -236,11 +238,15 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       clampModelBlendWeight(blend) !== blend) {
       throw new Error("Invalid saved blend weight");
     }
+    if (value.allowRelatedTitles !== undefined && typeof value.allowRelatedTitles !== "boolean") {
+      throw new Error("Invalid related-title preference");
+    }
     return {
       version: RECOMMENDATION_STORAGE_VERSION,
       mode: value.mode,
       preferences,
       modelBlendWeight: blend,
+      allowRelatedTitles: value.allowRelatedTitles ?? false,
       includeCandidates: candidateIds("includeCandidates"),
       excludeCandidates: candidateIds("excludeCandidates"),
       history,
@@ -413,13 +419,14 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       return {
         mode: stored.mode, preferences: stored.preferences,
         modelBlendWeight: stored.modelBlendWeight ?? 0.5,
+        allowRelatedTitles: stored.allowRelatedTitles ?? false,
         includeCandidates: stored.includeCandidates ?? [],
         excludeCandidates: stored.excludeCandidates ?? [],
         history: stored.history ?? [],
       };
     }
     return {
-      mode: "graph", preferences: [], modelBlendWeight: 0.5,
+      mode: "graph", preferences: [], modelBlendWeight: 0.5, allowRelatedTitles: false,
       includeCandidates: [], excludeCandidates: [],
       history: [],
     };

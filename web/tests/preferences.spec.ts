@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("seen is exclusion only; explicit likes and dislikes change the active engines", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#allow-related-titles").check();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-anime-form button").click();
   await expect(page.locator("#selected-anime select[data-preference-node-id='anime:101']"))

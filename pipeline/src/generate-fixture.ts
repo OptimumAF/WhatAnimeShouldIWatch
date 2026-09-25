@@ -14,6 +14,8 @@ interface FixtureAnime {
   genres: string[];
   embedding: number[];
   bias: number;
+  relations?: { kind: "prequel" | "sequel" | "alternative-version" | "side-story" | "spin-off";
+    animeId: number; title: string }[];
 }
 
 interface FixtureInput {
@@ -38,6 +40,11 @@ for (const anime of input.anime) {
   if (!Number.isSafeInteger(anime.animeId) || anime.animeId <= 0 ||
       anime.embedding.length !== 2 || !anime.embedding.every(Number.isFinite)) {
     throw new Error(`Invalid synthetic anime ${anime.animeId}.`);
+  }
+  for (const relation of anime.relations ?? []) {
+    if (!catalogById.has(relation.animeId) || relation.animeId === anime.animeId) {
+      throw new Error(`Invalid synthetic relationship from ${anime.animeId}.`);
+    }
   }
 }
 
@@ -130,9 +137,10 @@ const explorerGraph = buildExplorerGraph(graph, 10, 10);
 const catalog = {
   format: "demo-catalog-v1",
   generatedAt,
-  anime: input.anime.map(({ animeId, title, year, score, genres }) => ({
+  anime: input.anime.map(({ animeId, title, year, score, genres, relations }) => ({
     animeId, title, year, score, genres,
     studios: [], synopsis: "Invented offline demo title.", imageUrl: "", season: null,
+    ...(relations ? { relations } : {}),
   })),
 };
 const model = {

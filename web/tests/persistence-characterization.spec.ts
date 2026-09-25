@@ -29,7 +29,7 @@ test("synthetic selection, overrides, mode, and named profile survive reload", a
     profiles: JSON.parse(localStorage.getItem("wasiw.demo.recommendationProfiles.v5") ?? "null"),
   }));
   expect(before.state).toMatchObject({
-    version: 5, mode: "hybrid", modelBlendWeight: 0.35,
+    version: 5, mode: "hybrid", modelBlendWeight: 0.35, allowRelatedTitles: false,
     preferences: [{ nodeId: "anime:101", sentiment: "liked", importance: 1.7,
       confidence: 1, source: "manual" }],
     includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"],
@@ -83,7 +83,7 @@ test("legacy profiles keep catalog-missing selections and overrides through load
     profileBackup: localStorage.getItem("wasiw.demo.recommendationProfiles.v1.backup"),
   }));
   expect(migrated.state).toEqual({
-    version: 5, mode: "hybrid", modelBlendWeight: 0.35,
+    version: 5, mode: "hybrid", modelBlendWeight: 0.35, allowRelatedTitles: false,
     preferences: [
       { nodeId: "anime:101", sentiment: "liked", importance: 1.7, confidence: 0.5, source: "legacy" },
       { nodeId: "anime:999", sentiment: "liked", importance: 2.4, confidence: 0.5, source: "legacy" },

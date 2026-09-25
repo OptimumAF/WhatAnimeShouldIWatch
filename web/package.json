@@ -11,6 +11,7 @@
     "test:e2e": "playwright test",
     "eval:user-vector:fixture": "tsx bench/user-vector-eval.ts",
     "eval:hybrid-blend:fixture": "tsx bench/hybrid-blend-eval.ts",
+    "eval:franchise-diversity:fixture": "tsx bench/franchise-diversity-eval.ts",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

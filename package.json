@@ -26,6 +26,7 @@
     "test:e2e": "npm run test:e2e --workspace web",
     "eval:user-vector:fixture": "npm run data:fixture:check && npm run eval:user-vector:fixture --workspace web",
     "eval:hybrid-blend:fixture": "npm run data:fixture:check && npm run eval:hybrid-blend:fixture --workspace web",
+    "eval:franchise-diversity:fixture": "npm run data:fixture:check && npm run eval:franchise-diversity:fixture --workspace web",
     "build:web": "npm run build --workspace web",
     "build": "npm run build:graph --workspace pipeline -- && npm run sync:web && npm run build --workspace web",
     "ml:train": "python ml/train_graph_mf.py",

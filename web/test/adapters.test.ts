@@ -71,6 +71,7 @@ test("persistence uses injected storage, prefix, and clock while migrating legac
   assert.equal(fake.values.has("wasiw.demo.recommendationState.v5"), true);
   assert.deepEqual(persistence.loadRecommendationState(), {
     mode: "hybrid", preferences: state.preferences, modelBlendWeight: 0.35,
+    allowRelatedTitles: false,
     includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"], history: [],
   });
 
@@ -111,6 +112,7 @@ test("denied browser storage has deterministic fallbacks without DOM setup", () 
   try {
     assert.deepEqual(persistence.loadRecommendationState(), {
       mode: "graph", preferences: [], modelBlendWeight: 0.5,
+      allowRelatedTitles: false,
       includeCandidates: [], excludeCandidates: [], history: [],
     });
     assert.equal(persistence.loadThemeModePreference(() => true), "light");
@@ -147,6 +149,10 @@ test("provider imports and metadata use only mocked direct transport and seeded 
       return attempt === 1 ? jsonResponse({}, 503) : jsonResponse({ data: {
         year: 2020, score: 7.8, genres: [{ name: "Fantasy" }], studios: [],
         synopsis: "Invented synopsis", images: { jpg: { image_url: "https://example.invalid/cover.png" } },
+        relations: [
+          { relation: "Prequel", entry: [{ mal_id: 101, type: "anime", name: "Copper Comet" }] },
+          { relation: "Adaptation", entry: [{ mal_id: 900, type: "manga", name: "Invented manga" }] },
+        ],
       } });
     }
     if (parsed.pathname === "/v4/anime/404/full") return jsonResponse({}, 404);
@@ -171,6 +177,8 @@ test("provider imports and metadata use only mocked direct transport and seeded 
   assert.equal(metadata.state, "ready");
   if (metadata.state === "ready") {
     assert.deepEqual([metadata.metadata.year, metadata.metadata.genres, metadata.metadata.score], [2020, ["Fantasy"], 7.8]);
+    assert.deepEqual(metadata.metadata.relations,
+      [{ kind: "prequel", animeId: 101, title: "Copper Comet" }]);
   }
   assert.deepEqual(await provider.fetchAnimeMetadataFromJikan(404), { state: "unavailable" });
   const seasonal = await provider.fetchSeasonalAnime(12);
@@ -190,6 +198,16 @@ test("a provider rejection is testable without the page and never uses a proxy",
   assert.equal(fake.requests.length, 1);
   assert.equal(new URL(fake.requests[0].url).hostname, "myanimelist.net");
   assert.deepEqual(fake.sleeps, []);
+});
+
+test("malformed optional Jikan relationships remain unknown", async () => {
+  const fake = fakeRuntime(() => jsonResponse({ data: {
+    year: 2020, relations: [{ relation: "Prequel", entry: "broken" }],
+  } }));
+  const result = await createProviderAdapter(fake.runtime).fetchAnimeMetadataFromJikan(102);
+  assert.equal(result.state, "ready");
+  if (result.state === "ready") assert.equal(result.metadata.relations, null);
+  assert.equal(fake.requests.length, 1);
 });
 
 test("mocked username imports keep status, progress, unscored and unmapped provider identities", async () => {
