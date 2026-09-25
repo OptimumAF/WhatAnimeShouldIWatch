@@ -28,6 +28,7 @@ jobs:
           npm run data:fixture
           npm run data:fixture:check
           npm run split:fixture:check
+          npm run ml:train:split:fixture
       - name: Typecheck
         run: npm run typecheck
       - name: Pipeline tests

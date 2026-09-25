@@ -24,6 +24,7 @@
     "test": "npm run test --workspace pipeline && npm run test:unit --workspace web",
     "test:python": "python -m unittest discover -s ml/tests",
     "split:fixture:check": "python ml/raw_interaction_split.py --input fixtures/synthetic-split-input.json --out fixtures/synthetic-split-manifest.json --check",
+    "ml:train:split:fixture": "python ml/split_first_graph_mf.py --raw-ratings fixtures/synthetic-split-input.json --split-manifest fixtures/synthetic-split-manifest.json --metadata fixtures/synthetic-anime-metadata.json --factors 4 --epochs 2",
     "test:e2e": "npm run test:e2e --workspace web",
     "eval:user-vector:fixture": "npm run data:fixture:check && npm run eval:user-vector:fixture --workspace web",
     "eval:hybrid-blend:fixture": "npm run data:fixture:check && npm run eval:hybrid-blend:fixture --workspace web",
