@@ -85,6 +85,8 @@
 
 **Files changed:** `docs/audits/public-artifacts-2026-09-24.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md` (plus the M2.1 files in this branch).
 
+**Commit / PR and CI:** Documentation and audit commit `a76eff3` in draft [PR #3](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/3), stacked on PR #2. [Fixture and fast checks run 36090529010](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36090529010) passed on that commit, including fixture generation, TypeScript/Python checks, web build, and browser tests; GitGuardian also passed.
+
 **Checks not run / blockers:** No reidentification attempt, real username lookup, provider request, new crawl, model training, release publication, deployment, or deletion. This audit does not clear the source rights or decide the remedy for existing public copies. The item-only replacement needs permitted catalog data, graph disclosure thresholds, model provenance/evaluation, and owner approval. The scheduled retrain and publication/deploy workflows still require containment.
 
 **Plan revisions and reasons:** Checked M2.2 after inspecting actual public payloads and proposing an allowlist. Added M2.9 for the immediate approval gate on existing provider-derived jobs; M8.4 retains broader model promotion. Neither the existing release nor Pages site was changed.
