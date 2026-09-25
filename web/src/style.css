@@ -1331,6 +1331,28 @@ button:hover,
   margin-top: 0.12rem;
 }
 
+.rec-score-breakdown {
+  margin-top: 0.35rem;
+  color: var(--muted);
+}
+
+.rec-score-breakdown summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent-soft);
+}
+
+.rec-score-equation,
+.rec-score-detail {
+  margin-top: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.rec-score-equation {
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+}
+
 .rec-why-pos {
   color: #9be3a6;
 }
