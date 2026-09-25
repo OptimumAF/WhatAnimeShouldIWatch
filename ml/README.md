@@ -26,7 +26,7 @@ M5.2's split-first fitting route uses a separate, invented metadata snapshot and
 npm run ml:train:split:fixture
 ```
 
-The metadata file allows only anime IDs and titles, a source label, and snapshot time; it cannot carry rating-derived fields. The pinned synthetic file is `fixtures/synthetic-anime-metadata.json`. [Decision 0015](../docs/decisions/0015-train-only-preprocessing.md) defines the isolation boundary. M5.3 must test fitted-model invariance to held-out changes before this route can become an evaluation path. The older commands below remain research compatibility paths and cannot supply M5 release metrics.
+The metadata file allows only anime IDs and titles, a source label, and snapshot time; it cannot carry rating-derived fields. The pinned synthetic file is `fixtures/synthetic-anime-metadata.json`. [Decision 0015](../docs/decisions/0015-train-only-preprocessing.md) defines the isolation boundary. [Decision 0016](../docs/decisions/0016-fixed-split-leakage-regression.md) and `ml/tests/test_split_first_leakage.py` verify exact train graph, hash, and MF parameter invariance after held-out score and interaction-ID edits under fixed train membership. An added interaction changes the derived train split and requires a new experiment. The route still reports no quality metric; M5.4 must separate validation choices from final test reporting. The older commands below remain research compatibility paths and cannot supply M5 release metrics.
 
 ## Install
 
