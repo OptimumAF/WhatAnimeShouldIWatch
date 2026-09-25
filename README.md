@@ -51,6 +51,8 @@ npm run test:e2e
 
 The Python smoke and workflow tests require NumPy and PyYAML (`python -m pip install "numpy>=2,<3" "PyYAML>=6,<7"`). The Playwright install is needed once per machine. Browser tests use the synthetic demo or a normal-mode app with mocked providers; no real usernames are queried. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
 
+The web app validates graph, demo catalog, and model JSON before scoring or rendering. It accepts the existing compact v1 and unversioned legacy graph/model formats, including three- or four-value compact anime-pair tuples. Malformed or unsupported artifacts report the artifact and field to repair; a missing optional model remains an unavailable state. `npm test` runs the pipeline tests and synthetic web artifact-contract tests.
+
 ## Local watched-list import
 
 In **Import & Profiles**, the recommended import path accepts a local `.txt` file up to 128 KiB or pasted text. Use one graph anime ID or title per line, optionally followed by a comma and score (for example, the synthetic demo accepts `101, 9`). The browser loads a selected file into the text area for review; **Import Watched Entries** applies it. This simple format does not yet preserve provider status, progress, or unmatched entries; full export-format support is tracked in M2.8.

@@ -20,7 +20,7 @@
     "dev:web": "npm run dev --workspace web",
     "dev:demo": "npm run data:fixture && npm run dev --workspace web -- --mode demo --host 127.0.0.1",
     "typecheck": "npm run typecheck --workspace pipeline && npm run typecheck --workspace web",
-    "test": "npm run test --workspace pipeline",
+    "test": "npm run test --workspace pipeline && npm run test:unit --workspace web",
     "test:python": "python -m unittest discover -s ml/tests",
     "test:e2e": "npm run test:e2e --workspace web",
     "build:web": "npm run build --workspace web",
