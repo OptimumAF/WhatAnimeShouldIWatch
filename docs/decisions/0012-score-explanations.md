@@ -1,6 +1,6 @@
 # 0012 — Recommendation score explanations
 
-**Status:** M4.7 local implementation. This defines what the browser can attribute to its current scorers; it is not confidence calibration or a ranking-quality result.
+**Status:** M4.7 local implementation and fresh-checkout fixture CI passed. This defines what the browser can attribute to its current scorers; it is not confidence calibration or a ranking-quality result.
 
 ## Explanation contract
 
