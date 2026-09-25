@@ -32,9 +32,9 @@
 
 **Files changed:** `AGENTS.md`, `.gitignore`, `.github/workflows/ci.yml`, `README.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`, `desktop/Cargo.lock`, `fixtures/synthetic-input.json`, root and workspace package files, `pipeline/src/build-graph.ts`, `pipeline/src/core/pair-aggregation.ts`, `pipeline/src/generate-fixture.ts`, `pipeline/src/sync-web.ts`, `pipeline/src/types.ts`, `pipeline/test/`, `ml/tests/`, `web/.env.demo`, `web/playwright.config.ts`, `web/src/main.ts`, `web/src/style.css`, and `web/tests/demo.spec.ts`.
 
-**Commit / PR:** Pending final review and commit. Record identifiers after creation.
+**Commit / PR:** Implementation commit `7b57e60ef6cef369960ff26c9506d26ca50dd7ac`; draft PR [#1](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/1). CI result pending.
 
-**Checks not run / blockers:** The new GitHub pull-request workflow has not run yet, so M0.6 remains open. No production dataset fetch, crawl, sync, model training, release publish, deployment, live username import, or desktop UI launch was performed. Full graph cap determinism, input-work budget, semantic validity, and format versioning remain M3.3–M3.7; no production artifacts were regenerated.
+**Checks not run / blockers:** The new GitHub pull-request workflow has not reported a run yet, so M0.6 remains open. No production dataset fetch, crawl, sync, model training, release publish, deployment, live username import, or desktop UI launch was performed. Full graph cap determinism, input-work budget, semantic validity, and format versioning remain M3.3–M3.7; no production artifacts were regenerated.
 
 **Plan revisions and reasons:** Added explicit Vite demo mode with ignored generated files, separate local storage keys, and a local catalog/model so ordinary work needs no release download or contamination of normal dev preferences. Added optional fourth compact anime-pair tuple value for support while preserving three-value readers; formal format/semantic migration remains M3.7. First-encounter edge and first-N per-user caps remain M3.5–M3.6. Added PR workflow but kept M0.6 open pending an actual run.
 
