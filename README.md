@@ -58,6 +58,8 @@ Username import is optional. The entered username goes directly to the selected 
 
 ## 1) Collect MAL Data into Anonymized SQLite
 
+**Permission hold:** This is an existing pipeline path, not an authorized routine setup step. Review [provider data permissions](docs/decisions/0001-provider-data-permissions.md) and obtain the recorded source/use clearance before running it or the network-expansion, Jikan feature-harvesting, training, or release-publication commands below. Use the synthetic fixture commands above for development.
+
 This uses public MAL lists from:
 `https://myanimelist.net/animelist/{username}/load.json`
 

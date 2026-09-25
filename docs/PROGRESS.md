@@ -58,3 +58,35 @@
 **Plan revisions and reasons:** M2.3 is checked because the recommended import route is now an explicit local file and the silent proxy path is removed and tested. The file parser deliberately reuses the existing one-line bulk format; it is not claimed to parse Crunchyroll or MAL exports. PR CI now includes `codex/**` base branches so this isolated slice can be checked while stacked on the M0 branch. The AniList route remains existing optional functionality, with product-use permission pending M2.1.
 
 **Single next task:** M2.1 — document current provider permissions and the public/private boundary before expanding any provider-dependent activity.
+
+## Session 2026-09-24 — M2.1
+
+**Branch / starting commit:** `codex/provider-permissions` from `a67f3c0a4316206735da5703a65e1a67aaed081b`; worktree clean at start. Parent draft PR #2 remains open with passing fixture CI.
+
+**Completed:** M2.1. [Decision 0001](decisions/0001-provider-data-permissions.md) maps existing MAL, AniList, and Jikan code paths to source terms and records collection, storage/cache, attribution, redistribution, training, and deletion status for each. Unresolved uses are explicit holds; fixture and mocked-provider development remains available. README collection instructions and `AGENTS.md` now point to this gate. The record distinguishes local user-controlled state, restricted per-user data, and public delivery.
+
+**Verification commands and actual results:** Inspected the current branch, source paths, workflows, and `data-latest` release metadata with `git`, `rg`, `Get-Content`, and `gh release view`. Read current official [MAL site terms](https://myanimelist.net/about/terms_of_use) and [API v2 reference](https://myanimelist.net/apiconfig/references/api/v2), [AniList API terms](https://docs.anilist.co/guide/terms-of-use), [auth](https://docs.anilist.co/guide/auth/) and [GraphQL](https://docs.anilist.co/guide/graphql/) guides, and Jikan's [maintainer README](https://github.com/jikan-me/jikan-rest/blob/master/README.MD) and [OpenAPI description](https://raw.githubusercontent.com/jikan-me/jikan-rest/master/storage/api-docs/api-docs.json). Direct `curl` of Jikan's linked terms URL returned HTTP 404. Source claims and the matrix were checked against those primary documents. `git diff --cached --check` and staged-diff review passed; a local Markdown link check found no missing local target.
+
+**Files changed:** `AGENTS.md`, `README.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`, `docs/decisions/0001-provider-data-permissions.md`.
+
+**Checks not run / blockers:** No real username or history was queried, and no release payload, production dataset, crawl, model, or deployment was fetched or generated. The metadata listing alone cannot establish the published files' actual contents; M2.2 will inspect them without logging rows. The decision records no MAL extraction consent, no AniList product-use determination, and no usable Jikan terms page. Existing optional live paths and the scheduled retrain remain in source; this documentation is not a claim that they are runtime-disabled.
+
+**Plan revisions and reasons:** Checked M2.1 only for the reviewed permission and boundary record; the provider-dependent activities remain held. Elevated M2.2's published-asset audit and M8.4's workflow controls before further provider work because `data-latest` lists ratings/graph/model assets and `ml-retrain.yml` schedules training from them.
+
+**Single next task:** M2.2 — inspect existing public release and deployed graph payloads, then propose the smallest item-level public allowlist without deleting or republishing assets.
+
+## Session 2026-09-24 — M2.2
+
+**Branch / starting commit:** Continued on `codex/provider-permissions` from the M2.1 documentation change; no production asset was modified.
+
+**Completed:** M2.2. The [read-only public artifact audit](audits/public-artifacts-2026-09-24.md) verified `data-latest` release sizes and SHA-256 checksums against its manifest, parsed all three release formats in a temporary directory, and compared the deployed full and explorer graphs. The ratings export has 200 stable pseudonymous user IDs and 48,558 rating tuples; the release and deployed full graph have the same 200 IDs and 48,558 user-anime edges. An in-memory `(user, anime)` comparison found zero pair differences and zero normalized-weight differences over `0.0001`. The explorer sample still has 168 user IDs and 2,500 user edges. The deployed ratings path returned 404, but the public release asset remains available. A minimum item-level allowlist is proposed, with provider and privacy approval prerequisites.
+
+**Verification commands and actual results:** `gh release view data-latest --json assets` listed five release assets. `gh release download data-latest --pattern '*.gz'` plus the manifest/checksums saved read-only copies outside the repository. Local Python `gzip`/`json`/`hashlib` checks: all three manifest sizes and SHA-256 values matched; graph/rating user-ID sets and 48,558 `(user, anime)` relationships matched exactly; all graph user indexes were valid. `gh api repos/OptimumAF/WhatAnimeShouldIWatch/pages` identified the site; `curl` found full graph HTTP 200, explorer graph HTTP 200, web ratings HTTP 404. The site's decompressed full graph matched the release's JSON bytes. Only counts, keys, schema shapes, and hashes were printed.
+
+**Files changed:** `docs/audits/public-artifacts-2026-09-24.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md` (plus the M2.1 files in this branch).
+
+**Checks not run / blockers:** No reidentification attempt, real username lookup, provider request, new crawl, model training, release publication, deployment, or deletion. This audit does not clear the source rights or decide the remedy for existing public copies. The item-only replacement needs permitted catalog data, graph disclosure thresholds, model provenance/evaluation, and owner approval. The scheduled retrain and publication/deploy workflows still require containment.
+
+**Plan revisions and reasons:** Checked M2.2 after inspecting actual public payloads and proposing an allowlist. Added M2.9 for the immediate approval gate on existing provider-derived jobs; M8.4 retains broader model promotion. Neither the existing release nor Pages site was changed.
+
+**Single next task:** M2.9 — gate the scheduled retrain and provider-derived release/deploy paths, verifying blocked and explicitly enabled workflow conditions without running provider or publication jobs.
