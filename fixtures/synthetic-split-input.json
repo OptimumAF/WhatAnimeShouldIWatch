@@ -1,0 +1,20 @@
+{
+  "format": "raw-interactions-v1",
+  "timestampBasis": "none",
+  "interactions": [
+    { "userId": "invented-a", "animeId": 101, "rawScore": 9 },
+    { "userId": "invented-b", "animeId": 101, "rawScore": 4 },
+    { "userId": "invented-a", "animeId": 102, "rawScore": 8 },
+    { "userId": "invented-c", "animeId": 103, "rawScore": 7 },
+    { "userId": "invented-a", "animeId": 103, "rawScore": 3 },
+    { "userId": "invented-b", "animeId": 102, "rawScore": 9 },
+    { "userId": "invented-a", "animeId": 104, "rawScore": 6 },
+    { "userId": "invented-sparse", "animeId": 109, "rawScore": 10 },
+    { "userId": "invented-b", "animeId": 106, "rawScore": 7 },
+    { "userId": "invented-c", "animeId": 105, "rawScore": 8 },
+    { "userId": "invented-a", "animeId": 105, "rawScore": 10 },
+    { "userId": "invented-b", "animeId": 107, "rawScore": 5 },
+    { "userId": "invented-c", "animeId": 108, "rawScore": 2 },
+    { "userId": "invented-a", "animeId": 101, "rawScore": 9 }
+  ]
+}

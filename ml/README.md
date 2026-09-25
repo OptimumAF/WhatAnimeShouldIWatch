@@ -7,6 +7,19 @@ This folder trains a recommendation model from:
 
 The model is matrix factorization with an extra graph regularization term on anime embeddings.
 
+## Evaluation status
+
+The training, Optuna, and LightGCN commands below are retained for existing research workflows. They currently load already normalized ratings and a graph built from the full ratings snapshot before splitting, so their reported metrics are **not** valid M5 release evidence. Provider-derived training and publication remain held by [decision 0001](../docs/decisions/0001-provider-data-permissions.md).
+
+M5.1's restricted raw split manifest is reproducible with invented data:
+
+```bash
+npm run split:fixture:check
+python ml/raw_interaction_split.py --input fixtures/synthetic-split-input.json --out data/synthetic-split-local.json
+```
+
+The second command creates a new ignored local file and refuses an existing path. The manifest contains hashed interaction IDs, not scores or plain user IDs; it is still restricted data if generated from a real snapshot. `partition_snapshot` validates the exact manifest and returns unnormalized train/validation/test rows for M5.2. Present exports lack verified rating/viewing event times, so their policy is a seeded per-user holdout. See [decision 0014](../docs/decisions/0014-raw-interaction-splits.md) for format, duplicate, timestamp, and leakage limits.
+
 ## Install
 
 ```bash
