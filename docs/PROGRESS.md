@@ -51,6 +51,8 @@
 
 **Files changed:** `.github/workflows/ci.yml`, `README.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`, `web/playwright.config.ts`, `web/src/main.ts`, `web/src/style.css`, `web/tests/mal-import.spec.ts`.
 
+**Commit / PR and CI:** Implementation commit `7f7b501` in draft [PR #2](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/2), stacked on draft PR #1. [Fixture and fast checks run 36089266868](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36089266868) passed on the PR, including fixture generation, both workspace typechecks, pipeline/Python tests, build, and browser tests; GitGuardian also passed.
+
 **Checks not run / blockers:** No live MAL or AniList username was used; browser provider responses were mocked. No production dataset, crawl, release, deploy, or public artifact change. M2.1 still needs a provider-by-provider permissions review, especially AniList's restriction on competing list/tracker services; M2.8 still needs supported export formats, complete status/progress/score retention, unmapped-entry handling, and preview/merge semantics. M2 milestone exit gate is not met.
 
 **Plan revisions and reasons:** M2.3 is checked because the recommended import route is now an explicit local file and the silent proxy path is removed and tested. The file parser deliberately reuses the existing one-line bulk format; it is not claimed to parse Crunchyroll or MAL exports. PR CI now includes `codex/**` base branches so this isolated slice can be checked while stacked on the M0 branch. The AniList route remains existing optional functionality, with product-use permission pending M2.1.
