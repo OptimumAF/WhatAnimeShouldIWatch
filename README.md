@@ -140,19 +140,22 @@ Outputs:
 - `data/graph.compact.json` (compact)
 - `data/anonymized-ratings.json` (legacy, unless `--compact-only`)
 - `data/graph.json` (legacy, unless `--compact-only`)
+- `data/graph.json.report.json` (build selection/coverage/resource report; compact-only uses `data/graph.compact.json.report.json`)
 
 Note:
 - JSON exports are minified by default to reduce disk size.
 - Use `--pretty-json` if you need human-readable formatting.
 - Use `--compact-only` to write only compact files.
 - `--max-anime-anime-edges` limits the selected output to 2,000,000 pairs by default (`0` means no output cap). Exact candidates are ranked by co-rater support, absolute pair mean, then numeric IDs; `--max-neighbors-per-anime` optionally limits selected degree (`0` by default).
-- Separate fail-closed input limits are `--max-pair-visits 20000000` and `--max-pair-candidates 2500000`. If either is exceeded, graph building fails before writing new artifacts instead of returning a biased partial graph. `--min-pair-support` defaults to 1. The CLI reports visits, candidate keys, support/neighbor/output exclusions, and ratings omitted by the legacy per-user cap.
+- Separate fail-closed input limits are `--max-pair-visits 20000000` and `--max-pair-candidates 2500000`. If either is exceeded, graph building fails before writing new artifacts instead of returning a biased partial graph. `--min-pair-support` defaults to 1.
+- `--max-ratings-per-user N` (default `0`, unlimited) selects up to N ratings per user by the smallest SHA-256 ranks using `--pair-selection-seed` (default `0`). The same subset supplies user-anime and anime-anime graph edges; the ratings dataset export remains complete. `--out-report` overrides the build report path. The report records the seed, policy, skipped ratings and pair observations, retained anime/ratings/observation fractions, output truncation, elapsed build time, and peak process RSS. Exact candidate-pair recall is unknown for an ordinary capped build; the report records `null` for it.
+- Run `npm run benchmark:pair-cap` for a reproducible, invented-data comparison of exact and capped pair coverage, runtime, and peak RSS in separate processes. No provider or production data is read.
 
 Graph rules implemented:
 
 - User node and anime node for each entity.
 - `user -> anime` edge weight = normalized score (`raw - user_avg`).
-- For each user, every rated anime pair gets an `anime <-> anime` edge with pair score:
+- For each user, every selected rated anime pair gets an `anime <-> anime` edge with pair score:
   `(anime_a_normalized + anime_b_normalized) / 2`
 - For each anime pair, keep a sum and observation count. The edge weight is the
   arithmetic mean of its users' pair scores; `support` is the observation count.
@@ -161,10 +164,11 @@ Graph rules implemented:
 
 This is a corrected compatibility statistic, not a correlation or a validated
 similarity measure. The output cap now selects deterministically from exact
-candidate statistics within its independent input budgets. The per-user rating
-cap still takes the first N ratings; M3.6 must replace that policy and measure
-approximation, runtime, memory, and coverage. Do not treat per-user-capped graph
-output as input-order independent yet. [Decision 0005](docs/decisions/0005-graph-edge-semantics.md)
+candidate statistics within its independent input budgets. A per-user cap now
+uses a recorded seed and an input-order independent hash sample, documented in
+[decision 0008](docs/decisions/0008-seeded-per-user-selection.md). Sampling
+changes support and pair weights relative to the full input; the report's
+coverage counts do not establish recommendation quality. [Decision 0005](docs/decisions/0005-graph-edge-semantics.md)
 compares this pair preference with a support-shrunk, user-centered item cosine
 on an invented fixture (`node --import tsx --test pipeline/test/edge-semantics.benchmark.test.ts`).
 The proposed similarity is not wired into v1 exports, browser ranking, or training.

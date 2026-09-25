@@ -26,6 +26,7 @@ export interface GraphData {
   nodeCount: number;
   edgeCount: number;
   nodes: GraphNode[];
+  /** User-anime and anime-anime edges may both use the graph builder's selected rating subset. */
   edges: GraphEdge[];
 }
 
@@ -43,6 +44,7 @@ export interface CompactGraphData {
   generatedAt: string;
   userIds: string[];
   anime: CompactAnimeEntry[];
+  /** Can be a seeded per-user subset of the separate full ratings dataset. */
   ua: CompactUserAnimeEdge[];
   aa: CompactAnimeAnimeEdge[];
   userCount: number;

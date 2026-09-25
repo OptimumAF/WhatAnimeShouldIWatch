@@ -74,10 +74,11 @@ test("network explorer distinguishes signed v1 pair preference without calling i
   await expect(page.locator("#network-edge-legend")).not.toContainText("similarity");
 });
 
-test("a valid selected-pair graph still loads recommendations and the network", async ({ page }) => {
+test("a valid selected-rating and selected-pair graph still loads recommendations and the network", async ({ page }) => {
   await page.route("**/demo-data/graph.compact.json", async (route) => {
     const response = await route.fetch();
     const graph = await response.json();
+    graph.ua = graph.ua.slice(0, -1);
     graph.aa = [graph.aa[0]];
     graph.edgeCount = graph.ua.length + graph.aa.length;
     await route.fulfill({ response, json: graph });

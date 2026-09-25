@@ -12,6 +12,7 @@
     "expand:100x": "npm run expand:100x --workspace pipeline --",
     "build:graph": "npm run build:graph --workspace pipeline --",
     "build:graph:compact": "npm run build:graph --workspace pipeline -- --compact-only",
+    "benchmark:pair-cap": "npm run benchmark:pair-cap --workspace pipeline",
     "data:fetch:release": "npm run fetch:release --workspace pipeline --",
     "data:publish:release": "npm run publish:release --workspace pipeline --",
     "sync:web": "npm run sync:web --workspace pipeline",

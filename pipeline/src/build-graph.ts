@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { Command } from "commander";
 import { loadDatasetFromDb, openDatabase } from "./db.js";
 import { getRepoRoot } from "./paths.js";
@@ -7,6 +8,8 @@ import {
   aggregateAnimePairs,
   DEFAULT_MAX_CANDIDATE_PAIRS,
   DEFAULT_MAX_PAIR_VISITS,
+  DEFAULT_PAIR_SELECTION_SEED,
+  PAIR_CAP_POLICY,
   type PairSelectionOptions,
   type PairSelectionStats,
 } from "./core/pair-aggregation.js";
@@ -24,7 +27,9 @@ interface BuildGraphOptions {
   outGraph?: string;
   outDatasetCompact?: string;
   outGraphCompact?: string;
+  outReport?: string;
   maxRatingsPerUser?: string;
+  pairSelectionSeed?: string;
   maxAnimeAnimeEdges?: string;
   maxPairVisits?: string;
   maxPairCandidates?: string;
@@ -58,10 +63,12 @@ const program = new Command()
     "--out-graph-compact <path>",
     "Output path for compact graph JSON",
   )
+  .option("--out-report <path>", "Output path for the graph build report JSON")
   .option(
     "--max-ratings-per-user <count>",
-    "Optional per-user cap for graph generation only (0 = unlimited)",
+    "Optional seeded per-user rating cap for graph generation only (0 = unlimited)",
   )
+  .option("--pair-selection-seed <uint32>", "Stable seed for per-user rating selection")
   .option(
     "--max-anime-anime-edges <count>",
     "Maximum selected anime-anime edges after exact pair aggregation (0 = unlimited)",
@@ -137,6 +144,10 @@ const maxRatingsPerUser = parseCount(
     "0",
   "max ratings per user",
 );
+const pairSelectionSeed = parseCount(
+  options.pairSelectionSeed ?? process.env.GRAPH_PAIR_SELECTION_SEED ?? String(DEFAULT_PAIR_SELECTION_SEED),
+  "pair selection seed", 0, 0xffffffff,
+);
 const maxAnimeAnimeEdges = parseCount(
   options.maxAnimeAnimeEdges ??
     process.env.GRAPH_MAX_ANIME_ANIME_EDGES ??
@@ -165,7 +176,20 @@ const writeCompact =
   options.compact !== false && !isTruthy(process.env.GRAPH_DISABLE_COMPACT);
 const writeLegacy =
   options.compactOnly !== true && !isTruthy(process.env.GRAPH_COMPACT_ONLY);
+if (!writeLegacy && !writeCompact) {
+  throw new Error("At least one graph output format must be enabled.");
+}
+const outReportPath = path.resolve(
+  repoRoot,
+  options.outReport ?? process.env.GRAPH_REPORT_OUT ??
+    `${writeLegacy ? outGraphPath : outGraphCompactPath}.report.json`,
+);
+if ([dbPath, outDatasetPath, outGraphPath, outDatasetCompactPath, outGraphCompactPath]
+    .some((filePath) => filePath.toLowerCase() === outReportPath.toLowerCase())) {
+  throw new Error("The graph build report path must be distinct from the database and graph artifacts.");
+}
 
+const startedAt = performance.now();
 const db = openDatabase(dbPath);
 try {
   const dataset = loadDatasetFromDb(db);
@@ -188,6 +212,7 @@ try {
       maxCandidatePairs: maxPairCandidates,
       minSupport: minPairSupport,
       maxNeighborsPerAnime,
+      selectionSeed: pairSelectionSeed,
     },
   );
   const graph = graphResult.graph;
@@ -225,12 +250,66 @@ try {
     `Graph stats: ${graph.userCount} users, ${graph.animeCount} anime, ${graph.edgeCount} edges\n`,
   );
   const pairStats = graphResult.pairStats;
+  const maxRssKiB = process.resourceUsage().maxRSS;
+  const peakRssBytes = maxRssKiB > 0 ? maxRssKiB * 1024 : process.memoryUsage().rss;
+  const report = {
+    format: "graph-build-report-v1",
+    selection: {
+      policy: maxRatingsPerUser > 0 ? PAIR_CAP_POLICY : "all-ratings",
+      seed: pairSelectionSeed,
+      maxRatingsPerUser,
+      maxAnimeAnimeEdges,
+      maxPairVisits,
+      maxPairCandidates,
+      minPairSupport,
+      maxNeighborsPerAnime,
+    },
+    coverage: {
+      approximationLevel: pairStats.ratingsSkippedByUserCap > 0 ? "seeded-per-user-subset" : "exact-input",
+      inputUsers: pairStats.inputUsers,
+      usersCapped: pairStats.usersCapped,
+      inputRatings: pairStats.inputRatings,
+      selectedRatings: pairStats.selectedRatings,
+      ratingsSkipped: pairStats.ratingsSkippedByUserCap,
+      ratingsRetainedFraction: fraction(pairStats.selectedRatings, pairStats.inputRatings),
+      potentialPairVisits: pairStats.potentialPairVisits,
+      pairVisits: pairStats.pairVisits,
+      pairVisitsSkipped: pairStats.pairVisitsSkippedByUserCap,
+      pairVisitsRetainedFraction: fraction(pairStats.pairVisits, pairStats.potentialPairVisits),
+      inputAnimeCount: pairStats.inputAnimeCount,
+      selectedAnimeCount: pairStats.selectedAnimeCount,
+      animeRetainedFraction: fraction(pairStats.selectedAnimeCount, pairStats.inputAnimeCount),
+      candidatePairs: pairStats.candidatePairs,
+      eligiblePairs: pairStats.eligiblePairs,
+      selectedPairs: pairStats.selectedPairs,
+      excludedBySupport: pairStats.excludedBySupport,
+      excludedByNeighborLimit: pairStats.excludedByNeighborLimit,
+      excludedByOutputLimit: pairStats.excludedByOutputLimit,
+      outputTruncated: pairStats.selectedPairs !== pairStats.candidatePairs,
+      pairKeyRecall: pairStats.ratingsSkippedByUserCap > 0 ? null : 1,
+    },
+    measurement: {
+      elapsedMs: Number((performance.now() - startedAt).toFixed(3)),
+      peakRssBytes,
+      peakRssSource: maxRssKiB > 0 ? "process.resourceUsage.maxRSS" : "process.memoryUsage.rss-snapshot",
+    },
+  };
+  fs.mkdirSync(path.dirname(outReportPath), { recursive: true });
+  fs.writeFileSync(outReportPath, JSON.stringify(report, null, prettyJson ? 2 : 0));
+  process.stdout.write(`Graph build report written: ${outReportPath}\n`);
   process.stdout.write(
     `Pair selection: ${pairStats.pairVisits} visits, ${pairStats.candidatePairs} candidate keys, ` +
     `${pairStats.eligiblePairs} with support >= ${minPairSupport}, ${pairStats.selectedPairs} retained; ` +
     `${pairStats.excludedBySupport} below support, ${pairStats.excludedByNeighborLimit} neighbor-limited, ` +
-    `${pairStats.excludedByOutputLimit} output-limited, ${pairStats.ratingsSkippedByUserCap} ratings skipped by the legacy per-user cap.\n`,
+    `${pairStats.excludedByOutputLimit} output-limited.\n`,
   );
+  process.stdout.write(
+    `Per-user selection: ${report.selection.policy}, seed=${pairSelectionSeed}, cap=${maxRatingsPerUser || "unlimited"}; ` +
+    `${pairStats.ratingsSkippedByUserCap}/${pairStats.inputRatings} ratings and ` +
+    `${pairStats.pairVisitsSkippedByUserCap}/${pairStats.potentialPairVisits} pair visits skipped; ` +
+    `${pairStats.selectedAnimeCount}/${pairStats.inputAnimeCount} anime covered.\n`,
+  );
+  process.stdout.write(`Build measurement: ${report.measurement.elapsedMs} ms, peak RSS ${peakRssBytes} bytes (${report.measurement.peakRssSource}).\n`);
   process.stdout.write(
     `Pair budgets: visits=${maxPairVisits}, candidate keys=${maxPairCandidates}, ` +
     `output edges=${maxAnimeAnimeEdges || "unlimited"}, neighbors/anime=${maxNeighborsPerAnime || "unlimited"}.\n`,
@@ -260,7 +339,8 @@ function createGraph(
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
 
-  for (const user of dataset.users) {
+  const pairResult = aggregateAnimePairs(dataset.users, maxRatingsPerUser, maxAnimeAnimeEdges, pairOptions);
+  for (const user of pairResult.selectedUsers) {
     const userNodeId = `user:${user.userId}`;
     nodes.set(userNodeId, {
       id: userNodeId,
@@ -268,12 +348,7 @@ function createGraph(
       nodeType: "user",
     });
 
-    const userRatings =
-      maxRatingsPerUser > 0
-        ? user.ratings.slice(0, maxRatingsPerUser)
-        : user.ratings;
-
-    for (const rating of userRatings) {
+    for (const rating of [...user.ratings].sort((a, b) => a.animeId - b.animeId)) {
       const animeNodeId = `anime:${rating.animeId}`;
       if (!nodes.has(animeNodeId)) {
         nodes.set(animeNodeId, {
@@ -293,7 +368,6 @@ function createGraph(
     }
   }
 
-  const pairResult = aggregateAnimePairs(dataset.users, maxRatingsPerUser, maxAnimeAnimeEdges, pairOptions);
   for (const [pair, aggregate] of pairResult.pairs.entries()) {
     const [low, high] = pair.split(":");
     edges.push({
@@ -324,16 +398,22 @@ function createGraph(
   };
 }
 
-function parseCount(raw: string, label: string, minimum = 0): number {
+function parseCount(raw: string, label: string, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number {
   const trimmed = raw.trim();
+  const requirement = maximum === 0xffffffff ? "an unsigned 32-bit integer" :
+    `a ${minimum === 0 ? "nonnegative" : "positive"} safe integer`;
   if (!/^(0|[1-9]\d*)$/.test(trimmed)) {
-    throw new Error(`Invalid ${label}: expected a ${minimum === 0 ? "nonnegative" : "positive"} safe integer.`);
+    throw new Error(`Invalid ${label}: expected ${requirement}.`);
   }
   const value = Number(trimmed);
-  if (!Number.isSafeInteger(value) || value < minimum) {
-    throw new Error(`Invalid ${label}: expected a ${minimum === 0 ? "nonnegative" : "positive"} safe integer.`);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`Invalid ${label}: expected ${requirement}.`);
   }
   return value;
+}
+
+function fraction(numerator: number, denominator: number): number {
+  return denominator === 0 ? 1 : numerator / denominator;
 }
 
 function roundWeight(value: number): number {
