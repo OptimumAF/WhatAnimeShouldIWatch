@@ -29,7 +29,8 @@ test("three pair observations use their arithmetic mean regardless of user and r
   for (const users of variants) {
     const result = aggregateAnimePairs(users, 0, 0);
     assert.deepEqual(result.pairs.get("1:2"), { weight: 3, support: 3 });
-    assert.equal(result.skippedNewPairs, 0);
+    assert.equal(result.stats.pairVisits, 3);
+    assert.equal(result.stats.candidatePairs, 1);
   }
 });
 

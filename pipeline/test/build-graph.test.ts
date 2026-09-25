@@ -54,3 +54,76 @@ test("the graph CLI exports the three-user mean and true pair support in both fo
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the graph CLI selects the later supported pair and fails before output on input-budget exhaustion", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "anime-graph-bounded-test-"));
+  try {
+    const dbPath = path.join(dir, "fixture.sqlite");
+    const db = openDatabase(dbPath);
+    try {
+      for (const animeId of [1, 2, 3, 4, 5, 6]) {
+        upsertAnime(db, animeId, `Invented ${animeId}`);
+      }
+      const rows = [
+        ["u-a", [[1, 6], [2, 4]]],
+        ["u-b", [[3, 7], [4, 3]]],
+        ["u-c", [[3, 7], [4, 7], [5, 1]]],
+        ["u-d", [[3, 6], [4, 6], [6, 3]]],
+      ] as const;
+      for (const [userId, ratings] of rows) {
+        upsertUser(db, userId);
+        for (const [animeId, rawScore] of ratings) {
+          upsertRating(db, userId, animeId, rawScore);
+        }
+      }
+    } finally {
+      db.close();
+    }
+
+    function runGraph(name: string, budgetFlag: string, budgetValue: string) {
+      const graphPath = path.join(dir, `${name}.json`);
+      const compactPath = path.join(dir, `${name}.compact.json`);
+      const command = spawnSync(process.execPath, [
+        "--import", "tsx", "src/build-graph.ts",
+        "--db", dbPath,
+        "--out-dataset", path.join(dir, `${name}.ratings.json`),
+        "--out-graph", graphPath,
+        "--out-dataset-compact", path.join(dir, `${name}.ratings.compact.json`),
+        "--out-graph-compact", compactPath,
+        "--max-anime-anime-edges", "1",
+        "--max-pair-visits", "8",
+        "--max-pair-candidates", "6",
+        budgetFlag, budgetValue,
+      ], { cwd: path.resolve("."), encoding: "utf8" });
+      return { command, graphPath, compactPath };
+    }
+
+    const selected = runGraph("selected", "--min-pair-support", "1");
+    assert.equal(selected.command.status, 0, `${selected.command.stdout}\n${selected.command.stderr}`);
+    assert.match(selected.command.stdout, /8 visits, 6 candidate keys/);
+    assert.match(selected.command.stdout, /5 output-limited/);
+    const graph = JSON.parse(fs.readFileSync(selected.graphPath, "utf8")) as GraphData;
+    assert.deepEqual(graph.edges.filter((edge) => edge.edgeType === "anime-anime"), [
+      { id: "aa:3:4", source: "anime:3", target: "anime:4", edgeType: "anime-anime", weight: 1, support: 3 },
+    ]);
+    const compact = JSON.parse(fs.readFileSync(selected.compactPath, "utf8")) as CompactGraphData;
+    assert.deepEqual(compact.aa, [[2, 3, 1, 3]]);
+
+    const visits = runGraph("visits-blocked", "--max-pair-visits", "7");
+    assert.notEqual(visits.command.status, 0);
+    assert.match(visits.command.stderr, /Pair-visit budget exceeded/);
+    assert.equal(fs.existsSync(visits.graphPath), false);
+    assert.equal(fs.existsSync(visits.compactPath), false);
+    const candidates = runGraph("candidates-blocked", "--max-pair-candidates", "5");
+    assert.notEqual(candidates.command.status, 0);
+    assert.match(candidates.command.stderr, /Candidate-key budget exceeded/);
+    assert.equal(fs.existsSync(candidates.graphPath), false);
+    assert.equal(fs.existsSync(candidates.compactPath), false);
+    const malformed = runGraph("malformed-budget", "--max-pair-visits", "8suffix");
+    assert.notEqual(malformed.command.status, 0);
+    assert.match(malformed.command.stderr, /Invalid max pair visits/);
+    assert.equal(fs.existsSync(malformed.graphPath), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
