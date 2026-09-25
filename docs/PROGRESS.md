@@ -283,7 +283,7 @@
 
 **Files changed:** `pipeline/src/migrations.ts`, `pipeline/src/db.ts`, `pipeline/src/collection.ts`, `pipeline/test/migrations.test.ts`, `pipeline/test/collection.test.ts`, `docs/decisions/0004-collection-provenance.md`, `README.md`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, and `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Pending implementation commit, draft PR, and fresh-checkout CI. Update this entry with the actual commit, PR, and run result before handoff.
+**Commit / PR and CI:** Implementation commit `d050981` (`Version collection schema and record source provenance`); stacked draft [PR #14](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/14) on `codex/resumable-collection`. Its fresh-checkout [fixture CI run 36104137643](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36104137643) passed all jobs on `d050981`, including browser smoke tests; GitGuardian Security Checks passed. The final documentation-only head will be rechecked before handoff.
 
 **Checks not run / blockers:** No live provider request, real username/history transfer, crawler execution, production DB migration, data/model regeneration, release publication, or deployment. No provider-documented per-entry update time is wired from the existing site route, so the current adapter deliberately leaves `provider_updated_at` null; the typed verified-page path is tested only with synthetic data. No production-size migration timing or third-party schema compatibility was claimed. M2.7 publication is blocked by provider source/use permissions and existing public-asset remedies; M2.8 and the M2 exit gate remain open.
 
