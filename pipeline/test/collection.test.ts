@@ -7,9 +7,11 @@ import type Database from "better-sqlite3";
 import { ProviderScheduler } from "../../shared/provider-scheduler.js";
 import {
   collectUserSnapshot, getCollectionStatus, MAL_PAGE_SIZE,
+  MAL_SOURCE_PROVIDER, MAL_SOURCE_ROUTE,
 } from "../src/collection.js";
-import { openDatabase, upsertAnime, upsertRating, upsertUser } from "../src/db.js";
+import { loadDatasetFromDb, openDatabase, upsertAnime, upsertRating, upsertUser } from "../src/db.js";
 import { fetchMalPage, MalPageHttpError } from "../src/mal.js";
+import { NORMALIZED_FIELD_VERSION } from "../src/migrations.js";
 
 const userId = "aaaaaaaaaaaaaaaaaaaaaaaa";
 type Entry = { anime_id: number; anime_title: string; score: number };
@@ -122,6 +124,9 @@ test("a failed or canceled later page preserves committed ratings and its resuma
     });
     assert.equal(complete.outcome, "complete");
     assert.equal(rows(db).length, 301);
+    assert.deepEqual(db.prepare("SELECT state FROM import_runs ORDER BY rowid").all(), [
+      { state: "failed" }, { state: "canceled" }, { state: "complete" },
+    ]);
   } finally {
     db.close();
   }
@@ -162,6 +167,8 @@ test("empty, private, and malformed pages cannot erase the last complete ratings
       assert.ok(["unavailable", "invalid"].includes(result.outcome));
       assert.deepEqual(rows(db), before);
       assert.equal(getCollectionStatus(db, userId)?.nextOffset, 0);
+      assert.deepEqual(db.prepare("SELECT state FROM import_runs ORDER BY rowid DESC LIMIT 1").get(),
+        { state: result.outcome });
     }
 
     const exactMultiple = await collectUserSnapshot(db, userId,
@@ -254,6 +261,9 @@ test("a database error during replacement rolls back deletions and the new page"
     const retry = await collectUserSnapshot(db, userId, async () => [entry(999, 9)]);
     assert.equal(retry.outcome, "complete");
     assert.deepEqual(rows(db).map((row) => row.animeId), [999]);
+    assert.deepEqual(db.prepare("SELECT state FROM import_runs ORDER BY rowid").all(), [
+      { state: "interrupted" }, { state: "complete" },
+    ]);
   } finally {
     db.close();
   }
@@ -280,6 +290,171 @@ test("the collector and MAL adapter share a mocked scheduled page request", asyn
     assert.equal(requested.length, 1);
     assert.equal(new URL(requested[0]).searchParams.get("offset"), "0");
     assert.deepEqual(rows(db).map((row) => row.animeId), [123]);
+  } finally {
+    db.close();
+  }
+});
+
+test("new ratings retain provider IDs, fetch time, normalization version, and a completed import run", async () => {
+  const db = openDatabase(":memory:");
+  const fetchedAt = "2026-09-24T12:00:00.000Z";
+  try {
+    const result = await collectUserSnapshot(db, userId,
+      async () => [{ ...entry(123, 9), updated_at: "2025-01-01T01:00:00Z" }],
+      { now: () => fetchedAt });
+    assert.equal(result.outcome, "complete");
+    const rating = db.prepare(`SELECT source_provider AS provider,
+      source_route AS route, source_anime_id AS sourceId,
+      fetched_at AS fetchedAt, provider_updated_at AS providerUpdatedAt,
+      normalized_field_version AS normalizedVersion, fetch_run_id AS fetchRunId
+      FROM ratings WHERE user_id = ? AND anime_id = 123`).get(userId) as Record<string, unknown>;
+    assert.equal(rating.provider, MAL_SOURCE_PROVIDER);
+    assert.equal(rating.route, MAL_SOURCE_ROUTE);
+    assert.equal(rating.sourceId, "123");
+    assert.equal(rating.fetchedAt, fetchedAt);
+    assert.equal(rating.providerUpdatedAt, null);
+    assert.equal(rating.normalizedVersion, NORMALIZED_FIELD_VERSION);
+    assert.equal(typeof rating.fetchRunId, "string");
+
+    const run = db.prepare(`SELECT id, source_provider AS provider,
+      source_route AS route, started_at AS startedAt, finished_at AS finishedAt,
+      state, start_offset AS startOffset, end_offset AS endOffset,
+      pages_fetched AS pagesFetched, entries_fetched AS entriesFetched
+      FROM import_runs`).get() as Record<string, unknown>;
+    assert.deepEqual(run, {
+      id: rating.fetchRunId, provider: MAL_SOURCE_PROVIDER, route: MAL_SOURCE_ROUTE,
+      startedAt: fetchedAt, finishedAt: fetchedAt, state: "complete",
+      startOffset: 0, endOffset: 1, pagesFetched: 1, entriesFetched: 1,
+    });
+    assert.deepEqual(db.prepare(`SELECT anime_id AS animeId,
+      source_provider AS provider, source_id AS sourceId,
+      first_fetched_at AS firstFetchedAt, last_fetched_at AS lastFetchedAt
+      FROM provider_anime_ids`).get(), {
+      animeId: 123, provider: MAL_SOURCE_PROVIDER, sourceId: "123",
+      firstFetchedAt: fetchedAt, lastFetchedAt: fetchedAt,
+    });
+    assert.equal(loadDatasetFromDb(db).source, MAL_SOURCE_ROUTE);
+    await collectUserSnapshot(db, userId, async () => [entry(123, 8)], {
+      now: () => "2026-09-25T12:00:00.000Z",
+    });
+    assert.deepEqual(db.prepare(`SELECT first_fetched_at AS firstFetchedAt,
+      last_fetched_at AS lastFetchedAt FROM provider_anime_ids
+      WHERE source_provider = 'mal' AND source_id = '123'`).get(), {
+      firstFetchedAt: fetchedAt, lastFetchedAt: "2026-09-25T12:00:00.000Z",
+    });
+    assert.deepEqual(db.prepare(`SELECT fetched_at AS fetchedAt,
+      normalized_field_version AS version FROM ratings WHERE user_id = ?`
+    ).get(userId), {
+      fetchedAt: "2026-09-25T12:00:00.000Z", version: NORMALIZED_FIELD_VERSION,
+    });
+    await collectUserSnapshot(db, userId, async () => [entry(123, 8)], {
+      now: () => "2026-09-23T12:00:00.000Z",
+    });
+    assert.deepEqual(db.prepare(`SELECT first_fetched_at AS firstFetchedAt,
+      last_fetched_at AS lastFetchedAt FROM provider_anime_ids
+      WHERE source_provider = 'mal' AND source_id = '123'`).get(), {
+      firstFetchedAt: "2026-09-23T12:00:00.000Z",
+      lastFetchedAt: "2026-09-25T12:00:00.000Z",
+    });
+    upsertRating(db, userId, 123, 7);
+    assert.deepEqual(db.prepare(`SELECT raw_score AS rawScore,
+      normalized_score AS normalizedScore, normalized_field_version AS version,
+      source_provider AS provider, fetched_at AS fetchedAt,
+      provider_updated_at AS providerUpdatedAt, fetch_run_id AS fetchRunId
+      FROM ratings WHERE user_id = ? AND anime_id = 123`).get(userId), {
+      rawScore: 7, normalizedScore: 0, version: 0, provider: null,
+      fetchedAt: null, providerUpdatedAt: null, fetchRunId: null,
+    });
+    assert.equal(loadDatasetFromDb(db).source, "mixed-or-unverified");
+  } finally {
+    db.close();
+  }
+});
+
+test("provider update time is stored only from an explicit verified map", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const result = await collectUserSnapshot(db, userId, async () => ({
+      entries: [entry(124, 8)],
+      providerUpdatedAtByAnimeId: new Map([[124, "2026-09-23T11:00:00+01:00"]]),
+    }), { now: () => "2026-09-24T12:00:00.000Z" });
+    assert.equal(result.outcome, "complete");
+    const row = db.prepare(`SELECT fetched_at AS fetchedAt,
+      provider_updated_at AS providerUpdatedAt FROM ratings WHERE user_id = ?`
+    ).get(userId) as Record<string, unknown>;
+    assert.deepEqual(row, {
+      fetchedAt: "2026-09-24T12:00:00.000Z",
+      providerUpdatedAt: "2026-09-23T10:00:00.000Z",
+    });
+
+    const invalid = await collectUserSnapshot(db, userId, async () => ({
+      entries: [entry(125, 7)],
+      providerUpdatedAtByAnimeId: new Map([[999, "2026-09-23T00:00:00Z"]]),
+    }));
+    assert.equal(invalid.outcome, "invalid");
+    const dateOnly = await collectUserSnapshot(db, userId, async () => ({
+      entries: [entry(125, 7)],
+      providerUpdatedAtByAnimeId: new Map([[125, "2026-09-23"]]),
+    }));
+    assert.equal(dateOnly.outcome, "invalid");
+    assert.deepEqual(rows(db).map((item) => item.animeId), [124]);
+  } finally {
+    db.close();
+  }
+});
+
+test("a resumed snapshot retains the fetch run and fetch time for each page", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const first = await collectUserSnapshot(db, userId, async () => fullPage(), {
+      maxPages: 1, now: () => "2026-09-24T12:00:00.000Z",
+    });
+    assert.equal(first.outcome, "paused");
+    const second = await collectUserSnapshot(db, userId,
+      async (offset) => {
+        assert.equal(offset, 300);
+        return [entry(2_000, 9)];
+      }, { now: () => "2026-09-24T13:00:00.000Z" });
+    assert.equal(second.outcome, "complete");
+    const runs = db.prepare(`SELECT id, state, start_offset AS startOffset,
+      end_offset AS endOffset, pages_fetched AS pagesFetched
+      FROM import_runs ORDER BY started_at`).all() as Array<Record<string, unknown>>;
+    assert.equal(runs.length, 2);
+    assert.deepEqual(runs.map(({ state, startOffset, endOffset, pagesFetched }) =>
+      ({ state, startOffset, endOffset, pagesFetched })), [
+      { state: "paused", startOffset: 0, endOffset: 300, pagesFetched: 1 },
+      { state: "complete", startOffset: 300, endOffset: 301, pagesFetched: 1 },
+    ]);
+    const ratings = db.prepare(`SELECT anime_id AS animeId, fetched_at AS fetchedAt,
+      fetch_run_id AS fetchRunId FROM ratings WHERE user_id = ?
+      AND anime_id IN (1000, 2000) ORDER BY anime_id`).all(userId) as Array<Record<string, unknown>>;
+    assert.deepEqual(ratings, [
+      { animeId: 1_000, fetchedAt: "2026-09-24T12:00:00.000Z", fetchRunId: runs[0].id },
+      { animeId: 2_000, fetchedAt: "2026-09-24T13:00:00.000Z", fetchRunId: runs[1].id },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test("a superseded concurrent attempt cannot replace a newer completed snapshot", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    let releaseFirst: ((value: unknown) => void) | undefined;
+    const first = collectUserSnapshot(db, userId,
+      () => new Promise<unknown>((resolve) => { releaseFirst = resolve; }),
+      { now: () => "2026-09-24T12:00:00.000Z" });
+    assert.ok(releaseFirst);
+    const second = await collectUserSnapshot(db, userId,
+      async () => [entry(777, 9)],
+      { now: () => "2026-09-24T13:00:00.000Z" });
+    assert.equal(second.outcome, "complete");
+    releaseFirst([entry(888, 8)]);
+    await assert.rejects(first, /superseded/);
+    assert.deepEqual(rows(db).map((item) => item.animeId), [777]);
+    assert.deepEqual(db.prepare("SELECT state FROM import_runs ORDER BY started_at").all(), [
+      { state: "interrupted" }, { state: "complete" },
+    ]);
   } finally {
     db.close();
   }
