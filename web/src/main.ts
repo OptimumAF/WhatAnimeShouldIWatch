@@ -2630,7 +2630,7 @@ async function updateRecommendations(): Promise<void> {
       recEngineStatusEl.textContent = `Using ML model recommendations (${modelFactors} factors)${modelCoverageNote}.`;
     } else {
       recEngineStatusEl.textContent =
-        `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph)${modelCoverageNote}.`;
+        `Using hybrid recommendations via rank fusion (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph). Rank points are relative, not probabilities${modelCoverageNote}.`;
     }
   }
   function selectContentBaseline(): boolean {
@@ -2809,6 +2809,16 @@ async function updateRecommendations(): Promise<void> {
   }
   updateGenreFilterOptions(structuralCandidates);
   const filteredRecommendations = finalEligibility.recommendations;
+  const effectiveFusion = activeRankingMode === "hybrid" ? filteredRecommendations[0]?.fusion : undefined;
+  if (effectiveFusion &&
+      (effectiveFusion.modelWeight !== modelBlendWeight ||
+       effectiveFusion.graphWeight !== 1 - modelBlendWeight)) {
+    const available = effectiveFusion.modelWeight === 1 ? "model" : "graph";
+    const missing = available === "model" ? "graph" : "model";
+    recEngineStatusEl.textContent = `Using hybrid recommendations via ${available}-only rank fusion ` +
+      `(${missing} has no eligible candidates; full weight goes to ${available}). ` +
+      "Rank points are relative, not probabilities.";
+  }
   if (filteredRecommendations.length === 0) {
     recSummaryEl.textContent = hasActiveRecommendationFilters(recommendationFilters)
       ? "No recommendations match your current metadata filters."
@@ -2830,7 +2840,7 @@ async function updateRecommendations(): Promise<void> {
   const methodLabel = usingFallback ? currentFallbackDisplay() === "related"
     ? "shared-genre content baseline" : "catalog coverage baseline"
     : activeRankingMode === "graph" ? fallbackReason ? "graph edge fallback" : "graph edge ranking"
-      : activeRankingMode === "model" ? "ML model ranking" : "hybrid graph+ML ranking";
+      : activeRankingMode === "model" ? "ML model ranking" : "hybrid graph+ML rank fusion";
   const filterSummary = formatActiveFilterSummary();
   const fallbackScopeNote = usingFallback && currentFallbackDisplay() === "related" && !demoMode
     ? " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles by sampled rating count."
@@ -2992,13 +3002,19 @@ function renderRecommendationCard(
   const score = display === "coverage" ? `${item.supportCount} connections`
     : display === "popularity" ? `${item.supportCount} sampled ratings`
       : display === "quality" ? `${item.score.toFixed(2)} / 10`
-        : display === "related" ? `${item.score.toFixed(2)} overlap` : formatWeight(item.score);
+        : display === "related" ? `${item.score.toFixed(2)} overlap`
+          : item.fusion ? `${item.score.toFixed(2)} rank points` : formatWeight(item.score);
   const supportLine = display === "coverage" ? `Positive graph connections: ${item.supportCount}`
     : display === "popularity" || display === "quality"
       ? `Rating edges in loaded recommendation graph: ${item.supportCount}`
       : display === "related"
         ? `Shared genres: ${related!.sharedGenres.length} across ${related!.supportCount} liked titles`
-        : `Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}`;
+        : item.fusion
+          ? `Graph ${item.fusion.graphWeight === 0 ? "inactive" : item.fusion.graphRank === null
+            ? "no candidate" : `rank #${item.fusion.graphRank}`} | Model ${item.fusion.modelWeight === 0
+            ? "inactive" : item.fusion.modelRank === null ? "no candidate"
+              : `rank #${item.fusion.modelRank}`}`
+          : `Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}`;
 
   return `
       <li class="rec-item">
@@ -4103,6 +4119,9 @@ function formatRecommendationWhyHtml(result: RecommendationResult): string {
   const explanation = explainRecommendation(result);
   if (explanation.kind === "none") {
     return `<div class="rec-why-line">Why: no direct contributing anime found.</div>`;
+  }
+  if (explanation.kind === "fusion") {
+    return `<div class="rec-why-line">${escapeHtml(explanation.line)}</div>`;
   }
 
   return [
