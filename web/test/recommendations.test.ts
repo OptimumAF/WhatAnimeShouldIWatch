@@ -4,10 +4,11 @@ import { test } from "node:test";
 import { parseCompactGraph, parseCompactModel, parseDemoCatalog } from "../src/artifacts.ts";
 import type { AnimeMetadata, GraphData } from "../src/artifacts.ts";
 import type { ModelRecommendationIndex, RecommendationResult } from "../src/domain.ts";
+import { parseTextHistory } from "../src/import-history.ts";
 import {
-  applyRecommendationFilters,
   buildGraphRecommendations,
   buildGraphRecommendationsForPreferences,
+  buildCatalogCoverageRecommendations,
   buildModelRecommendations,
   buildModelRecommendationsForPreferences,
   buildRecommendationIndex,
@@ -15,10 +16,11 @@ import {
   clampModelBlendWeight,
   clampWatchWeight,
   combineHybridRecommendations,
+  createCandidateEligibilityPolicy,
   explainRecommendation,
-  filterCandidateEligibility,
   formatWeight,
   hasActiveRecommendationFilters,
+  rankEligibleCandidates,
 } from "../src/recommendations.ts";
 import type { RecommendationFilters } from "../src/recommendations.ts";
 import { manualPreference } from "../src/preferences.ts";
@@ -164,17 +166,34 @@ test("v1 negative pair preference never seeds or penalizes graph candidates", ()
   ), positiveFirst);
 });
 
-test("candidate and metadata eligibility retain exclusion precedence and missing count", () => {
+test("one eligibility policy enforces catalog, watched, history, exclusion, and allowlist rules", () => {
   const recommendations = buildModelRecommendations(watched, weights, index, modelIndex);
-  const onlyMoonlit = filterCandidateEligibility(
-    recommendations, ["anime:102", "anime:105"], ["anime:105"],
-  );
-  assert.deepEqual(onlyMoonlit.map((item) => item.anime.nodeId), ["anime:102"]);
   const noFilters: RecommendationFilters = { genre: "", minYear: null, maxYear: null, minScore: null };
   assert.equal(hasActiveRecommendationFilters(noFilters), false);
-  assert.equal(applyRecommendationFilters(recommendations, noFilters, new Map()).recommendations,
-    recommendations);
+  assert.equal(hasActiveRecommendationFilters({ ...noFilters, genre: "  " }), false);
+  const base = { index, preferences: [manualPreference("anime:101", "liked")],
+    history: [], includeOnlyNodeIds: ["anime:102", "anime:105"],
+    excludeNodeIds: ["anime:105"], filters: noFilters };
+  const policy = createCandidateEligibilityPolicy(base);
+  const unknown: RecommendationResult = { ...recommendations[0],
+    anime: { nodeId: "anime:999", animeId: 999, label: "Model-only invention" } };
+  const eligible = policy.evaluate([unknown, ...recommendations], new Map());
+  assert.deepEqual(eligible.structurallyEligible.map((item) => item.anime.nodeId), ["anime:102"]);
+  assert.deepEqual(eligible.recommendations.map((item) => item.anime.nodeId), ["anime:102"]);
+  assert.equal(eligible.missingMetadataCount, 0);
+  const history = parseTextHistory("102, 0, Watching, 3").entries;
+  const withSeenHistory = createCandidateEligibilityPolicy({ ...base, history });
+  assert.deepEqual(withSeenHistory.evaluate(recommendations, new Map()).recommendations, []);
+  const withSeenPreference = createCandidateEligibilityPolicy({ ...base,
+    preferences: [...base.preferences, manualPreference("anime:102")] });
+  assert.deepEqual(withSeenPreference.evaluate(recommendations, new Map()).recommendations, []);
+  const fallback = rankEligibleCandidates("fallback", { fallback: [unknown, ...recommendations] },
+    policy, new Map());
+  assert.deepEqual(fallback.recommendations.map((item) => item.anime.nodeId), ["anime:102"]);
+});
 
+test("required genre, year, and score filters reject missing metadata before hybrid normalization", () => {
+  const recommendations = buildModelRecommendations(watched, weights, index, modelIndex);
   const metadata = new Map<number, AnimeMetadata>(
     parseDemoCatalog(fixture("catalog.json"), "synthetic catalog")
       .map((item) => [item.animeId, item]),
@@ -183,13 +202,40 @@ test("candidate and metadata eligibility retain exclusion precedence and missing
     genre: " slice of life ", minYear: 2022, maxYear: 2018, minScore: 7.7,
   };
   assert.equal(hasActiveRecommendationFilters(filters), true);
-  const filtered = applyRecommendationFilters(recommendations, filters, metadata);
+  const policy = createCandidateEligibilityPolicy({ index,
+    preferences: [manualPreference("anime:101", "liked")], history: [],
+    includeOnlyNodeIds: [], excludeNodeIds: [], filters });
+  const filtered = policy.evaluate(recommendations, metadata);
   assert.deepEqual(filtered.recommendations.map((item) => item.anime.label), ["Moonlit Workshop"]);
   assert.equal(filtered.missingMetadataCount, 0);
+  const graphResults = buildGraphRecommendations(watched, weights, index);
+  const hybrid = rankEligibleCandidates("hybrid", { graph: graphResults, model: recommendations },
+    policy, metadata, 0.5);
+  assert.deepEqual(hybrid.recommendations.map((item) => item.anime.nodeId), ["anime:102"]);
+  assert.equal(hybrid.recommendations[0].score, 1);
+  assert.notEqual(combineHybridRecommendations(graphResults, recommendations, 0.5)
+    .find((item) => item.anime.nodeId === "anime:102")?.score, hybrid.recommendations[0].score);
   metadata.delete(102);
-  const missing = applyRecommendationFilters(recommendations, filters, metadata);
+  const missing = policy.evaluate(recommendations, metadata);
   assert.deepEqual(missing.recommendations, []);
   assert.equal(missing.missingMetadataCount, 1);
+  assert.equal(rankEligibleCandidates("hybrid", { graph: graphResults, model: recommendations },
+    policy, metadata).missingMetadataCount, 1);
+});
+
+test("catalog coverage fallback is deterministic and shares the eligibility policy", () => {
+  const baseline = buildCatalogCoverageRecommendations(index);
+  assert.equal(baseline.length, index.animeList.length);
+  assert.ok(baseline.every((item, position) => position === 0 ||
+    baseline[position - 1].score > item.score ||
+    baseline[position - 1].score === item.score &&
+      baseline[position - 1].anime.animeId < item.anime.animeId));
+  assert.ok(baseline.every((item) => item.score === item.supportCount && item.contributions.length === 0));
+  const policy = createCandidateEligibilityPolicy({ index,
+    preferences: [manualPreference("anime:101", "disliked")], history: [],
+    includeOnlyNodeIds: ["anime:101", "anime:102"], excludeNodeIds: ["anime:102"],
+    filters: { genre: "", minYear: null, maxYear: null, minScore: null } });
+  assert.deepEqual(rankEligibleCandidates("fallback", { fallback: baseline }, policy, new Map()).recommendations, []);
 });
 
 test("explanations select the two strongest contributors of each sign as plain text", () => {

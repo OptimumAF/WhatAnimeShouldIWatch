@@ -1,5 +1,5 @@
 import type { AnimeInfo, RecommendationIndex } from "./domain";
-import { normalizeTitle } from "./recommendations";
+import { normalizeTitle } from "./title";
 
 export const MAX_TEXT_IMPORT_BYTES = 128 * 1024;
 export const MAX_MAL_XML_IMPORT_BYTES = 2 * 1024 * 1024;
@@ -263,7 +263,7 @@ export function previewHistory(
   };
 }
 
-export function seenHistoryNodeIds(entries: HistoryEntry[], index: RecommendationIndex): string[] {
+export function seenHistoryNodeIds(entries: readonly HistoryEntry[], index: RecommendationIndex): string[] {
   return entries
     .filter(isSeenHistoryEntry)
     .map((entry) => resolveHistoryAnime(entry, index)?.nodeId)
