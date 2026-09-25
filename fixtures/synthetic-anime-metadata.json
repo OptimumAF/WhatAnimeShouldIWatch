@@ -1,0 +1,16 @@
+{
+  "format": "anime-metadata-snapshot-v1",
+  "source": "invented-fixture",
+  "snapshotAt": "2026-01-01T00:00:00Z",
+  "anime": [
+    { "animeId": 101, "title": "Invented Orbit" },
+    { "animeId": 102, "title": "Invented Harbor" },
+    { "animeId": 103, "title": "Invented Lantern" },
+    { "animeId": 104, "title": "Invented Meadow" },
+    { "animeId": 105, "title": "Invented Compass" },
+    { "animeId": 106, "title": "Invented Atrium" },
+    { "animeId": 107, "title": "Invented River" },
+    { "animeId": 108, "title": "Invented Cloud" },
+    { "animeId": 109, "title": "Invented Grove" }
+  ]
+}

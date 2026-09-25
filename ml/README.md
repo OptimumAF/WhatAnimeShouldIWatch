@@ -18,7 +18,15 @@ npm run split:fixture:check
 python ml/raw_interaction_split.py --input fixtures/synthetic-split-input.json --out data/synthetic-split-local.json
 ```
 
-The second command creates a new ignored local file and refuses an existing path. The manifest contains hashed interaction IDs, not scores or plain user IDs; it is still restricted data if generated from a real snapshot. `partition_snapshot` validates the exact manifest and returns unnormalized train/validation/test rows for M5.2. Present exports lack verified rating/viewing event times, so their policy is a seeded per-user holdout. See [decision 0014](../docs/decisions/0014-raw-interaction-splits.md) for format, duplicate, timestamp, and leakage limits.
+The second command creates a new ignored local file and refuses an existing path. The manifest contains hashed interaction IDs, not scores or plain user IDs; it is still restricted data if generated from a real snapshot. `partition_snapshot` validates the exact manifest and returns unnormalized train/validation/test rows. Present exports lack verified rating/viewing event times, so their policy is a seeded per-user holdout. See [decision 0014](../docs/decisions/0014-raw-interaction-splits.md) for format, duplicate, timestamp, and leakage limits.
+
+M5.2's split-first fitting route uses a separate, invented metadata snapshot and only the validated training rows. It computes train-only user centering, popularity, and exact pair weights/support through the existing TypeScript pair core, then fits MF with fixed seed. It prints fit/model hashes and counts, without reading held-out labels for training or reporting a quality metric:
+
+```bash
+npm run ml:train:split:fixture
+```
+
+The metadata file allows only anime IDs and titles, a source label, and snapshot time; it cannot carry rating-derived fields. The pinned synthetic file is `fixtures/synthetic-anime-metadata.json`. [Decision 0015](../docs/decisions/0015-train-only-preprocessing.md) defines the isolation boundary. M5.3 must test fitted-model invariance to held-out changes before this route can become an evaluation path. The older commands below remain research compatibility paths and cannot supply M5 release metrics.
 
 ## Install
 
