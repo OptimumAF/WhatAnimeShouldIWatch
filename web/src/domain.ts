@@ -29,6 +29,15 @@ export interface RecommendationResult {
   strongest: number;
   supportCount: number;
   contributions: RecommendationContribution[];
+  /** Present only for hybrid relative-rank points, which are not calibrated probabilities. */
+  fusion?: {
+    graphRank: number | null;
+    modelRank: number | null;
+    graphWeight: number;
+    modelWeight: number;
+    graphContributions: RecommendationContribution[];
+    modelContributions: RecommendationContribution[];
+  };
 }
 
 export interface RecommendationIndex {

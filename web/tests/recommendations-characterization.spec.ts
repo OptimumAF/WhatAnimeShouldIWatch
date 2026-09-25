@@ -21,12 +21,13 @@ test("synthetic recommendation modes retain their visible ranking and explanatio
       ["Ashen Harbor", "-0.400", "Why+: no strong positive contributors.Why-: Copper Comet (-0.400)"],
     ],
     hybrid: [
-      ["Moonlit Workshop", "+0.933", "Why+: Copper Comet (+0.355) | Copper Comet (+0.292)Why-: no notable negative contributors."],
-      ["星の航路", "+0.500", "Why+: Copper Comet (+0.410)Why-: no notable negative contributors."],
-      ["Quiet Satellite", "+0.343", "Why+: Copper Comet (+0.240)Why-: no notable negative contributors."],
-      ["Café Nebula", "+0.332", "Why+: Copper Comet (+0.235)Why-: no notable negative contributors."],
-      ["Glass Orchard", "+0.291", "Why+: Copper Comet (+0.215)Why-: no notable negative contributors."],
-      ["Paper Current", "+0.116", "Why+: no strong positive contributors.Why-: Copper Comet (-0.030)"],
+      ["Moonlit Workshop", "16.26 rank points", "Why: Graph rank #1; positive evidence from Copper Comet | Model rank #2; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
+      ["星の航路", "16.26 rank points", "Why: Graph rank #2; positive evidence from Copper Comet | Model rank #1; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
+      ["Quiet Satellite", "7.94 rank points", "Why: Graph: no candidate | Model rank #3; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
+      ["Café Nebula", "7.81 rank points", "Why: Graph: no candidate | Model rank #4; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
+      ["Glass Orchard", "7.69 rank points", "Why: Graph: no candidate | Model rank #5; positive evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
+      ["Paper Current", "7.58 rank points", "Why: Graph: no candidate | Model rank #6; negative evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
+      ["Ashen Harbor", "7.46 rank points", "Why: Graph: no candidate | Model rank #7; negative evidence from Copper Comet. Rank points combine relative positions; they are not a probability."],
     ],
   };
 
@@ -66,6 +67,33 @@ test("browser model ranks from three explicit preference signals", async ({ page
   for (const title of ["Copper Comet", "Moonlit Workshop", "Ashen Harbor"]) {
     await expect(page.locator("#rec-results .rec-title").filter({ hasText: title })).toHaveCount(0);
   }
+});
+
+test("hybrid endpoints keep the lowest source item and a missing graph gives the model full weight", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("hybrid");
+  const weight = page.locator("#rec-blend");
+  const setWeight = (value: string) => weight.evaluate((element, next) => {
+    (element as HTMLInputElement).value = next;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  }, value);
+  await setWeight("0");
+  await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop", "星の航路"]);
+  await expect(page.locator("#rec-results .rec-score")).toContainText(["rank points", "rank points"]);
+  await setWeight("1");
+  await expect(page.locator("#rec-results .rec-title")).toHaveCount(7);
+  await expect(page.locator("#rec-results .rec-title").last()).toHaveText("Ashen Harbor");
+  await setWeight("0");
+  await page.locator("summary").filter({ hasText: "Candidate Overrides" }).click();
+  await page.locator("#include-input").fill("Ashen Harbor");
+  await page.locator("#add-include-form button").click();
+  await expect(page.locator("#rec-results .rec-title")).toHaveText(["Ashen Harbor"]);
+  await expect(page.locator("#rec-engine-status")).toContainText("model-only rank fusion");
+  await expect(page.locator("#rec-results .rec-score")).toHaveText("16.39 rank points");
+  await expect(page.locator("#rec-results .rec-why")).toContainText("not a probability");
 });
 
 test("recommendation explanation renders an invented unsafe label as text", async ({ page }) => {

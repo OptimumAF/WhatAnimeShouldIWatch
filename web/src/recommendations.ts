@@ -535,132 +535,62 @@ function scoreModelRecommendations(
 }
 
 export function combineHybridRecommendations(
-  graphRecommendations: RecommendationResult[],
-  modelRecommendations: RecommendationResult[],
+  graphRecommendations: readonly RecommendationResult[],
+  modelRecommendations: readonly RecommendationResult[],
   modelWeight: number,
 ): RecommendationResult[] {
-  const clampedModelWeight = clampModelBlendWeight(modelWeight);
-  const graphWeight = 1 - clampedModelWeight;
+  const graphRanks = rankComponent(graphRecommendations);
+  const modelRanks = rankComponent(modelRecommendations);
+  if (graphRanks.size === 0 && modelRanks.size === 0) return [];
+  const requestedModelWeight = clampModelBlendWeight(modelWeight);
+  const graphWeight = modelRanks.size === 0 ? 1 : graphRanks.size === 0 ? 0 : 1 - requestedModelWeight;
+  const effectiveModelWeight = graphRanks.size === 0 ? 1 : modelRanks.size === 0 ? 0 : requestedModelWeight;
+  const candidateIds = new Set<number>();
+  if (graphWeight > 0) for (const id of graphRanks.keys()) candidateIds.add(id);
+  if (effectiveModelWeight > 0) for (const id of modelRanks.keys()) candidateIds.add(id);
 
-  const graphScale = createScoreScale(graphRecommendations);
-  const modelScale = createScoreScale(modelRecommendations);
-
-  const byAnime = new Map<
-    number,
-    {
-      anime: AnimeInfo;
-      score: number;
-      strongest: number;
-      supportCount: number;
-      contributions: RecommendationContribution[];
-    }
-  >();
-
-  for (const item of graphRecommendations) {
-    const normalized = graphScale(item.score);
-    const weighted = normalized * graphWeight;
-    if (weighted <= 0) {
-      continue;
-    }
-    byAnime.set(item.anime.animeId, {
-      anime: item.anime,
-      score: weighted,
-      strongest: item.strongest * graphWeight,
-      supportCount: item.supportCount,
-      contributions: scaleContributions(item.contributions, graphWeight),
-    });
-  }
-
-  for (const item of modelRecommendations) {
-    const normalized = modelScale(item.score);
-    const weighted = normalized * clampedModelWeight;
-    if (weighted <= 0) {
-      continue;
-    }
-    const current = byAnime.get(item.anime.animeId);
-    if (!current) {
-      byAnime.set(item.anime.animeId, {
-        anime: item.anime,
-        score: weighted,
-        strongest: item.strongest * clampedModelWeight,
-        supportCount: item.supportCount,
-        contributions: scaleContributions(item.contributions, clampedModelWeight),
-      });
-      continue;
-    }
-
-    current.score += weighted;
-    current.strongest = Math.max(
-      current.strongest,
-      item.strongest * clampedModelWeight,
+  return [...candidateIds].map((animeId) => {
+    const graph = graphRanks.get(animeId);
+    const model = modelRanks.get(animeId);
+    const activeGraphRank = graphWeight > 0 ? graph?.rank ?? null : null;
+    const activeModelRank = effectiveModelWeight > 0 ? model?.rank ?? null : null;
+    const score = 1_000 * (
+      (activeGraphRank === null ? 0 : graphWeight / (60 + activeGraphRank)) +
+      (activeModelRank === null ? 0 : effectiveModelWeight / (60 + activeModelRank))
     );
-    current.supportCount += item.supportCount;
-    current.contributions = [...current.contributions]
-      .concat(scaleContributions(item.contributions, clampedModelWeight))
-      .sort((left, right) => right.weightedScore - left.weightedScore)
-      .slice(0, 10);
-  }
-
-  return [...byAnime.values()]
-    .map((value) => ({
-      anime: value.anime,
-      score: value.score,
-      strongest: value.strongest,
-      supportCount: value.supportCount,
-      contributions: value.contributions,
-    }))
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
-      }
-      if (right.supportCount !== left.supportCount) {
-        return right.supportCount - left.supportCount;
-      }
-      return right.strongest - left.strongest;
-    });
+    return {
+      anime: (graph?.item ?? model!.item).anime,
+      score,
+      strongest: 0,
+      supportCount: 0,
+      contributions: [],
+      fusion: {
+        graphRank: activeGraphRank,
+        modelRank: activeModelRank,
+        graphWeight,
+        modelWeight: effectiveModelWeight,
+        graphContributions: activeGraphRank === null ? [] : graph!.item.contributions,
+        modelContributions: activeModelRank === null ? [] : model!.item.contributions,
+      },
+    } satisfies RecommendationResult;
+  }).sort((left, right) => right.score - left.score || left.anime.animeId - right.anime.animeId);
 }
 
-function createScoreScale(
-  recommendations: RecommendationResult[],
-): (score: number) => number {
-  if (recommendations.length === 0) {
-    return () => 0;
+function rankComponent(items: readonly RecommendationResult[]): Map<number, {
+  item: RecommendationResult; rank: number;
+}> {
+  const ordered = items.filter((item) => Number.isFinite(item.score))
+    .sort((left, right) => right.score - left.score || left.anime.animeId - right.anime.animeId);
+  const ranks = new Map<number, { item: RecommendationResult; rank: number }>();
+  let rank = 0;
+  let previousScore: number | undefined;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const item = ordered[index];
+    if (previousScore === undefined || item.score !== previousScore) rank = index + 1;
+    previousScore = item.score;
+    if (!ranks.has(item.anime.animeId)) ranks.set(item.anime.animeId, { item, rank });
   }
-  let min = recommendations[0].score;
-  let max = recommendations[0].score;
-  for (const item of recommendations) {
-    if (item.score < min) {
-      min = item.score;
-    }
-    if (item.score > max) {
-      max = item.score;
-    }
-  }
-
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
-    return (score: number) => (Number.isFinite(score) ? 1 : 0);
-  }
-
-  const denominator = max - min;
-  return (score: number) => {
-    if (!Number.isFinite(score)) {
-      return 0;
-    }
-    const normalized = (score - min) / denominator;
-    return Math.min(Math.max(normalized, 0), 1);
-  };
-}
-
-function scaleContributions(
-  contributions: RecommendationContribution[],
-  factor: number,
-): RecommendationContribution[] {
-  return contributions.map((item) => ({
-    watched: item.watched,
-    edgeWeight: item.edgeWeight,
-    weightFactor: item.weightFactor,
-    weightedScore: item.weightedScore * factor,
-  }));
+  return ranks;
 }
 
 export function formatWeight(value: number): string {
@@ -785,7 +715,7 @@ export function createCandidateEligibilityPolicy(options: CandidateEligibilityOp
 
 export type EligibilityRankingMode = "graph" | "model" | "hybrid" | "fallback";
 
-/** Filter components before hybrid normalization, then guard the displayed list too. */
+/** Filter components before assigning hybrid ranks, then guard the displayed list too. */
 export function rankEligibleCandidates(
   mode: EligibilityRankingMode,
   sources: {
@@ -816,9 +746,29 @@ export function rankEligibleCandidates(
 
 export type RecommendationExplanation =
   | { kind: "none" }
+  | { kind: "fusion"; line: string }
   | { kind: "contributors"; positiveLine: string; negativeLine: string };
 
 export function explainRecommendation(result: RecommendationResult): RecommendationExplanation {
+  if (result.fusion) {
+    const fusion = result.fusion;
+    const sourceLine = (source: "Graph" | "Model", rank: number | null,
+      weight: number, contributions: readonly RecommendationContribution[]): string | null => {
+      if (weight === 0) return null;
+      if (rank === null) return `${source}: no candidate`;
+      const positive = contributions.find((item) => item.weightedScore > 0)?.watched.label;
+      const negative = contributions.find((item) => item.weightedScore < 0)?.watched.label;
+      return `${source} rank #${rank}` +
+        (positive ? `; positive evidence from ${positive}` : "") +
+        (negative ? `; negative evidence from ${negative}` : "");
+    };
+    const parts = [
+      sourceLine("Graph", fusion.graphRank, fusion.graphWeight, fusion.graphContributions),
+      sourceLine("Model", fusion.modelRank, fusion.modelWeight, fusion.modelContributions),
+    ].filter((part): part is string => part !== null);
+    return { kind: "fusion",
+      line: `Why: ${parts.join(" | ")}. Rank points combine relative positions; they are not a probability.` };
+  }
   if (result.contributions.length === 0) {
     return { kind: "none" };
   }

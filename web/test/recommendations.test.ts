@@ -82,7 +82,7 @@ test("compact index and graph scoring keep the synthetic rank, weight, and watch
     results.map((item) => [item.anime.label, item.score]));
 });
 
-test("model and hybrid ranking retain their fixture scores and blend endpoints", () => {
+test("model ranking retains fixture scores; rank fusion keeps full component endpoints", () => {
   const graphResults = buildGraphRecommendations(watched, weights, index);
   const modelResults = buildModelRecommendations(watched, weights, index, modelIndex);
   assert.deepEqual(modelResults.map((item) => [item.anime.label, formatWeight(item.score)]), [
@@ -98,14 +98,15 @@ test("model and hybrid ranking retain their fixture scores and blend endpoints",
 
   const hybrid = combineHybridRecommendations(graphResults, modelResults, 0.5);
   assert.deepEqual(hybrid.map((item) => [item.anime.label, formatWeight(item.score)]), [
-    ["Moonlit Workshop", "+0.933"], ["星の航路", "+0.500"],
-    ["Quiet Satellite", "+0.343"], ["Café Nebula", "+0.332"],
-    ["Glass Orchard", "+0.291"], ["Paper Current", "+0.116"],
+    ["Moonlit Workshop", "+16.261"], ["星の航路", "+16.261"],
+    ["Quiet Satellite", "+7.937"], ["Café Nebula", "+7.813"],
+    ["Glass Orchard", "+7.692"], ["Paper Current", "+7.576"],
+    ["Ashen Harbor", "+7.463"],
   ]);
-  // Existing min-max blending drops the lowest graph score, even at a zero model weight.
   assert.deepEqual(combineHybridRecommendations(graphResults, modelResults, 0)
-    .map((item) => item.anime.label), ["Moonlit Workshop"]);
-  assert.equal(combineHybridRecommendations(graphResults, modelResults, 1)[0].anime.label, "星の航路");
+    .map((item) => item.anime.label), graphResults.map((item) => item.anime.label));
+  assert.deepEqual(combineHybridRecommendations(graphResults, modelResults, 1)
+    .map((item) => item.anime.label), modelResults.map((item) => item.anime.label));
 });
 
 test("seen is exclusion only, likes seed graph, and dislikes provide signed model evidence", () => {
@@ -195,7 +196,7 @@ test("one eligibility policy enforces catalog, watched, history, exclusion, and 
   assert.deepEqual(fallback.recommendations.map((item) => item.anime.nodeId), ["anime:102"]);
 });
 
-test("required genre, year, and score filters reject missing metadata before hybrid normalization", () => {
+test("required genre, year, and score filters reject missing metadata before hybrid rank assignment", () => {
   const recommendations = buildModelRecommendations(watched, weights, index, modelIndex);
   const metadata = new Map<number, AnimeMetadata>(
     parseDemoCatalog(fixture("catalog.json"), "synthetic catalog")
@@ -215,7 +216,7 @@ test("required genre, year, and score filters reject missing metadata before hyb
   const hybrid = rankEligibleCandidates("hybrid", { graph: graphResults, model: recommendations },
     policy, metadata, 0.5);
   assert.deepEqual(hybrid.recommendations.map((item) => item.anime.nodeId), ["anime:102"]);
-  assert.equal(hybrid.recommendations[0].score, 1);
+  assert.ok(Math.abs(hybrid.recommendations[0].score - 1_000 / 61) < 1e-12);
   assert.notEqual(combineHybridRecommendations(graphResults, recommendations, 0.5)
     .find((item) => item.anime.nodeId === "anime:102")?.score, hybrid.recommendations[0].score);
   metadata.delete(102);

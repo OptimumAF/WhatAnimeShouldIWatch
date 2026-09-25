@@ -1,6 +1,6 @@
 # 0011 — Hybrid blend comparison protocol
 
-**Status:** Protocol fixed before the M4.6 synthetic comparison. This is a local ranking-engineering decision, not a production quality or provider-data approval.
+**Status:** Complete local M4.6 decision; protocol committed as `620853f` before the synthetic comparison. This is a local ranking-engineering decision, not a production quality or provider-data approval.
 
 ## Question and held-out inputs
 
@@ -20,4 +20,13 @@ Even a passing local gate cannot establish a production ranking lift: the tiny i
 
 ## Result and decision
 
-Pending protocol-locked comparison.
+`npm run eval:hybrid-blend:fixture` checked the generated fixture, rebuilt each validation user's graph from the other users, and asserted that changing the validation user's ratings does not change that graph. Each scored case used the browser graph/model scorers and eligibility path. The runtime RRF candidate IDs and scores matched an independently written reference on every case. The old min–max implementation remains an evaluation-only reference outside the web bundle. The host was Windows x64, Node 23.10.0, Intel i7-12700K.
+
+| Observed ratings | Cases | Min–max Hit@3 / MRR | Rank fusion Hit@3 / MRR |
+|---|---:|---:|---:|
+| 1 | 29 | 20/29 = 0.690 / 0.449 | 20/29 = 0.690 / 0.481 |
+| 3 | 7 | 5/7 = 0.714 / 0.560 | 5/7 = 0.714 / 0.588 |
+
+The final local 1,000-item, 200-call p95 was 0.466 ms for min–max, 0.693 ms for the independent RRF reference, and 0.750 ms for deployed RRF. Timing varied across reruns and is not a production latency estimate. Both predeclared quality and deployed latency gates passed. Unit and browser tests passed for complete endpoints, an empty component at every slider setting, tied and negative scores, anime-ID tie breaking, required filters before ranks, and relative-rank labels. Browser cards state source ranks and qualitative title evidence; the numeric result is labelled **rank points**, not probability or a sum of raw source contributions.
+
+**Decision:** Use weighted RRF in the browser, with `k = 60` and 1,000 rank-point scaling. A candidate absent from one nonempty component gets zero from that component. An entirely empty component transfers full effective weight to the other; the UI reports that condition. The 0%/100% endpoints preserve the full active component, including its bottom and negative-scored candidates. The two methods tied on Hit@3 in both slices, while RRF met the MRR and latency gates and removed the endpoint omission. This does not establish a production ranking lift: cases share a tiny invented catalog and the fixed item vectors were authored alongside the ratings. M5's permitted split-first evaluation remains required for later tuning, calibration, or promotion claims; M4.7 owns deeper explanation reconciliation.
