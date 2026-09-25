@@ -8,6 +8,10 @@ import type {
   RecommendationResult,
 } from "./domain";
 import type { AnimePreference } from "./preferences";
+import { seenHistoryNodeIds } from "./import-history";
+import type { HistoryEntry } from "./import-history";
+import { normalizeTitle } from "./title";
+export { normalizeTitle } from "./title";
 
 export interface RecommendationFilters {
   genre: string;
@@ -151,10 +155,6 @@ function parseAnimeId(nodeId: string): number {
   return Number.isNaN(parsed) ? -1 : parsed;
 }
 
-export function normalizeTitle(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 export function buildGraphRecommendations(
   selectedNodeIds: string[],
   selectedWeights: Map<string, number>,
@@ -172,6 +172,27 @@ export function buildGraphRecommendationsForPreferences(
     .filter((item) => item.sentiment === "liked")
     .map((item) => ({ nodeId: item.nodeId, weight: item.importance * item.confidence })),
   preferences.map((item) => item.nodeId), index);
+}
+
+/** A nonpersonalized fallback ordered by positive pair-neighborhood coverage. */
+export function buildCatalogCoverageRecommendations(index: RecommendationIndex): RecommendationResult[] {
+  return index.animeList.map((anime) => {
+    let positiveConnections = 0;
+    let strongest = 0;
+    for (const neighbor of index.adjacency.get(anime.nodeId) ?? []) {
+      if (Number.isFinite(neighbor.weight) && neighbor.weight > 0) {
+        positiveConnections += 1;
+        strongest = Math.max(strongest, neighbor.weight);
+      }
+    }
+    return {
+      anime,
+      score: positiveConnections,
+      strongest,
+      supportCount: positiveConnections,
+      contributions: [],
+    } satisfies RecommendationResult;
+  }).sort((left, right) => right.score - left.score || left.anime.animeId - right.anime.animeId);
 }
 
 function scoreGraphRecommendations(
@@ -568,50 +589,54 @@ export function clampModelBlendWeight(value: number): number {
   return Math.min(Math.max(value, MIN_MODEL_BLEND_WEIGHT), MAX_MODEL_BLEND_WEIGHT);
 }
 
-export function filterCandidateEligibility(
-  recommendations: RecommendationResult[],
-  includeCandidateNodeIds: readonly string[],
-  excludeCandidateNodeIds: readonly string[],
-): RecommendationResult[] {
-  const includeSet = new Set(includeCandidateNodeIds);
-  const excludeSet = new Set(excludeCandidateNodeIds);
-  return recommendations.filter((item) => {
-    if (excludeSet.has(item.anime.nodeId)) {
-      return false;
-    }
-    if (includeSet.size > 0 && !includeSet.has(item.anime.nodeId)) {
-      return false;
-    }
-    return true;
-  });
-}
-
 export function hasActiveRecommendationFilters(recommendationFilters: RecommendationFilters): boolean {
   return (
-    recommendationFilters.genre.length > 0 ||
+    recommendationFilters.genre.trim().length > 0 ||
     recommendationFilters.minYear !== null ||
     recommendationFilters.maxYear !== null ||
     (recommendationFilters.minScore ?? 0) > 0
   );
 }
 
-export function applyRecommendationFilters(
-  recommendations: RecommendationResult[],
-  recommendationFilters: RecommendationFilters,
-  animeMetadataCache: ReadonlyMap<number, AnimeMetadata>,
-): {
+export interface CandidateEligibilityOptions {
+  /** The loaded recommendation graph defines the available anime catalog. */
+  index: RecommendationIndex;
+  preferences: readonly AnimePreference[];
+  history: readonly HistoryEntry[];
+  /** An allowlist over already scored candidates; it never creates a score. */
+  includeOnlyNodeIds: readonly string[];
+  excludeNodeIds: readonly string[];
+  /** Genre is the current content preference; genre/year/score are required when set. */
+  filters: RecommendationFilters;
+}
+
+export interface CandidateEligibilityResult {
+  /** Candidates that can be checked without optional metadata. */
+  structurallyEligible: RecommendationResult[];
   recommendations: RecommendationResult[];
   missingMetadataCount: number;
-} {
-  if (!hasActiveRecommendationFilters(recommendationFilters)) {
-    return {
-      recommendations,
-      missingMetadataCount: 0,
-    };
-  }
+}
 
-  const minYearRaw = recommendationFilters.minYear;
-  const maxYearRaw = recommendationFilters.maxYear;
+export interface CandidateEligibilityPolicy {
+  evaluate(
+    recommendations: readonly RecommendationResult[],
+    metadataByAnimeId: ReadonlyMap<number, AnimeMetadata>,
+  ): CandidateEligibilityResult;
+}
+
+/** One policy for every ranking source. Exclusion and watch status always beat inclusion. */
+export function createCandidateEligibilityPolicy(options: CandidateEligibilityOptions): CandidateEligibilityPolicy {
+  const { index, filters } = options;
+  const includeOnly = new Set(options.includeOnlyNodeIds);
+  const blocked = new Set([
+    ...options.excludeNodeIds,
+    ...options.preferences.map((item) => item.nodeId),
+    ...seenHistoryNodeIds(options.history, index),
+  ]);
+  const requireMetadata = hasActiveRecommendationFilters(filters);
+  const genreFilter = filters.genre.trim().toLowerCase();
+  const minYearRaw = filters.minYear;
+  const maxYearRaw = filters.maxYear;
   const lowerYear =
     minYearRaw !== null && maxYearRaw !== null
       ? Math.min(minYearRaw, maxYearRaw)
@@ -620,50 +645,78 @@ export function applyRecommendationFilters(
     minYearRaw !== null && maxYearRaw !== null
       ? Math.max(minYearRaw, maxYearRaw)
       : maxYearRaw;
-  const minScore = recommendationFilters.minScore ?? 0;
-  const genreFilter = recommendationFilters.genre.trim().toLowerCase();
+  const minScore = filters.minScore ?? 0;
 
-  let missingMetadataCount = 0;
-  const filtered = recommendations.filter((item) => {
-    const metadata = animeMetadataCache.get(item.anime.animeId);
-    if (!metadata) {
-      missingMetadataCount += 1;
+  function matchesRequiredMetadata(metadata: AnimeMetadata): boolean {
+    if (genreFilter && !metadata.genres.some((genre) => genre.trim().toLowerCase() === genreFilter)) {
       return false;
     }
-
-    if (genreFilter) {
-      const hasGenre = metadata.genres.some(
-        (genre) => genre.trim().toLowerCase() === genreFilter,
-      );
-      if (!hasGenre) {
-        return false;
-      }
+    if (lowerYear !== null && (metadata.year === null || metadata.year < lowerYear)) {
+      return false;
     }
-
-    if (lowerYear !== null) {
-      if (metadata.year === null || metadata.year < lowerYear) {
-        return false;
-      }
+    if (upperYear !== null && (metadata.year === null || metadata.year > upperYear)) {
+      return false;
     }
-
-    if (upperYear !== null) {
-      if (metadata.year === null || metadata.year > upperYear) {
-        return false;
-      }
-    }
-
-    if (minScore > 0) {
-      if (metadata.score === null || metadata.score < minScore) {
-        return false;
-      }
-    }
-
-    return true;
-  });
+    return minScore <= 0 || metadata.score !== null && metadata.score >= minScore;
+  }
 
   return {
-    recommendations: filtered,
-    missingMetadataCount,
+    evaluate(recommendations, metadataByAnimeId) {
+      const structurallyEligible: RecommendationResult[] = [];
+      const eligible: RecommendationResult[] = [];
+      let missingMetadataCount = 0;
+      for (const item of recommendations) {
+        const known = index.animeByNodeId.get(item.anime.nodeId);
+        if (!known || known.animeId !== item.anime.animeId ||
+            blocked.has(item.anime.nodeId) ||
+            includeOnly.size > 0 && !includeOnly.has(item.anime.nodeId)) {
+          continue;
+        }
+        structurallyEligible.push(item);
+        if (!requireMetadata) {
+          eligible.push(item);
+          continue;
+        }
+        const metadata = metadataByAnimeId.get(item.anime.animeId);
+        if (!metadata) {
+          missingMetadataCount += 1;
+        } else if (matchesRequiredMetadata(metadata)) {
+          eligible.push(item);
+        }
+      }
+      return { structurallyEligible, recommendations: eligible, missingMetadataCount };
+    },
+  };
+}
+
+export type EligibilityRankingMode = "graph" | "model" | "hybrid" | "fallback";
+
+/** Filter components before hybrid normalization, then guard the displayed list too. */
+export function rankEligibleCandidates(
+  mode: EligibilityRankingMode,
+  sources: {
+    graph?: readonly RecommendationResult[];
+    model?: readonly RecommendationResult[];
+    fallback?: readonly RecommendationResult[];
+  },
+  policy: CandidateEligibilityPolicy,
+  metadataByAnimeId: ReadonlyMap<number, AnimeMetadata>,
+  modelBlendWeight = 0.5,
+): CandidateEligibilityResult {
+  if (mode === "graph") return policy.evaluate(sources.graph ?? [], metadataByAnimeId);
+  if (mode === "model") return policy.evaluate(sources.model ?? [], metadataByAnimeId);
+  if (mode === "fallback") return policy.evaluate(sources.fallback ?? [], metadataByAnimeId);
+  const graph = policy.evaluate(sources.graph ?? [], metadataByAnimeId);
+  const model = policy.evaluate(sources.model ?? [], metadataByAnimeId);
+  const structural = combineHybridRecommendations(
+    graph.structurallyEligible, model.structurallyEligible, modelBlendWeight,
+  );
+  const scored = combineHybridRecommendations(graph.recommendations, model.recommendations, modelBlendWeight);
+  const complete = policy.evaluate(scored, metadataByAnimeId);
+  return {
+    structurallyEligible: structural,
+    recommendations: complete.recommendations,
+    missingMetadataCount: policy.evaluate(structural, metadataByAnimeId).missingMetadataCount,
   };
 }
 

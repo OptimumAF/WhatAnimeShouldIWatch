@@ -20,20 +20,20 @@ import type {
 import {
   MAX_MODEL_BLEND_WEIGHT,
   MIN_MODEL_BLEND_WEIGHT,
-  applyRecommendationFilters,
+  buildCatalogCoverageRecommendations,
   buildGraphRecommendationsForPreferences,
   buildModelRecommendationsForPreferences,
   buildRecommendationIndex,
   buildRecommendationIndexFromCompact,
   clampModelBlendWeight,
-  combineHybridRecommendations,
+  createCandidateEligibilityPolicy,
   explainRecommendation,
-  filterCandidateEligibility,
   formatWeight,
   hasActiveRecommendationFilters,
   normalizeTitle,
+  rankEligibleCandidates,
 } from "./recommendations";
-import type { RecommendationFilters } from "./recommendations";
+import type { EligibilityRankingMode, RecommendationFilters } from "./recommendations";
 import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { createArtifactLoader } from "./artifact-loader";
 import {
@@ -44,7 +44,6 @@ import {
   parseTextHistory,
   previewHistory,
   resolveHistoryAnime,
-  seenHistoryNodeIds,
 } from "./import-history";
 import type { HistoryEntry, ImportMode, ParsedHistory } from "./import-history";
 import { MAX_IMPORTANCE, MIN_IMPORTANCE, clampImportance, manualPreference, preferenceFromHistory } from "./preferences";
@@ -185,7 +184,7 @@ app.innerHTML = `
           <ul class="contextual-tip-list">
             <li>Mark titles you liked or disliked; Seen alone does not become a favorite.</li>
             <li>Use <strong>Hybrid</strong> mode when model data is available for best balance.</li>
-            <li>Use Include/Exclude overrides to hard-control candidate results.</li>
+            <li>Use Include Only to limit scored candidates; exclusions and watched titles always win.</li>
             <li>Keyboard: <strong>Alt+/</strong> focuses the main anime input instantly.</li>
           </ul>
         </section>
@@ -325,12 +324,13 @@ app.innerHTML = `
 
             <details class="accordion">
               <summary>Candidate Overrides</summary>
+              <p class="muted">Include Only narrows the current ranking to listed titles. It does not add a title to graph or model rankings or override watched titles, exclusions, catalog availability, or required filters. If catalog fallback is active, it narrows that catalog list. Exclusions always win.</p>
               <div class="selected-head">
-                <h3>Include Candidates</h3>
+                <h3>Include Only Candidates</h3>
                 <button id="clear-include" type="button" class="ghost-btn">Clear</button>
               </div>
               <form id="add-include-form" class="add-form add-form-compact">
-                <input id="include-input" type="text" list="anime-options" autocomplete="off" placeholder="Add anime to force-include" />
+                <input id="include-input" type="text" list="anime-options" autocomplete="off" placeholder="Limit results to this anime" />
                 <button type="submit">Add</button>
               </form>
               <div id="include-anime" class="selected-anime"></div>
@@ -2472,21 +2472,11 @@ function addCandidateFromInput(
   }
 
   targetList.push(anime.nodeId);
-  if (mode === "include") {
-    const index = excludeCandidateNodeIds.indexOf(anime.nodeId);
-    if (index >= 0) {
-      excludeCandidateNodeIds.splice(index, 1);
-    }
-  } else {
-    const index = includeCandidateNodeIds.indexOf(anime.nodeId);
-    if (index >= 0) {
-      includeCandidateNodeIds.splice(index, 1);
-    }
-  }
-
   persistRecommendationState();
   input.value = "";
-  recMessageEl.textContent = `Added ${anime.label} to ${mode} list.`;
+  recMessageEl.textContent = mode === "include"
+    ? `Limited results to ${anime.label} and other Include Only titles; exclusions still win.`
+    : `Excluded ${anime.label}; exclusions win over Include Only.`;
   renderIncludeCandidates();
   renderExcludeCandidates();
   void updateRecommendations();
@@ -2587,105 +2577,162 @@ async function updateRecommendations(): Promise<void> {
     return;
   }
 
-  let recommendations: RecommendationResult[] = [];
+  const eligibilityPolicy = createCandidateEligibilityPolicy({
+    index: recommendationIndex,
+    preferences,
+    history: historyEntries,
+    includeOnlyNodeIds: includeCandidateNodeIds,
+    excludeNodeIds: excludeCandidateNodeIds,
+    filters: recommendationFilters,
+  });
+  const graphRecommendations = buildGraphRecommendationsForPreferences(preferences, recommendationIndex);
+  let modelRecommendations: RecommendationResult[] = [];
+  let activeRankingMode: EligibilityRankingMode = recommendationMode;
+  let usingCatalogFallback = false;
+  let fallbackReason: string | null = null;
+  let modelFactors: number | null = null;
+  let modelCoverageNote = "";
+  const sources: {
+    graph: RecommendationResult[];
+    model: RecommendationResult[];
+    fallback: RecommendationResult[];
+  } = { graph: graphRecommendations, model: modelRecommendations, fallback: [] };
+  function showActiveEngine(): void {
+    if (activeRankingMode === "fallback") {
+      recEngineStatusEl.textContent =
+        `Using catalog coverage baseline (positive graph connections, then anime ID). ${fallbackReason ?? ""}`;
+    } else if (activeRankingMode === "graph") {
+      recEngineStatusEl.textContent = fallbackReason
+        ? `Using graph fallback. ${fallbackReason}`
+        : "Using graph recommendations.";
+    } else if (activeRankingMode === "model") {
+      recEngineStatusEl.textContent = `Using ML model recommendations (${modelFactors} factors)${modelCoverageNote}.`;
+    } else {
+      recEngineStatusEl.textContent =
+        `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph)${modelCoverageNote}.`;
+    }
+  }
+  function selectCatalogBaseline(): void {
+    activeRankingMode = "fallback";
+    usingCatalogFallback = true;
+    sources.fallback = buildCatalogCoverageRecommendations(recommendationIndex);
+    showActiveEngine();
+  }
   setMetadataStatus(demoMode ? "demo" : "loading", demoMode ? "Metadata: synthetic demo catalog." : "Metadata: loading recommendations...");
 
-  if (recommendationMode === "graph") {
-    recEngineStatusEl.textContent = "Using graph recommendations.";
-    recommendations = buildGraphRecommendationsForPreferences(preferences, recommendationIndex);
-  } else if (recommendationMode === "model") {
+  if (recommendationMode !== "graph") {
     recEngineStatusEl.textContent = "Loading ML model recommendations...";
     const modelIndex = await ensureModelRecommendationIndex();
     if (runId !== recommendationRunId) {
       return;
     }
     if (!modelIndex) {
-      if (modelLoadError) {
-        recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
-        recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
-        recResultsEl.innerHTML = "";
-        setMetadataStatus("failed", "Metadata: model artifact is invalid.");
-        return;
+      fallbackReason = modelLoadError
+        ? `Invalid ML model artifact: ${modelLoadError}`
+        : "ML model data not found (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
+      activeRankingMode = "graph";
+    } else {
+      modelFactors = modelIndex.factors;
+      const signals = preferences.filter((item) => item.sentiment !== "seen");
+      const mappedSignals = signals.filter((item) => {
+        const anime = recommendationIndex.animeByNodeId.get(item.nodeId);
+        return anime !== undefined && modelIndex.animeByAnimeId.has(anime.animeId);
+      }).length;
+      if (mappedSignals < signals.length) {
+        modelCoverageNote = `; model mapped ${mappedSignals}/${signals.length} preference signals`;
       }
-      recEngineStatusEl.textContent =
-        "ML model data not found (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
-      recSummaryEl.textContent =
-        "Model recommendations are unavailable until model data is exported to the web data folder.";
-      recResultsEl.innerHTML = "";
-      setMetadataStatus("unavailable", "Metadata: model artifact is unavailable.");
-      return;
-    }
-    recEngineStatusEl.textContent = `Using ML model recommendations (${modelIndex.factors} factors).`;
-    recommendations = buildModelRecommendationsForPreferences(preferences, recommendationIndex, modelIndex);
-  } else {
-    recEngineStatusEl.textContent = "Loading hybrid recommendations...";
-    const modelIndex = await ensureModelRecommendationIndex();
-    if (runId !== recommendationRunId) {
-      return;
-    }
-    if (!modelIndex) {
-      if (modelLoadError) {
-        recEngineStatusEl.textContent = `Invalid ML model artifact: ${modelLoadError}`;
-        recSummaryEl.textContent = "Replace the model artifact or switch to graph recommendations.";
-        recResultsEl.innerHTML = "";
-        setMetadataStatus("failed", "Metadata: model artifact is invalid.");
-        return;
+      modelRecommendations = buildModelRecommendationsForPreferences(preferences, recommendationIndex, modelIndex);
+      sources.model = modelRecommendations;
+      if (eligibilityPolicy.evaluate(modelRecommendations, animeMetadataCache).structurallyEligible.length === 0) {
+        fallbackReason = mappedSignals === 0
+          ? "ML model maps no selected preference signals."
+          : "ML model has no candidates in the current catalog and eligibility set.";
+        activeRankingMode = "graph";
       }
-      recEngineStatusEl.textContent =
-        "ML model data not found for hybrid mode (expected model-mf-web.compact.json(.gz) or model-mf-web.json(.gz)).";
-      recSummaryEl.textContent =
-        "Hybrid mode needs model data. Export model data or switch to graph-only mode.";
-      recResultsEl.innerHTML = "";
-      setMetadataStatus("unavailable", "Metadata: model artifact is unavailable.");
-      return;
     }
-    const graphRecommendations = buildGraphRecommendationsForPreferences(preferences, recommendationIndex);
-    const modelRecommendations = buildModelRecommendationsForPreferences(preferences, recommendationIndex, modelIndex);
-    recommendations = combineHybridRecommendations(
-      graphRecommendations,
-      modelRecommendations,
-      modelBlendWeight,
-    );
-    recEngineStatusEl.textContent =
-      `Using hybrid recommendations (${Math.round(modelBlendWeight * 100)}% model, ${Math.round((1 - modelBlendWeight) * 100)}% graph).`;
   }
+  showActiveEngine();
 
-  recommendations = filterCandidateEligibility(
-    recommendations,
-    includeCandidateNodeIds,
-    [...excludeCandidateNodeIds, ...selectedAnimeNodeIds,
-      ...seenHistoryNodeIds(historyEntries, recommendationIndex)],
+  let initialEligibility = rankEligibleCandidates(
+    activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
   );
-
-  if (recommendations.length === 0) {
-    recSummaryEl.textContent =
-      "No eligible recommendations found from these preferences. Try another liked title or review filters.";
+  if (recommendationMode !== "graph" && activeRankingMode !== "graph" &&
+      initialEligibility.structurallyEligible.length === 0) {
+    activeRankingMode = "graph";
+    fallbackReason = "No ML candidates passed catalog and eligibility rules.";
+    showActiveEngine();
+    initialEligibility = rankEligibleCandidates(
+      activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+    );
+  }
+  if (fallbackReason && initialEligibility.structurallyEligible.length === 0) {
+    selectCatalogBaseline();
+    initialEligibility = rankEligibleCandidates(
+      activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+    );
+  }
+  let structuralCandidates = initialEligibility.structurallyEligible;
+  if (structuralCandidates.length === 0) {
+    recSummaryEl.textContent = includeCandidateNodeIds.length > 0
+      ? "No scored candidates match Include Only after watched and excluded titles are removed."
+      : "No eligible recommendations found from these preferences. Try another liked title or review filters.";
     recResultsEl.innerHTML = "";
     setMetadataStatus("empty", "Metadata: no candidates.");
     return;
   }
 
-  const metadataCandidateAnimeIds = recommendations
-    .slice(0, METADATA_PREFETCH_LIMIT)
-    .map((item) => item.anime.animeId)
-    .filter((animeId) => Number.isFinite(animeId) && animeId > 0);
-  const metadataPrefetchLimit = hasActiveRecommendationFilters(recommendationFilters)
-    ? METADATA_PREFETCH_WITH_FILTER_LIMIT
-    : Math.min(12, metadataCandidateAnimeIds.length);
-  if (metadataPrefetchLimit > 0) {
-    await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit, controller.signal);
-    if (runId !== recommendationRunId || controller.signal.aborted) {
-      return;
+  let metadataCandidateAnimeIds: number[] = [];
+  async function hydrateRankedCandidates(candidates: RecommendationResult[]): Promise<boolean> {
+    metadataCandidateAnimeIds = candidates
+      .slice(0, METADATA_PREFETCH_LIMIT)
+      .map((item) => item.anime.animeId)
+      .filter((animeId) => Number.isFinite(animeId) && animeId > 0);
+    const metadataPrefetchLimit = hasActiveRecommendationFilters(recommendationFilters)
+      ? METADATA_PREFETCH_WITH_FILTER_LIMIT
+      : Math.min(12, metadataCandidateAnimeIds.length);
+    if (metadataPrefetchLimit > 0) {
+      await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit, controller.signal);
     }
+    return runId === recommendationRunId && !controller.signal.aborted;
+  }
+  if (!await hydrateRankedCandidates(structuralCandidates)) {
+    return;
   }
 
-  updateGenreFilterOptions(recommendations);
-  const filterResult = applyRecommendationFilters(
-    recommendations,
-    recommendationFilters,
-    animeMetadataCache,
+  let finalEligibility = rankEligibleCandidates(
+    activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
   );
-  const filteredRecommendations = filterResult.recommendations;
+  if (recommendationMode !== "graph" && !usingCatalogFallback &&
+      finalEligibility.recommendations.length === 0) {
+    if (activeRankingMode !== "graph") {
+      activeRankingMode = "graph";
+      fallbackReason = "No ML candidates passed catalog and required filters.";
+      showActiveEngine();
+      structuralCandidates = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      ).structurallyEligible;
+      if (!await hydrateRankedCandidates(structuralCandidates)) {
+        return;
+      }
+      finalEligibility = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      );
+    }
+    if (finalEligibility.recommendations.length === 0) {
+      selectCatalogBaseline();
+      structuralCandidates = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      ).structurallyEligible;
+      if (!await hydrateRankedCandidates(structuralCandidates)) {
+        return;
+      }
+      finalEligibility = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      );
+    }
+  }
+  updateGenreFilterOptions(structuralCandidates);
+  const filteredRecommendations = finalEligibility.recommendations;
   if (filteredRecommendations.length === 0) {
     recSummaryEl.textContent = hasActiveRecommendationFilters(recommendationFilters)
       ? "No recommendations match your current metadata filters."
@@ -2697,25 +2744,22 @@ async function updateRecommendations(): Promise<void> {
     setMetadataStatus(metadataState,
       metadataState === "failed" ? "Metadata request failed; some candidates could not be checked."
         : metadataState === "unavailable" ? "Metadata is unavailable for some candidates."
-          : hasActiveRecommendationFilters(recommendationFilters) && filterResult.missingMetadataCount > 0
-            ? `Metadata: ${filterResult.missingMetadataCount} candidate(s) skipped due to missing metadata.`
+          : hasActiveRecommendationFilters(recommendationFilters) && finalEligibility.missingMetadataCount > 0
+            ? `Metadata: ${finalEligibility.missingMetadataCount} candidate(s) skipped due to missing metadata.`
             : "Metadata: no matches after filters.",
     );
     return;
   }
 
-  const methodLabel =
-    recommendationMode === "graph"
-      ? "graph edge ranking"
-      : recommendationMode === "model"
-        ? "ML model ranking"
-        : "hybrid graph+ML ranking";
+  const methodLabel = usingCatalogFallback ? "catalog coverage baseline"
+    : activeRankingMode === "graph" ? fallbackReason ? "graph edge fallback" : "graph edge ranking"
+      : activeRankingMode === "model" ? "ML model ranking" : "hybrid graph+ML ranking";
   const filterSummary = formatActiveFilterSummary();
   recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${filteredRecommendations.length} candidates (${methodLabel})${filterSummary}.`;
 
   const visibleRecommendations = filteredRecommendations
     .slice(0, MAX_RECOMMENDATIONS)
-    .map((item) => renderRecommendationCard(item));
+    .map((item) => renderRecommendationCard(item, usingCatalogFallback));
   recResultsEl.innerHTML = visibleRecommendations.join("");
 
   const visibleWithMetadata = filteredRecommendations
@@ -2730,8 +2774,8 @@ async function updateRecommendations(): Promise<void> {
         !animeMetadataFailed.has(item.anime.animeId),
     ).length;
   const missingNote =
-    filterResult.missingMetadataCount > 0
-      ? ` | skipped (missing metadata): ${filterResult.missingMetadataCount}`
+    finalEligibility.missingMetadataCount > 0
+      ? ` | skipped (missing metadata): ${finalEligibility.missingMetadataCount}`
       : "";
   const visibleIds = filteredRecommendations.slice(0, MAX_RECOMMENDATIONS).map((item) => item.anime.animeId);
   const metadataState: AsyncUiState = demoMode ? "demo"
@@ -2747,7 +2791,7 @@ async function updateRecommendations(): Promise<void> {
   );
 }
 
-function renderRecommendationCard(item: RecommendationResult): string {
+function renderRecommendationCard(item: RecommendationResult, catalogFallback = false): string {
   const metadata = animeMetadataCache.get(item.anime.animeId) ?? null;
   const imageUrl = safeExternalImageUrl(metadata?.imageUrl ?? "");
   const coverHtml =
@@ -2763,6 +2807,13 @@ function renderRecommendationCard(item: RecommendationResult): string {
     metadata && metadata.synopsis
       ? "rec-synopsis"
       : "rec-synopsis rec-synopsis-muted";
+  const reason = catalogFallback
+    ? `Catalog coverage: ${item.supportCount} positive graph connections; personal preference evidence is unavailable.`
+    : formatRecommendationWhyHtml(item);
+  const score = catalogFallback ? `${item.supportCount} connections` : formatWeight(item.score);
+  const supportLine = catalogFallback
+    ? `Positive graph connections: ${item.supportCount}`
+    : `Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}`;
 
   return `
       <li class="rec-item">
@@ -2770,13 +2821,13 @@ function renderRecommendationCard(item: RecommendationResult): string {
           ${coverHtml}
           <div class="rec-copy">
             <div class="rec-title">${escapeHtml(item.anime.label)}</div>
-            <div class="rec-meta">Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}</div>
+            <div class="rec-meta">${supportLine}</div>
             <div class="rec-meta rec-meta-details">${escapeHtml(metadataMeta)}</div>
             <p class="${synopsisClass}">${escapeHtml(synopsisText)}</p>
-            <div class="rec-why">${formatRecommendationWhyHtml(item)}</div>
+            <div class="rec-why">${reason}</div>
           </div>
         </div>
-        <div class="rec-score">${formatWeight(item.score)}</div>
+        <div class="rec-score">${score}</div>
       </li>
     `;
 }

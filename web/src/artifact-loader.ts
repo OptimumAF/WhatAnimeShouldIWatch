@@ -60,9 +60,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
 
   async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
     const rawCompact = demoMode
-      ? { value: await fetchPlainJson(
-          "./demo-data/model-mf-web.compact.json", "synthetic demo model",
-        ) }
+      ? await fetchOptionalPlainJson("./demo-data/model-mf-web.compact.json", "synthetic demo model")
       : await fetchJsonWithGzipFallback({
           path: "./data/model-mf-web.compact.json",
           required: false,
@@ -131,6 +129,17 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
     if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
     try {
       return await response.json();
+    } catch {
+      throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
+    }
+  }
+
+  async function fetchOptionalPlainJson(url: string, label: string): Promise<{ value: unknown } | null> {
+    const response = await runtime.fetch(url);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}).`);
+    try {
+      return { value: await response.json() as unknown };
     } catch {
       throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
     }
