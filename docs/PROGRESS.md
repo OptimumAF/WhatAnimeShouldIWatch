@@ -139,7 +139,7 @@
 
 **Files changed:** `web/src/artifacts.ts`, `web/src/domain.ts`, `web/src/main.ts`, `web/test/artifacts.test.ts`, `web/tests/artifact-validation.spec.ts`, `web/package.json`, `package.json`, `package-lock.json`, `README.md`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Pending reviewable draft PR and remote fixture CI at this point in the log.
+**Commit / PR and CI:** Implementation commit `e11b4b7` in draft [PR #6](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/6), stacked on PR #5. [Fixture and fast checks run 36093194065](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36093194065) passed from a fresh PR checkout, including the new web unit tests, all 11 browser tests, fixture checks, TypeScript/Python checks, and build; GitGuardian passed.
 
 **Checks not run / blockers:** No production graph, catalog, or model was regenerated, fetched for testing, or republished; no real username or history was used. The scale check does not establish mobile latency or memory behavior, which remains M7 work. Provider rights, existing public assets, profile migration, and M1's overall exit gate remain unresolved. Desktop parsing was not changed or tested in this web-contract slice.
 
