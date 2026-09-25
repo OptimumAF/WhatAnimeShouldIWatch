@@ -30,11 +30,18 @@ permissions:
 
 jobs:
   publish:
+    # Unset repository variables skip the entire publication job.
+    if: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Verify recorded publication approval
+        env:
+          PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+        run: python3 scripts/verify_provider_data_approval.py publication
 
       - name: Stage release payload
         env:

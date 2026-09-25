@@ -20,11 +20,18 @@ permissions:
 
 jobs:
   retrain:
+    # Unset repository variables skip the entire provider-derived job.
+    if: ${{ vars.PROVIDER_DATA_TRAINING_APPROVED == 'true' && vars.PROVIDER_DATA_TRAINING_APPROVAL_REF != '' }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Verify recorded training approval
+        env:
+          PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_TRAINING_APPROVAL_REF }}
+        run: python3 scripts/verify_provider_data_approval.py training
 
       - name: Setup Node
         uses: actions/setup-node@v4
