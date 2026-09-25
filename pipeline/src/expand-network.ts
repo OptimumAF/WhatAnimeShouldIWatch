@@ -1,15 +1,10 @@
 import path from "node:path";
 import { Command } from "commander";
 import { anonymizeUsername } from "./anonymize.js";
-import {
-  openDatabase,
-  recomputeNormalizedScores,
-  upsertAnime,
-  upsertRating,
-  upsertUser,
-} from "./db.js";
+import { collectUserSnapshot } from "./collection.js";
+import { openDatabase } from "./db.js";
 import { fetchJikanAnimeUserUpdates, fetchJikanUsersPage } from "./jikan.js";
-import { fetchMalRatings } from "./mal.js";
+import { fetchMalPage } from "./mal.js";
 import { getRepoRoot } from "./paths.js";
 
 interface ExpandNetworkOptions {
@@ -61,7 +56,7 @@ const program = new Command()
   )
   .option(
     "--max-mal-pages-per-user <count>",
-    "Maximum MAL pages to fetch per user (0 = unlimited)",
+    "Maximum MAL pages per user in this run (0 = unlimited; full pages checkpoint)",
   );
 
 program.parse(process.argv);
@@ -138,19 +133,6 @@ const existingRatingsStmt = db.prepare(
   all(userId: string, limit: number): DiscoveryRating[];
 };
 
-const insertTx = db.transaction(
-  (
-    userId: string,
-    ratings: { anime_id: number; anime_title: string; score: number }[],
-  ) => {
-    upsertUser(db, userId);
-    for (const rating of ratings) {
-      upsertAnime(db, rating.anime_id, rating.anime_title);
-      upsertRating(db, userId, rating.anime_id, rating.score);
-    }
-  },
-);
-
 try {
   const currentUsers = countUsersStmt.get().count;
   const targetTotalUsers = parseNonNegativeInt(
@@ -196,6 +178,7 @@ try {
   let insertedUsers = 0;
   let skippedUsers = 0;
   let failedUsers = 0;
+  let deferredUsers = 0;
   let discoveredUsers = 0;
   let processedCounter = 0;
   const startedAt = Date.now();
@@ -226,39 +209,50 @@ try {
       skippedUsers += 1;
       discoveryRatings = existingRatingsStmt.all(userId, discoveryAnimePerUser);
       process.stdout.write(
-        `[skip] ${username} already exists; queue=${queue.length}\n`,
+        `[skip] existing user; queue=${queue.length}\n`,
       );
     } else {
       try {
-        const ratings = await fetchMalRatings(
-          username,
-          malDelayMs,
-          maxMalPagesPerUser,
-          controller.signal,
+        const result = await collectUserSnapshot(
+          db,
+          userId,
+          (offset, signal) => fetchMalPage(username, offset, malDelayMs, signal),
+          {
+            maxPages: maxMalPagesPerUser,
+            minScoredEntries: minScoredAnime,
+            signal: controller.signal,
+          },
         );
-        if (ratings.length < minScoredAnime) {
+        if (result.outcome === "canceled") throw new Error("Collection canceled");
+        if (result.outcome === "below_threshold") {
           skippedUsers += 1;
           process.stdout.write(
-            `[skip] ${username} has ${ratings.length} rated anime (< ${minScoredAnime})\n`,
+            `[skip] complete list has ${result.scoredCount} rated anime (< ${minScoredAnime})\n`,
           );
           continue;
         }
+        if (result.outcome === "paused") {
+          deferredUsers += 1;
+          process.stdout.write(`[pause] page checkpoint at offset ${result.nextOffset}\n`);
+          continue;
+        }
+        if (result.outcome !== "complete") {
+          failedUsers += 1;
+          process.stderr.write(`[fail] list ${result.outcome}; last complete ratings preserved\n`);
+          continue;
+        }
 
-        insertTx(userId, ratings);
         insertedUsers += 1;
-        discoveryRatings = ratings
-          .map((rating) => ({ animeId: rating.anime_id, rawScore: rating.score }))
-          .sort((left, right) => right.rawScore - left.rawScore)
-          .slice(0, discoveryAnimePerUser);
+        discoveryRatings = existingRatingsStmt.all(userId, discoveryAnimePerUser);
 
         process.stdout.write(
-          `[add] ${username} -> ${ratings.length} rated anime; total users ${countUsersStmt.get().count}\n`,
+          `[add] ${result.scoredCount} rated anime; total users ${countUsersStmt.get().count}\n`,
         );
       } catch (error) {
         if (controller.signal.aborted) throw error;
         failedUsers += 1;
         process.stderr.write(
-          `[fail] ${username}: ${(error as Error).message}\n`,
+          `[fail] collection: ${(error as Error).message}\n`,
         );
         continue;
       }
@@ -306,14 +300,13 @@ try {
     }
   }
 
-  process.stdout.write("Recomputing normalized scores... ");
-  recomputeNormalizedScores(db);
-  process.stdout.write("done\n");
-
   const finalUsers = countUsersStmt.get().count;
+  if (deferredUsers > 0 || failedUsers > 0 || finalUsers < targetTotalUsers) {
+    process.exitCode = 1;
+  }
   process.stdout.write(`DB: ${dbPath}\n`);
   process.stdout.write(
-    `Summary: +${insertedUsers} inserted, ${skippedUsers} skipped, ${failedUsers} failed, ${discoveredUsers} discovered, total users=${finalUsers}\n`,
+    `Summary: +${insertedUsers} inserted, ${skippedUsers} skipped, ${deferredUsers} deferred, ${failedUsers} failed, ${discoveredUsers} discovered, total users=${finalUsers}\n`,
   );
 } finally {
   db.close();

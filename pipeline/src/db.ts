@@ -34,6 +34,38 @@ export function openDatabase(dbPath: string): Database.Database {
       normalized_score REAL NOT NULL DEFAULT 0,
       PRIMARY KEY (user_id, anime_id)
     );
+
+    CREATE TABLE IF NOT EXISTS collection_status (
+      user_id TEXT PRIMARY KEY,
+      state TEXT NOT NULL CHECK (state IN (
+        'in_progress', 'paused', 'complete', 'below_threshold',
+        'failed', 'unavailable', 'invalid', 'canceled'
+      )),
+      next_offset INTEGER NOT NULL DEFAULT 0 CHECK (next_offset >= 0),
+      pages_fetched INTEGER NOT NULL DEFAULT 0 CHECK (pages_fetched >= 0),
+      staged_entries INTEGER NOT NULL DEFAULT 0 CHECK (staged_entries >= 0),
+      committed_scored_count INTEGER,
+      last_completed_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS collection_pages (
+      user_id TEXT NOT NULL REFERENCES collection_status(user_id) ON DELETE CASCADE,
+      offset INTEGER NOT NULL CHECK (offset >= 0),
+      entry_count INTEGER NOT NULL CHECK (entry_count > 0),
+      scored_count INTEGER NOT NULL CHECK (scored_count >= 0),
+      PRIMARY KEY (user_id, offset)
+    );
+
+    CREATE TABLE IF NOT EXISTS collection_staged_entries (
+      user_id TEXT NOT NULL REFERENCES collection_status(user_id) ON DELETE CASCADE,
+      anime_id INTEGER NOT NULL CHECK (anime_id > 0),
+      page_offset INTEGER NOT NULL,
+      anime_title TEXT NOT NULL,
+      score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 10),
+      PRIMARY KEY (user_id, anime_id),
+      FOREIGN KEY (user_id, page_offset) REFERENCES collection_pages(user_id, offset)
+    );
   `);
 
   return db;

@@ -8,7 +8,7 @@ import {
   type SchedulerPorts,
 } from "../../shared/provider-scheduler.js";
 import { fetchJikanAnimeUserUpdates, fetchJikanUsersPage } from "../src/jikan.js";
-import { fetchMalRatings } from "../src/mal.js";
+import { fetchMalPage } from "../src/mal.js";
 
 const epoch = Date.parse("2026-09-24T12:00:00.000Z");
 const response = (status = 200, headers?: HeadersInit) => new Response("{}", { status, headers });
@@ -169,9 +169,11 @@ test("crawler MAL pages and Jikan discovery use the scheduler with synthetic res
     }
     throw new Error(`Unexpected synthetic URL: ${url.pathname}`);
   });
-  const ratings = await fetchMalRatings("fixture-user", 1_200, 0, undefined, fake.scheduler);
-  assert.equal(ratings.length, 301);
-  assert.equal(ratings.at(-1)?.anime_title, "Copper Comet");
+  const firstPage = await fetchMalPage("fixture-user", 0, 1_200, undefined, fake.scheduler);
+  const secondPage = await fetchMalPage("fixture-user", 300, 1_200, undefined, fake.scheduler);
+  assert.ok(Array.isArray(firstPage));
+  assert.equal(firstPage.length, 300);
+  assert.deepEqual(secondPage, [{ anime_id: 101, anime_title: "Copper Comet", score: 9 }]);
   const malStarts = fake.starts.filter((start) => start.url.includes("myanimelist.net"));
   assert.equal(malStarts.length, 2);
   assert.ok(malStarts[1].at - malStarts[0].at >= 1_200);
@@ -187,7 +189,7 @@ test("crawler MAL pages and Jikan discovery use the scheduler with synthetic res
 test("crawler MAL and Jikan requests propagate cancellation into transport", async () => {
   for (const start of [
     (scheduler: ProviderScheduler, signal: AbortSignal) =>
-      fetchMalRatings("fixture-user", 0, 1, signal, scheduler),
+      fetchMalPage("fixture-user", 0, 0, signal, scheduler),
     (scheduler: ProviderScheduler, signal: AbortSignal) =>
       fetchJikanUsersPage(1, 0, signal, scheduler),
   ]) {
