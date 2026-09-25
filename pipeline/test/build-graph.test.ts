@@ -50,6 +50,13 @@ test("the graph CLI exports the three-user mean and true pair support in both fo
     const left = compact.anime.findIndex(([id]) => id === 1);
     const right = compact.anime.findIndex(([id]) => id === 2);
     assert.deepEqual(compact.aa.find(([a, b]) => a === left && b === right), [left, right, 2, 3]);
+    const report = JSON.parse(fs.readFileSync(`${graphPath}.report.json`, "utf8"));
+    assert.equal(report.selection.policy, "all-ratings");
+    assert.equal(report.selection.seed, 0);
+    assert.equal(report.coverage.approximationLevel, "exact-input");
+    assert.equal(report.coverage.pairVisitsSkipped, 0);
+    assert.equal(report.coverage.pairKeyRecall, 1);
+    assert.equal(report.coverage.outputTruncated, false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -108,12 +115,16 @@ test("the graph CLI selects the later supported pair and fails before output on 
     ]);
     const compact = JSON.parse(fs.readFileSync(selected.compactPath, "utf8")) as CompactGraphData;
     assert.deepEqual(compact.aa, [[2, 3, 1, 3]]);
+    const selectedReport = JSON.parse(fs.readFileSync(`${selected.graphPath}.report.json`, "utf8"));
+    assert.equal(selectedReport.coverage.outputTruncated, true);
+    assert.equal(selectedReport.coverage.pairKeyRecall, 1);
 
     const visits = runGraph("visits-blocked", "--max-pair-visits", "7");
     assert.notEqual(visits.command.status, 0);
     assert.match(visits.command.stderr, /Pair-visit budget exceeded/);
     assert.equal(fs.existsSync(visits.graphPath), false);
     assert.equal(fs.existsSync(visits.compactPath), false);
+    assert.equal(fs.existsSync(`${visits.graphPath}.report.json`), false);
     const candidates = runGraph("candidates-blocked", "--max-pair-candidates", "5");
     assert.notEqual(candidates.command.status, 0);
     assert.match(candidates.command.stderr, /Candidate-key budget exceeded/);
@@ -123,6 +134,90 @@ test("the graph CLI selects the later supported pair and fails before output on 
     assert.notEqual(malformed.command.status, 0);
     assert.match(malformed.command.stderr, /Invalid max pair visits/);
     assert.equal(fs.existsSync(malformed.graphPath), false);
+    const invalidSeed = runGraph("invalid-seed", "--pair-selection-seed", "4294967296");
+    assert.notEqual(invalidSeed.command.status, 0);
+    assert.match(invalidSeed.command.stderr, /Invalid pair selection seed.*unsigned 32-bit/);
+    assert.equal(fs.existsSync(invalidSeed.graphPath), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a seeded cap uses one selected subset for both graph edge types and records coverage", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "anime-graph-seeded-test-"));
+  try {
+    const dbPath = path.join(dir, "fixture.sqlite");
+    const db = openDatabase(dbPath);
+    try {
+      upsertUser(db, "invented-user");
+      for (let animeId = 1; animeId <= 8; animeId += 1) {
+        upsertAnime(db, animeId, `Invented ${animeId}`);
+        upsertRating(db, "invented-user", animeId, animeId);
+      }
+    } finally {
+      db.close();
+    }
+    const graphPath = path.join(dir, "graph.json");
+    const reportPath = path.join(dir, "report.json");
+    const command = spawnSync(process.execPath, [
+      "--import", "tsx", "src/build-graph.ts",
+      "--db", dbPath,
+      "--out-dataset", path.join(dir, "ratings.json"),
+      "--out-graph", graphPath,
+      "--out-dataset-compact", path.join(dir, "ratings.compact.json"),
+      "--out-graph-compact", path.join(dir, "graph.compact.json"),
+      "--out-report", reportPath,
+      "--max-ratings-per-user", "3",
+      "--pair-selection-seed", "17",
+      "--max-pair-visits", "3",
+      "--max-pair-candidates", "3",
+    ], { cwd: path.resolve("."), encoding: "utf8" });
+    assert.equal(command.status, 0, `${command.stdout}\n${command.stderr}`);
+    const graph = JSON.parse(fs.readFileSync(graphPath, "utf8")) as GraphData;
+    const selectedIds = graph.edges.filter((edge) => edge.edgeType === "user-anime")
+      .map((edge) => Number(edge.target.slice("anime:".length))).sort((a, b) => a - b);
+    assert.deepEqual(selectedIds, [1, 3, 5]);
+    assert.deepEqual(graph.edges.filter((edge) => edge.edgeType === "anime-anime").map((edge) => edge.id), [
+      `aa:${selectedIds[0]}:${selectedIds[1]}`,
+      `aa:${selectedIds[0]}:${selectedIds[2]}`,
+      `aa:${selectedIds[1]}:${selectedIds[2]}`,
+    ]);
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    assert.equal(report.format, "graph-build-report-v1");
+    assert.equal(report.selection.policy, "sha256-bottom-k-v1");
+    assert.equal(report.selection.seed, 17);
+    assert.equal(report.selection.maxRatingsPerUser, 3);
+    assert.equal(report.coverage.approximationLevel, "seeded-per-user-subset");
+    assert.equal(report.coverage.inputRatings, 8);
+    assert.equal(report.coverage.selectedRatings, 3);
+    assert.equal(report.coverage.ratingsSkipped, 5);
+    assert.equal(report.coverage.potentialPairVisits, 28);
+    assert.equal(report.coverage.pairVisits, 3);
+    assert.equal(report.coverage.pairVisitsSkipped, 25);
+    assert.equal(report.coverage.inputAnimeCount, 8);
+    assert.equal(report.coverage.selectedAnimeCount, 3);
+    assert.equal(report.coverage.pairKeyRecall, null);
+    assert.ok(report.measurement.elapsedMs > 0);
+    assert.ok(report.measurement.peakRssBytes > 0);
+    assert.doesNotMatch(JSON.stringify(report), /invented-user/);
+    assert.match(command.stdout, /sha256-bottom-k-v1.*seed=17/);
+
+    const compactOnlyPath = path.join(dir, "only.compact.json");
+    const compactOnly = spawnSync(process.execPath, [
+      "--import", "tsx", "src/build-graph.ts",
+      "--db", dbPath,
+      "--out-dataset", path.join(dir, "only.ratings.json"),
+      "--out-graph", path.join(dir, "only.graph.json"),
+      "--out-dataset-compact", path.join(dir, "only.ratings.compact.json"),
+      "--out-graph-compact", compactOnlyPath,
+      "--compact-only",
+      "--max-ratings-per-user", "3",
+      "--pair-selection-seed", "17",
+    ], { cwd: path.resolve("."), encoding: "utf8" });
+    assert.equal(compactOnly.status, 0, `${compactOnly.stdout}\n${compactOnly.stderr}`);
+    assert.equal(fs.existsSync(path.join(dir, "only.graph.json")), false);
+    assert.equal(fs.existsSync(compactOnlyPath), true);
+    assert.equal(JSON.parse(fs.readFileSync(`${compactOnlyPath}.report.json`, "utf8")).selection.seed, 17);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

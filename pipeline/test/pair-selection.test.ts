@@ -67,11 +67,49 @@ test("equal support and magnitude resolve by numeric pair IDs", () => {
   assert.deepEqual([...result.pairs.keys()], ["2:100"]);
 });
 
-test("legacy per-user cap reports skipped ratings without hiding input-budget checks", () => {
+test("seeded per-user cap reports skipped ratings without hiding input-budget checks", () => {
   const result = aggregateAnimePairs(fixture.users, 2, 0, budgets);
   assert.equal(result.stats.ratingsSkippedByUserCap, 2);
   assert.equal(result.stats.pairVisits, 4);
-  assert.deepEqual(result.pairs.get("3:4"), { support: 3, weight: 1 });
+  const reversed = aggregateAnimePairs(fixture.users.map((user) => ({
+    ...user, ratings: [...user.ratings].reverse(),
+  })).reverse(), 2, 0, budgets);
+  assert.deepEqual([...result.pairs], [...reversed.pairs]);
+});
+
+test("a seeded per-user cap selects the same rating IDs and pairs after input reordering", () => {
+  const users: PairUser[] = [{
+    userId: "invented-user",
+    ratings: [3, 2, 1, 0, 0, -1, -2, -3].map((normalizedScore, index) => ({
+      animeId: index + 1, normalizedScore,
+    })),
+  }];
+  const options = { maxPairVisits: 3, maxCandidatePairs: 3, selectionSeed: 17 };
+  const first = aggregateAnimePairs(users, 3, 0, options);
+  const reordered = aggregateAnimePairs([{ ...users[0], ratings: [...users[0].ratings].reverse() }], 3, 0, options);
+  const selectedIds = first.selectedUsers[0].ratings.map((rating) => rating.animeId);
+  assert.deepEqual(selectedIds, [1, 3, 5]);
+  assert.deepEqual(reordered.selectedUsers[0].ratings.map((rating) => rating.animeId), selectedIds);
+  assert.deepEqual([...reordered.pairs], [...first.pairs]);
+  assert.notDeepEqual(selectedIds, [1, 2, 3]);
+  assert.deepEqual(
+    aggregateAnimePairs(users, 3, 0, { ...options, selectionSeed: 18 }).selectedUsers[0].ratings.map((rating) => rating.animeId),
+    [4, 5, 6],
+  );
+  assert.equal(first.stats.inputRatings, 8);
+  assert.equal(first.stats.selectedRatings, 3);
+  assert.equal(first.stats.ratingsSkippedByUserCap, 5);
+  assert.equal(first.stats.potentialPairVisits, 28);
+  assert.equal(first.stats.pairVisits, 3);
+  assert.equal(first.stats.pairVisitsSkippedByUserCap, 25);
+  assert.equal(first.stats.inputAnimeCount, 8);
+  assert.equal(first.stats.selectedAnimeCount, 3);
+  assert.equal(first.stats.usersCapped, 1);
+});
+
+test("seed and cap options are validated even when an empty user is present", () => {
+  assert.throws(() => aggregateAnimePairs([], 0, 0, { selectionSeed: -1 }), /selectionSeed.*unsigned 32-bit/i);
+  assert.throws(() => aggregateAnimePairs([], 0, 0, { selectionSeed: 4_294_967_296 }), /selectionSeed.*unsigned 32-bit/i);
 });
 
 test("malformed centered inputs fail before exporting NaN weights or inflated support", () => {

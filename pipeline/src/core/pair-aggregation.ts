@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export interface PairRating {
   animeId: number;
   normalizedScore: number;
@@ -21,10 +23,20 @@ export interface PairSelectionOptions {
   minSupport?: number;
   /** Greedy degree limit after ranking by support, magnitude, then numeric IDs. */
   maxNeighborsPerAnime?: number;
+  /** Unsigned 32-bit seed for the stable per-user hash sample when capped. */
+  selectionSeed?: number;
 }
 
 export interface PairSelectionStats {
+  inputUsers: number;
+  usersCapped: number;
+  inputRatings: number;
+  selectedRatings: number;
+  inputAnimeCount: number;
+  selectedAnimeCount: number;
+  potentialPairVisits: number;
   pairVisits: number;
+  pairVisitsSkippedByUserCap: number;
   candidatePairs: number;
   eligiblePairs: number;
   selectedPairs: number;
@@ -36,6 +48,8 @@ export interface PairSelectionStats {
 
 export const DEFAULT_MAX_PAIR_VISITS = 20_000_000;
 export const DEFAULT_MAX_CANDIDATE_PAIRS = 2_500_000;
+export const DEFAULT_PAIR_SELECTION_SEED = 0;
+export const PAIR_CAP_POLICY = "sha256-bottom-k-v1";
 
 interface CandidatePair {
   key: string;
@@ -53,53 +67,65 @@ function requireSafeInteger(name: string, value: number, minimum: number): void 
 }
 
 /** Exact v1 pair means, with independent work/key budgets and deterministic output selection. */
-export function aggregateAnimePairs(
-  users: PairUser[],
+export function aggregateAnimePairs<T extends PairUser>(
+  users: T[],
   maxRatingsPerUser: number,
   maxAnimeAnimeEdges: number,
   options: PairSelectionOptions = {},
-): { pairs: Map<string, PairAggregate>; stats: PairSelectionStats } {
+): { pairs: Map<string, PairAggregate>; stats: PairSelectionStats; selectedUsers: T[] } {
   const maxPairVisits = options.maxPairVisits ?? DEFAULT_MAX_PAIR_VISITS;
   const maxCandidatePairs = options.maxCandidatePairs ?? DEFAULT_MAX_CANDIDATE_PAIRS;
   const minSupport = options.minSupport ?? 1;
   const maxNeighborsPerAnime = options.maxNeighborsPerAnime ?? 0;
+  const selectionSeed = options.selectionSeed ?? DEFAULT_PAIR_SELECTION_SEED;
   requireSafeInteger("maxRatingsPerUser", maxRatingsPerUser, 0);
   requireSafeInteger("maxAnimeAnimeEdges", maxAnimeAnimeEdges, 0);
   requireSafeInteger("maxPairVisits", maxPairVisits, 1);
   requireSafeInteger("maxCandidatePairs", maxCandidatePairs, 1);
   requireSafeInteger("minSupport", minSupport, 1);
   requireSafeInteger("maxNeighborsPerAnime", maxNeighborsPerAnime, 0);
+  if (!Number.isInteger(selectionSeed) || selectionSeed < 0 || selectionSeed > 0xffffffff) {
+    throw new Error("selectionSeed must be an unsigned 32-bit integer.");
+  }
 
-  // Count input work before building any pair keys. The first-N user cap is a
-  // legacy approximation; M3.6 will replace its selection policy.
+  // Count full and selected pair work before building keys. Fail closed if the
+  // selected observations exceed the work budget, even with an output cap.
+  let potentialPairVisits = 0;
   let pairVisits = 0;
+  let inputRatings = 0;
   let ratingsSkippedByUserCap = 0;
   for (const user of users) {
+    inputRatings += user.ratings.length;
+    potentialPairVisits += user.ratings.length * (user.ratings.length - 1) / 2;
+    if (!Number.isSafeInteger(inputRatings) || !Number.isSafeInteger(potentialPairVisits)) {
+      throw new Error("Input rating or potential pair count exceeds the safe integer range.");
+    }
     const selectedCount = maxRatingsPerUser > 0
       ? Math.min(user.ratings.length, maxRatingsPerUser) : user.ratings.length;
     ratingsSkippedByUserCap += user.ratings.length - selectedCount;
-    if (!Number.isSafeInteger(ratingsSkippedByUserCap)) {
-      throw new Error("Skipped-rating count exceeds the safe integer range.");
-    }
     pairVisits += selectedCount * (selectedCount - 1) / 2;
     if (!Number.isSafeInteger(pairVisits) || pairVisits > maxPairVisits) {
       throw new Error(`Pair-visit budget exceeded: ${pairVisits} observations exceed limit ${maxPairVisits}. Raise --max-pair-visits or use a deliberate per-user selection policy.`);
     }
   }
 
-  const candidates = new Map<string, CandidatePair>();
+  const inputAnimeIds = new Set<number>();
+  const selectedAnimeIds = new Set<number>();
   const sortedUsers = [...users].sort((a, b) =>
     a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0,
   );
+  const selectedUsers: T[] = [];
+  let usersCapped = 0;
   let previousUserId: string | null = null;
   for (const user of sortedUsers) {
+    if (typeof user.userId !== "string" || user.userId.length === 0) {
+      throw new Error("Invalid user ID in pair input.");
+    }
     if (user.userId === previousUserId) {
       throw new Error("Duplicate user ID in pair input.");
     }
     previousUserId = user.userId;
-    const selected = maxRatingsPerUser > 0
-      ? user.ratings.slice(0, maxRatingsPerUser) : user.ratings;
-    const ratings = [...selected].sort((a, b) => a.animeId - b.animeId);
+    const ratings = [...user.ratings].sort((a, b) => a.animeId - b.animeId);
     for (let i = 0; i < ratings.length; i += 1) {
       const rating = ratings[i];
       if (!Number.isSafeInteger(rating.animeId) || rating.animeId <= 0 ||
@@ -109,8 +135,31 @@ export function aggregateAnimePairs(
       if (i > 0 && ratings[i - 1].animeId === rating.animeId) {
         throw new Error(`Duplicate anime ID ${rating.animeId} in one user's pair input.`);
       }
+      inputAnimeIds.add(rating.animeId);
     }
+    const isCapped = maxRatingsPerUser > 0 && ratings.length > maxRatingsPerUser;
+    let selected = ratings;
+    if (isCapped) {
+      usersCapped += 1;
+      selected = ratings.map((rating) => ({
+        rating,
+        rank: createHash("sha256")
+          .update(JSON.stringify([PAIR_CAP_POLICY, selectionSeed, user.userId, rating.animeId]))
+          .digest("hex"),
+      })).sort((a, b) =>
+        a.rank < b.rank ? -1 : a.rank > b.rank ? 1 : a.rating.animeId - b.rating.animeId,
+      ).slice(0, maxRatingsPerUser).map(({ rating }) => rating)
+        .sort((a, b) => a.animeId - b.animeId);
+    }
+    for (const rating of selected) {
+      selectedAnimeIds.add(rating.animeId);
+    }
+    selectedUsers.push(isCapped ? { ...user, ratings: selected } as T : user);
+  }
 
+  const candidates = new Map<string, CandidatePair>();
+  for (const user of selectedUsers) {
+    const ratings = [...user.ratings].sort((a, b) => a.animeId - b.animeId);
     for (let i = 0; i < ratings.length; i += 1) {
       for (let j = i + 1; j < ratings.length; j += 1) {
         const low = ratings[i].animeId;
@@ -172,8 +221,17 @@ export function aggregateAnimePairs(
   }]));
   return {
     pairs,
+    selectedUsers,
     stats: {
+      inputUsers: users.length,
+      usersCapped,
+      inputRatings,
+      selectedRatings: inputRatings - ratingsSkippedByUserCap,
+      inputAnimeCount: inputAnimeIds.size,
+      selectedAnimeCount: selectedAnimeIds.size,
+      potentialPairVisits,
       pairVisits,
+      pairVisitsSkippedByUserCap: potentialPairVisits - pairVisits,
       candidatePairs: candidates.size,
       eligiblePairs: ranked.length,
       selectedPairs: selected.length,
