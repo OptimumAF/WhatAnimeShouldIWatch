@@ -525,6 +525,19 @@ export function clampWatchWeight(value: number): number {
   return Math.min(Math.max(value, MIN_WATCH_WEIGHT), MAX_WATCH_WEIGHT);
 }
 
+export function normalizeImportedScoreToWeight(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+
+  if (value <= MAX_WATCH_WEIGHT) {
+    return clampWatchWeight(value);
+  }
+
+  const mapped = 1 + (value - 5) / 5;
+  return clampWatchWeight(mapped);
+}
+
 export function clampModelBlendWeight(value: number): number {
   if (!Number.isFinite(value)) {
     return 0.5;

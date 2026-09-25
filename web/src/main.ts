@@ -1,20 +1,11 @@
 import Graph from "graphology";
-import {
-  isCompactGraphData,
-  parseCompactGraph,
-  parseCompactModel,
-  parseDemoCatalog,
-  parseLegacyGraph,
-  parseLegacyModel,
-} from "./artifacts";
+import { isCompactGraphData } from "./artifacts";
 import type {
   AnimeMetadata,
-  DemoCatalogItem,
   EdgeType,
   GraphEdge,
   GraphNode,
   LoadedGraphData,
-  ModelRecommendationAnime,
   NodeType,
 } from "./artifacts";
 import type {
@@ -25,7 +16,6 @@ import type {
   RecommendationIndex,
   RecommendationResult,
   SeasonalAnimeItem,
-  UsernameImportResult,
 } from "./domain";
 import {
   MAX_MODEL_BLEND_WEIGHT,
@@ -44,19 +34,35 @@ import {
   filterCandidateEligibility,
   formatWeight,
   hasActiveRecommendationFilters,
+  normalizeImportedScoreToWeight,
   normalizeTitle,
 } from "./recommendations";
 import type { RecommendationFilters } from "./recommendations";
+import { createProviderAdapter } from "./providers";
+import { createArtifactLoader } from "./artifact-loader";
+import {
+  COMMAND_HISTORY_LIMIT,
+  COMMAND_PINNED_LIMIT,
+  createPersistenceAdapter,
+} from "./persistence";
+import type {
+  ContrastMode,
+  RecommendationMode,
+  RecommendationProfileRecord,
+  StoredRecommendationState,
+  ThemeMode,
+} from "./persistence";
+import { createBrowserRuntime } from "./runtime";
 import "./style.css";
 
+const runtime = createBrowserRuntime();
+const providerAdapter = createProviderAdapter(runtime);
 const demoMode = import.meta.env.VITE_DEMO_MODE === "true";
-const storagePrefix = demoMode ? "wasiw.demo" : "wasiw";
+const artifactLoader = createArtifactLoader(runtime, demoMode);
+const persistence = createPersistenceAdapter(runtime, demoMode ? "wasiw.demo" : "wasiw");
 
 type AppView = "recommendations" | "network";
-type RecommendationMode = "graph" | "model" | "hybrid";
 type UsernameImportProvider = "anilist" | "mal";
-type ThemeMode = "dark" | "light";
-type ContrastMode = "normal" | "high";
 type CommandMatchReason =
   | "pinned"
   | "exact"
@@ -72,10 +78,6 @@ const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
 const WATCH_WEIGHT_STEP = 0.1;
 const MODEL_BLEND_WEIGHT_STEP = 0.05;
-const USERNAME_IMPORT_MAX_RETRIES = 3;
-const USERNAME_IMPORT_PAGE_SIZE = 300;
-const USERNAME_IMPORT_PAGE_DELAY_MS = 350;
-const METADATA_MAX_RETRIES = 2;
 const METADATA_PREFETCH_LIMIT = 100;
 const METADATA_PREFETCH_WITH_FILTER_LIMIT = 30;
 const METADATA_PREFETCH_CONCURRENCY = 3;
@@ -83,37 +85,7 @@ const METADATA_SCORE_STEP = 0.1;
 const SEASONAL_LIST_LIMIT = 12;
 const QUICKSTART_SEASONAL_PICK_LIMIT = 3;
 const NETWORK_MOBILE_COMPACT_MAX_WIDTH = 980;
-const RECOMMENDATION_STATE_STORAGE_KEY = `${storagePrefix}.recommendationState.v1`;
-const RECOMMENDATION_PROFILES_STORAGE_KEY = `${storagePrefix}.recommendationProfiles.v1`;
-const THEME_STORAGE_KEY = `${storagePrefix}.theme.v1`;
-const CONTRAST_STORAGE_KEY = `${storagePrefix}.contrast.v1`;
-const HELP_TIPS_STORAGE_KEY = `${storagePrefix}.helpTips.v1`;
-const HELP_TIPS_VERSION = 1;
-const COMMAND_HISTORY_STORAGE_KEY = `${storagePrefix}.commandHistory.v1`;
-const COMMAND_HISTORY_LIMIT = 6;
-const COMMAND_PINNED_STORAGE_KEY = `${storagePrefix}.commandPinned.v1`;
-const COMMAND_PINNED_LIMIT = 8;
 const SVG_NS = "http://www.w3.org/2000/svg";
-
-interface StoredRecommendationState {
-  version: number;
-  mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
-  modelBlendWeight?: number;
-  includeCandidates?: string[];
-  excludeCandidates?: string[];
-}
-
-interface RecommendationProfileRecord {
-  name: string;
-  updatedAt: string;
-  state: StoredRecommendationState;
-}
-
-interface StoredHelpTipsState {
-  version: number;
-  dismissed: boolean;
-}
 
 type CommandGroup = "Navigation" | "Display" | "Utilities";
 
@@ -587,7 +559,7 @@ const recommendationFilters: RecommendationFilters = {
 const animeMetadataCache = new Map<number, AnimeMetadata>();
 const animeMetadataUnavailable = new Set<number>();
 const animeMetadataInFlight = new Map<number, Promise<AnimeMetadata | null>>();
-const demoCatalog = demoMode ? await loadRequiredArtifact(fetchDemoCatalog()) : null;
+const demoCatalog = demoMode ? await loadRequiredArtifact(artifactLoader.fetchDemoCatalog()) : null;
 if (demoCatalog) {
   for (const item of demoCatalog) animeMetadataCache.set(item.animeId, item);
   usernameImportProvider.disabled = true;
@@ -596,15 +568,17 @@ if (demoCatalog) {
 }
 let seasonalItems: SeasonalAnimeItem[] = [];
 let seasonalLoadingPromise: Promise<void> | null = null;
-let activeTheme: ThemeMode = loadThemeModePreference();
-let activeContrast: ContrastMode = loadContrastModePreference();
-let helpTipsDismissed = loadHelpTipsDismissed();
+let activeTheme: ThemeMode = persistence.loadThemeModePreference(
+  () => window.matchMedia("(prefers-color-scheme: light)").matches,
+);
+let activeContrast: ContrastMode = persistence.loadContrastModePreference();
+let helpTipsDismissed = persistence.loadHelpTipsDismissed();
 let commandPaletteOpen = false;
 let commandSelectionIndex = 0;
 let commandFilteredActions: CommandAction[] = [];
 let commandMatchReasons = new Map<string, CommandMatchReason[]>();
-let commandPinnedIds = loadCommandPinnedIds();
-let commandHistoryIds = loadCommandHistoryIds();
+let commandPinnedIds = persistence.loadCommandPinnedIds();
+let commandHistoryIds = persistence.loadCommandHistoryIds();
 let draggedPinnedCommandId: string | null = null;
 const reduceMotionMediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 const networkCompactMediaQuery = window.matchMedia(
@@ -615,7 +589,7 @@ let networkControlsHiddenOnMobile = true;
 applyTheme(activeTheme);
 applyContrast(activeContrast);
 
-const graphData = await loadRequiredArtifact(fetchGraph());
+const graphData = await loadRequiredArtifact(artifactLoader.fetchGraph());
 const graphNodes = getGraphNodes(graphData);
 const recommendationIndex = isCompactGraphData(graphData)
   ? buildRecommendationIndexFromCompact(graphData)
@@ -624,8 +598,8 @@ const selectedAnimeNodeIds: string[] = [];
 const selectedAnimeWeights = new Map<string, number>();
 const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
-const persistedState = loadRecommendationState(recommendationIndex);
-const savedProfiles = loadRecommendationProfiles();
+const persistedState = persistence.loadRecommendationState(recommendationIndex);
+const savedProfiles = persistence.loadRecommendationProfiles(recommendationIndex);
 const commandActions = buildCommandActions();
 
 for (const entry of persistedState.selected) {
@@ -859,13 +833,13 @@ quickstartSeasonalBtn.addEventListener("click", () => {
 themeToggleBtn.addEventListener("click", () => {
   activeTheme = activeTheme === "dark" ? "light" : "dark";
   applyTheme(activeTheme);
-  persistThemeModePreference(activeTheme);
+  persistence.persistThemeModePreference(activeTheme);
 });
 
 contrastToggleBtn.addEventListener("click", () => {
   activeContrast = activeContrast === "normal" ? "high" : "normal";
   applyContrast(activeContrast);
-  persistContrastModePreference(activeContrast);
+  persistence.persistContrastModePreference(activeContrast);
 });
 
 networkMobileToggleBtn.addEventListener("click", () => {
@@ -885,19 +859,19 @@ onMediaQueryChange(networkCompactMediaQuery, () => {
 
 tipsToggleBtn.addEventListener("click", () => {
   helpTipsDismissed = !helpTipsDismissed;
-  persistHelpTipsDismissed(helpTipsDismissed);
+  persistence.persistHelpTipsDismissed(helpTipsDismissed);
   renderContextualTips();
 });
 
 tipsDismissRecommendationsBtn.addEventListener("click", () => {
   helpTipsDismissed = true;
-  persistHelpTipsDismissed(helpTipsDismissed);
+  persistence.persistHelpTipsDismissed(helpTipsDismissed);
   renderContextualTips();
 });
 
 tipsDismissNetworkBtn.addEventListener("click", () => {
   helpTipsDismissed = true;
-  persistHelpTipsDismissed(helpTipsDismissed);
+  persistence.persistHelpTipsDismissed(helpTipsDismissed);
   renderContextualTips();
 });
 
@@ -1107,7 +1081,7 @@ clearExcludeBtn.addEventListener("click", () => {
 });
 
 recMethodSelect.addEventListener("change", () => {
-  recommendationMode = parseRecommendationMode(recMethodSelect.value);
+  recommendationMode = persistence.parseRecommendationMode(recMethodSelect.value);
   setBlendControlVisibility();
   persistRecommendationState();
   void updateRecommendations();
@@ -1188,7 +1162,7 @@ function setActiveView(view: AppView, fromHash: boolean): void {
     setGraphLoadingState(true, "Render status: loading explorer data...");
     void ensureExplorerGraphData()
       .then(() => {
-        window.requestAnimationFrame(() => {
+        runtime.frame(() => {
           rerenderGraph();
         });
       })
@@ -1416,7 +1390,7 @@ function openCommandPalette(): void {
   commandSelectionIndex = 0;
   renderCommandPaletteList();
   document.body.classList.add("palette-open");
-  window.requestAnimationFrame(() => {
+  runtime.frame(() => {
     commandInput.focus();
   });
 }
@@ -1815,33 +1789,6 @@ function groupCommandActions(
     }));
 }
 
-function loadCommandPinnedIds(): string[] {
-  try {
-    const raw = window.localStorage.getItem(COMMAND_PINNED_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-      .slice(0, COMMAND_PINNED_LIMIT);
-  } catch (error) {
-    console.warn("Unable to load pinned commands.", error);
-    return [];
-  }
-}
-
-function persistCommandPinnedIds(ids: string[]): void {
-  try {
-    window.localStorage.setItem(COMMAND_PINNED_STORAGE_KEY, JSON.stringify(ids));
-  } catch (error) {
-    console.warn("Unable to persist pinned commands.", error);
-  }
-}
-
 function isCommandPinned(commandId: string): boolean {
   return commandPinnedIds.includes(commandId);
 }
@@ -1852,7 +1799,7 @@ function toggleCommandPinned(commandId: string): void {
   } else {
     commandPinnedIds = [commandId, ...commandPinnedIds].slice(0, COMMAND_PINNED_LIMIT);
   }
-  persistCommandPinnedIds(commandPinnedIds);
+  persistence.persistCommandPinnedIds(commandPinnedIds);
 }
 
 function movePinnedCommandBefore(draggedId: string, targetId: string): void {
@@ -1871,7 +1818,7 @@ function movePinnedCommandBefore(draggedId: string, targetId: string): void {
   }
   withoutDragged.splice(targetIndex, 0, draggedId);
   commandPinnedIds = withoutDragged.slice(0, COMMAND_PINNED_LIMIT);
-  persistCommandPinnedIds(commandPinnedIds);
+  persistence.persistCommandPinnedIds(commandPinnedIds);
 }
 
 function clearCommandDragOverState(): void {
@@ -1888,39 +1835,12 @@ function clearCommandDragState(): void {
     .forEach((handle) => handle.classList.remove("active"));
 }
 
-function loadCommandHistoryIds(): string[] {
-  try {
-    const raw = window.localStorage.getItem(COMMAND_HISTORY_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed
-      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-      .slice(0, COMMAND_HISTORY_LIMIT);
-  } catch (error) {
-    console.warn("Unable to load command history.", error);
-    return [];
-  }
-}
-
-function persistCommandHistoryIds(history: string[]): void {
-  try {
-    window.localStorage.setItem(COMMAND_HISTORY_STORAGE_KEY, JSON.stringify(history));
-  } catch (error) {
-    console.warn("Unable to persist command history.", error);
-  }
-}
-
 function recordCommandHistory(commandId: string): void {
   commandHistoryIds = [commandId, ...commandHistoryIds.filter((id) => id !== commandId)].slice(
     0,
     COMMAND_HISTORY_LIMIT,
   );
-  persistCommandHistoryIds(commandHistoryIds);
+  persistence.persistCommandHistoryIds(commandHistoryIds);
 }
 
 function parseYearFilterValue(raw: string): number | null {
@@ -2141,8 +2061,8 @@ async function importWatchedFromUsername(): Promise<void> {
   try {
     const result =
       provider === "anilist"
-        ? await fetchAniListUsernameImport(username, recommendationIndex)
-        : await fetchMalUsernameImport(username, recommendationIndex);
+        ? await providerAdapter.fetchAniListUsernameImport(username, recommendationIndex)
+        : await providerAdapter.fetchMalUsernameImport(username, recommendationIndex);
 
     const summary = upsertImportedWatchedEntries(result.entries);
     persistRecommendationState();
@@ -2186,181 +2106,6 @@ function setUsernameImportLoading(
     : "Import User List";
 }
 
-async function fetchAniListUsernameImport(
-  username: string,
-  index: RecommendationIndex,
-): Promise<UsernameImportResult> {
-  const query = `
-    query ($userName: String) {
-      MediaListCollection(userName: $userName, type: ANIME) {
-        lists {
-          entries {
-            score(format: POINT_10_DECIMAL)
-            media {
-              idMal
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const payload = await fetchJsonWithRetries<{
-    data?: {
-      MediaListCollection?: {
-        lists?: Array<{
-          entries?: Array<{
-            score?: number;
-            media?: {
-              idMal?: number | null;
-            } | null;
-          }>;
-        }>;
-      } | null;
-    };
-    errors?: Array<{ message?: string }>;
-  }>("https://graphql.anilist.co", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables: { userName: username },
-    }),
-  });
-
-  if (payload.errors && payload.errors.length > 0) {
-    const message = payload.errors[0]?.message ?? "AniList API returned an error.";
-    throw new Error(message);
-  }
-
-  const lists = payload.data?.MediaListCollection?.lists ?? [];
-  if (lists.length === 0) {
-    throw new Error(
-      "No AniList anime list found for that user (private, empty, or not found).",
-    );
-  }
-
-  let ratedCount = 0;
-  let unmappedCount = 0;
-  const byNodeId = new Map<string, ImportedWatchedEntry>();
-
-  for (const list of lists) {
-    const entries = list.entries ?? [];
-    for (const entry of entries) {
-      const score = Number(entry.score ?? 0);
-      const malId = Number(entry.media?.idMal ?? 0);
-      if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(malId) || malId <= 0) {
-        continue;
-      }
-
-      ratedCount += 1;
-      const anime = index.animeByAnimeId.get(Math.trunc(malId));
-      if (!anime) {
-        unmappedCount += 1;
-        continue;
-      }
-
-      const weight = normalizeImportedScoreToWeight(score);
-      byNodeId.set(anime.nodeId, { anime, weight });
-    }
-  }
-
-  return {
-    entries: [...byNodeId.values()],
-    ratedCount,
-    unmappedCount,
-  };
-}
-
-async function fetchMalUsernameImport(
-  username: string,
-  index: RecommendationIndex,
-): Promise<UsernameImportResult> {
-  const allEntries: Array<{ anime_id?: number; score?: number }> = [];
-  let offset = 0;
-
-  while (true) {
-    const page = await fetchMalUsernamePage(username, offset);
-    if (!Array.isArray(page) || page.length === 0) {
-      break;
-    }
-
-    allEntries.push(...page);
-    if (page.length < USERNAME_IMPORT_PAGE_SIZE) {
-      break;
-    }
-
-    offset += page.length;
-    await sleep(USERNAME_IMPORT_PAGE_DELAY_MS);
-  }
-
-  if (allEntries.length === 0) {
-    throw new Error("No rated MAL entries found for that user (private, empty, or not found).");
-  }
-
-  let ratedCount = 0;
-  let unmappedCount = 0;
-  const byNodeId = new Map<string, ImportedWatchedEntry>();
-
-  for (const entry of allEntries) {
-    const score = Number(entry.score ?? 0);
-    const animeId = Number(entry.anime_id ?? 0);
-    if (!Number.isFinite(score) || score <= 0 || !Number.isFinite(animeId) || animeId <= 0) {
-      continue;
-    }
-
-    ratedCount += 1;
-    const anime = index.animeByAnimeId.get(Math.trunc(animeId));
-    if (!anime) {
-      unmappedCount += 1;
-      continue;
-    }
-
-    const weight = normalizeImportedScoreToWeight(score);
-    byNodeId.set(anime.nodeId, { anime, weight });
-  }
-
-  return {
-    entries: [...byNodeId.values()],
-    ratedCount,
-    unmappedCount,
-  };
-}
-
-async function fetchMalUsernamePage(
-  username: string,
-  offset: number,
-): Promise<Array<{ anime_id?: number; score?: number }>> {
-  const malUrl = new URL(
-    `https://myanimelist.net/animelist/${encodeURIComponent(username)}/load.json`,
-  );
-  malUrl.searchParams.set("status", "7");
-  malUrl.searchParams.set("offset", String(offset));
-
-  try {
-    const page = await fetchJsonWithRetries<unknown>(
-      malUrl.toString(),
-      {
-        headers: {
-          Accept: "application/json",
-        },
-      },
-      USERNAME_IMPORT_MAX_RETRIES,
-    );
-    if (!Array.isArray(page)) {
-      throw new Error("Unexpected MAL response shape.");
-    }
-    return page as Array<{ anime_id?: number; score?: number }>;
-  } catch {
-    throw new Error(
-      "Direct MAL import failed. Browser access may be blocked, the profile may be private, or MAL may be rate limiting. No proxy was contacted. Try the local file or text import above, or AniList.",
-    );
-  }
-}
-
 function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
   added: number;
   updated: number;
@@ -2390,35 +2135,6 @@ function upsertImportedWatchedEntries(entries: ImportedWatchedEntry[]): {
   }
 
   return { added, updated, skipped };
-}
-
-async function fetchJsonWithRetries<T>(
-  url: string,
-  init?: RequestInit,
-  maxRetries = USERNAME_IMPORT_MAX_RETRIES,
-): Promise<T> {
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const response = await fetch(url, init);
-    if (response.ok) {
-      return (await response.json()) as T;
-    }
-
-    if (!isRetryableStatus(response.status) || attempt >= maxRetries) {
-      throw new Error(`Request failed (${response.status}) for ${url}`);
-    }
-
-    await sleep(Math.min(1000 * 2 ** attempt, 5000) + Math.floor(Math.random() * 200));
-  }
-
-  throw new Error("Request retries exhausted.");
-}
-
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status === 425 || status === 429 || status >= 500;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function parseBulkWatchedLine(
@@ -2453,19 +2169,6 @@ function parseBulkWatchedLine(
     anime,
     weight: normalizeImportedScoreToWeight(scoreValue),
   };
-}
-
-function normalizeImportedScoreToWeight(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 1;
-  }
-
-  if (value <= MAX_WATCH_WEIGHT) {
-    return clampWatchWeight(value);
-  }
-
-  const mapped = 1 + (value - 5) / 5;
-  return clampWatchWeight(mapped);
 }
 
 function removeSelectedAnime(nodeId: string): void {
@@ -2958,7 +2661,7 @@ async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | nul
     return inflight;
   }
 
-  const promise = fetchAnimeMetadataFromJikan(animeId)
+  const promise = providerAdapter.fetchAnimeMetadataFromJikan(animeId)
     .then((metadata) => {
       if (!metadata) {
         animeMetadataUnavailable.add(animeId);
@@ -2973,107 +2676,6 @@ async function ensureAnimeMetadata(animeId: number): Promise<AnimeMetadata | nul
 
   animeMetadataInFlight.set(animeId, promise);
   return await promise;
-}
-
-async function fetchAnimeMetadataFromJikan(
-  animeId: number,
-): Promise<AnimeMetadata | null> {
-  const url = `https://api.jikan.moe/v4/anime/${animeId}/full`;
-
-  for (let attempt = 0; attempt <= METADATA_MAX_RETRIES; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Accept: "application/json",
-        },
-      });
-      if (response.ok) {
-        const payload = (await response.json()) as {
-          data?: Record<string, unknown>;
-        };
-        return parseAnimeMetadataPayload(animeId, payload.data);
-      }
-      if (response.status === 404) {
-        return null;
-      }
-      if (!isRetryableStatus(response.status) || attempt >= METADATA_MAX_RETRIES) {
-        return null;
-      }
-    } catch {
-      if (attempt >= METADATA_MAX_RETRIES) {
-        return null;
-      }
-    }
-
-    await sleep(Math.min(800 * 2 ** attempt, 5000) + Math.floor(Math.random() * 220));
-  }
-
-  return null;
-}
-
-function parseAnimeMetadataPayload(
-  animeId: number,
-  raw: Record<string, unknown> | undefined,
-): AnimeMetadata | null {
-  if (!raw || typeof raw !== "object") {
-    return null;
-  }
-
-  const year =
-    typeof raw.year === "number" && Number.isFinite(raw.year)
-      ? Math.trunc(raw.year)
-      : null;
-  const score =
-    typeof raw.score === "number" && Number.isFinite(raw.score)
-      ? Number(raw.score)
-      : null;
-  const synopsis = typeof raw.synopsis === "string" ? raw.synopsis.trim() : "";
-  const season = typeof raw.season === "string" ? raw.season : null;
-  const genres = parseNameList(raw.genres);
-  const studios = parseNameList(raw.studios);
-
-  const images = raw.images as Record<string, unknown> | undefined;
-  const webp = images?.webp as Record<string, unknown> | undefined;
-  const jpg = images?.jpg as Record<string, unknown> | undefined;
-  const imageUrl = [
-    webp?.large_image_url,
-    webp?.image_url,
-    jpg?.large_image_url,
-    jpg?.image_url,
-  ].find((value): value is string => typeof value === "string" && value.length > 0);
-
-  return {
-    animeId,
-    year,
-    score,
-    genres,
-    studios,
-    synopsis,
-    imageUrl: imageUrl ?? "",
-    season,
-  };
-}
-
-function parseNameList(raw: unknown): string[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  const values: string[] = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const name = (entry as Record<string, unknown>).name;
-    if (typeof name !== "string") {
-      continue;
-    }
-    const trimmed = name.trim();
-    if (!trimmed || values.includes(trimmed)) {
-      continue;
-    }
-    values.push(trimmed);
-  }
-  return values;
 }
 
 function truncateText(value: string, maxLength: number): string {
@@ -3103,48 +2705,7 @@ async function loadSeasonalTrending(force: boolean): Promise<void> {
 
   const promise = (async () => {
     try {
-      const payload = await fetchJsonWithRetries<{
-        data?: Array<Record<string, unknown>>;
-      }>(
-        `https://api.jikan.moe/v4/seasons/now?limit=${SEASONAL_LIST_LIMIT}`,
-        {
-          headers: {
-            Accept: "application/json",
-          },
-        },
-      );
-      const incoming = Array.isArray(payload.data) ? payload.data : [];
-      seasonalItems = incoming
-        .map((entry) => {
-          const animeId = Number((entry as Record<string, unknown>).mal_id ?? 0);
-          const title = String((entry as Record<string, unknown>).title ?? "").trim();
-          if (!Number.isFinite(animeId) || animeId <= 0 || !title) {
-            return null;
-          }
-          const scoreRaw = (entry as Record<string, unknown>).score;
-          const score =
-            typeof scoreRaw === "number" && Number.isFinite(scoreRaw)
-              ? scoreRaw
-              : null;
-          const yearRaw = (entry as Record<string, unknown>).year;
-          const year =
-            typeof yearRaw === "number" && Number.isFinite(yearRaw)
-              ? Math.trunc(yearRaw)
-              : null;
-          const seasonRaw = (entry as Record<string, unknown>).season;
-          const season = typeof seasonRaw === "string" ? seasonRaw : null;
-          const imageUrl = parseAnimeMetadataPayload(animeId, entry)?.imageUrl ?? "";
-
-          return {
-            animeId,
-            title,
-            score,
-            year,
-            season,
-            imageUrl,
-          } satisfies SeasonalAnimeItem;
-        })
-        .filter((entry): entry is SeasonalAnimeItem => entry !== null);
+      seasonalItems = await providerAdapter.fetchSeasonalAnime(SEASONAL_LIST_LIMIT);
       seasonalStatusEl.textContent =
         seasonalItems.length > 0
           ? `Loaded ${seasonalItems.length} seasonal anime from Jikan.`
@@ -3311,8 +2872,8 @@ function selectNodeAndFocus(nodeId: string): void {
   selectedNodeId = nodeId;
   if (activeView !== "network") {
     setActiveView("network", false);
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
+    runtime.frame(() => {
+      runtime.frame(() => {
         focusNodeInRenderer(nodeId);
       });
     });
@@ -3320,7 +2881,7 @@ function selectNodeAndFocus(nodeId: string): void {
   }
   if (!currentGraph || !currentGraph.hasNode(nodeId)) {
     rerenderGraph();
-    window.requestAnimationFrame(() => {
+    runtime.frame(() => {
       focusNodeInRenderer(nodeId);
     });
     return;
@@ -3355,7 +2916,7 @@ function rerenderGraph(): void {
 
   setGraphLoadingState(true, "Render status: rendering network...");
 
-  window.setTimeout(() => {
+  runtime.schedule(() => {
     if (runId !== graphRenderRunId) {
       return;
     }
@@ -3365,7 +2926,7 @@ function rerenderGraph(): void {
       return;
     }
 
-    const startedAt = performance.now();
+    const startedAt = runtime.monotonicNow();
     try {
       const renderResult = renderGraph(
         renderSource,
@@ -3376,7 +2937,7 @@ function rerenderGraph(): void {
       if (runId !== graphRenderRunId) {
         return;
       }
-      const elapsedMs = Math.max(1, Math.round(performance.now() - startedAt));
+      const elapsedMs = Math.max(1, Math.round(runtime.monotonicNow() - startedAt));
       const visibleNodes = currentGraph ? currentGraph.order : 0;
       const visibleEdges = renderResult.renderedEdgeCount;
       const limitSuffix = renderResult.edgeLimitHit
@@ -3436,8 +2997,8 @@ function renderGraph(
       nodeType: node.nodeType,
       size: isUser ? 5.2 : 2.8,
       color: isUser ? "#ff8a00" : "#0f8b8d",
-      x: Math.random(),
-      y: Math.random(),
+      x: runtime.random(),
+      y: runtime.random(),
     });
   }
 
@@ -3590,133 +3151,26 @@ function statLine(label: string, value: string): string {
   return `<div class="stat-row"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
-async function fetchGraph(): Promise<LoadedGraphData> {
-  if (demoMode) {
-    const graph = await fetchPlainJson(
-      "./demo-data/graph.compact.json", "synthetic demo graph",
-    );
-    return parseCompactGraph(graph, "synthetic demo graph");
-  }
-  const compactData = await fetchJsonWithGzipFallback({
-    path: "./data/graph.compact.json",
-    required: false,
-    label: "graph.compact.json",
-  });
-  if (compactData !== null) {
-    return parseCompactGraph(compactData.value, "graph.compact.json");
-  }
-  const legacyData = await fetchJsonWithGzipFallback({
-    path: "./data/graph.json",
-    required: true,
-    label: "graph.json",
-  });
-  if (!legacyData) {
-    throw new Error("Unable to load required graph data.");
-  }
-  return parseLegacyGraph(legacyData.value, "graph.json");
-}
-
 async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
   if (explorerGraphData) {
     return explorerGraphData;
   }
   if (!explorerGraphDataPromise) {
-    explorerGraphDataPromise = fetchExplorerGraph();
+    explorerGraphDataPromise = artifactLoader.fetchExplorerGraph(graphData);
   }
   explorerGraphData = await explorerGraphDataPromise;
   return explorerGraphData;
 }
 
-async function fetchExplorerGraph(): Promise<LoadedGraphData> {
-  if (demoMode) return graphData;
-  const explorerCompactData = await fetchJsonWithGzipFallback({
-    path: "./data/graph-explorer.compact.json",
-    required: false,
-    label: "graph-explorer.compact.json",
-  });
-  if (explorerCompactData !== null) {
-    return parseCompactGraph(explorerCompactData.value, "graph-explorer.compact.json");
-  }
-  return graphData;
-}
-
 async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
   if (!modelRecommendationIndexPromise) {
-    modelRecommendationIndexPromise = fetchModelRecommendationIndex().catch((error: unknown) => {
+    modelRecommendationIndexPromise = artifactLoader.fetchModelRecommendationIndex().catch((error: unknown) => {
       modelLoadError = error instanceof Error ? error.message : "unknown validation error";
       console.error("Model artifact load failed.", error);
       return null;
     });
   }
   return modelRecommendationIndexPromise;
-}
-
-async function fetchModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
-  const rawCompact = demoMode
-    ? { value: await fetchPlainJson(
-        "./demo-data/model-mf-web.compact.json", "synthetic demo model",
-      ) }
-    : await fetchJsonWithGzipFallback({
-        path: "./data/model-mf-web.compact.json",
-        required: false,
-        label: "model-mf-web.compact.json",
-      });
-  const rawLegacy = rawCompact !== null || demoMode
-    ? null
-    : await fetchJsonWithGzipFallback({
-        path: "./data/model-mf-web.json",
-        required: false,
-        label: "model-mf-web.json",
-      });
-
-  const animeByAnimeId = new Map<number, ModelRecommendationAnime>();
-  let generatedAt = "";
-  let factors = 0;
-  let globalMean = 0;
-
-  if (rawCompact !== null) {
-    const model = parseCompactModel(
-      rawCompact.value, demoMode ? "synthetic demo model" : "model-mf-web.compact.json",
-    );
-    generatedAt = model.generatedAt;
-    factors = model.factors;
-    globalMean = model.globalMean;
-    for (let index = 0; index < model.animeIds.length; index += 1) {
-      const animeId = model.animeIds[index];
-      animeByAnimeId.set(animeId, {
-        animeId,
-        title: model.titles[index],
-        bias: model.biases[index],
-        embedding: model.embeddings[index],
-      });
-    }
-  } else if (rawLegacy !== null) {
-    const model = parseLegacyModel(rawLegacy.value, "model-mf-web.json");
-    generatedAt = model.generatedAt;
-    factors = model.factors;
-    globalMean = model.globalMean;
-    for (const anime of model.anime) {
-      animeByAnimeId.set(anime.animeId, anime);
-    }
-  }
-
-  if (animeByAnimeId.size === 0) {
-    return null;
-  }
-
-  return {
-    generatedAt,
-    factors,
-    globalMean,
-    animeByAnimeId,
-  };
-}
-
-async function fetchDemoCatalog(): Promise<DemoCatalogItem[]> {
-  const raw = await fetchPlainJson(
-    "./demo-data/catalog.json", "synthetic demo catalog",
-  );
-  return parseDemoCatalog(raw, "synthetic demo catalog");
 }
 
 async function loadRequiredArtifact<T>(operation: Promise<T>): Promise<T> {
@@ -3728,16 +3182,6 @@ async function loadRequiredArtifact<T>(operation: Promise<T>): Promise<T> {
     recMessageEl.setAttribute("role", "alert");
     recEngineStatusEl.textContent = "Recommendations unavailable until the data artifact is repaired.";
     throw error;
-  }
-}
-
-async function fetchPlainJson(url: string, label: string): Promise<unknown> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
-  try {
-    return await response.json();
-  } catch {
-    throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
   }
 }
 
@@ -3768,65 +3212,6 @@ function getGraphNodes(graphDataValue: LoadedGraphData): GraphNode[] {
   }
 
   return nodes;
-}
-
-async function fetchJsonWithGzipFallback({
-  path,
-  required,
-  label,
-}: {
-  path: string;
-  required: boolean;
-  label: string;
-}): Promise<{ value: unknown } | null> {
-  const gzPath = `${path}.gz`;
-  let gzStatus: number | null = null;
-
-  try {
-    const gzResponse = await fetch(gzPath);
-    gzStatus = gzResponse.status;
-    if (gzResponse.ok) {
-      try {
-        return { value: await parseGzipJsonResponse(gzResponse, label) };
-      } catch {
-        console.warn(`Failed to parse ${label}.gz; falling back to JSON`);
-      }
-    } else if (gzResponse.status !== 404) {
-      console.warn(`Unable to load ${label}.gz (${gzResponse.status})`);
-    }
-  } catch (error) {
-    console.warn(`Fetch failed for ${label}.gz`, error);
-  }
-
-  const response = await fetch(path);
-  if (!response.ok) {
-    if (!required && response.status === 404 && (gzStatus === 404 || gzStatus === null)) {
-      return null;
-    }
-    throw new Error(`Unable to load ${label} (${response.status})`);
-  }
-  try {
-    return { value: await response.json() };
-  } catch {
-    throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
-  }
-}
-
-async function parseGzipJsonResponse(
-  response: Response,
-  label: string,
-): Promise<unknown> {
-  if (typeof DecompressionStream === "undefined") {
-    throw new Error(
-      `This browser does not support DecompressionStream for ${label}.gz`,
-    );
-  }
-  if (!response.body) {
-    throw new Error(`Missing response body for ${label}.gz`);
-  }
-  const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
-  const text = await new Response(stream).text();
-  return JSON.parse(text) as unknown;
 }
 
 function mustElement<T extends Element>(selector: string): T {
@@ -4215,16 +3600,6 @@ function formatRecommendationWhyHtml(result: RecommendationResult): string {
   ].join("");
 }
 
-function parseRecommendationMode(value: string): RecommendationMode {
-  if (value === "model") {
-    return "model";
-  }
-  if (value === "hybrid") {
-    return "hybrid";
-  }
-  return "graph";
-}
-
 function renderModelBlendValue(): void {
   const modelPercent = Math.round(modelBlendWeight * 100);
   const graphPercent = 100 - modelPercent;
@@ -4233,50 +3608,6 @@ function renderModelBlendValue(): void {
 
 function setBlendControlVisibility(): void {
   recBlendControl.hidden = recommendationMode !== "hybrid";
-}
-
-function loadThemeModePreference(): ThemeMode {
-  try {
-    const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (raw === "dark" || raw === "light") {
-      return raw;
-    }
-  } catch (error) {
-    console.warn("Unable to read saved theme preference.", error);
-  }
-
-  if (window.matchMedia("(prefers-color-scheme: light)").matches) {
-    return "light";
-  }
-  return "dark";
-}
-
-function loadContrastModePreference(): ContrastMode {
-  try {
-    const raw = window.localStorage.getItem(CONTRAST_STORAGE_KEY);
-    if (raw === "normal" || raw === "high") {
-      return raw;
-    }
-  } catch (error) {
-    console.warn("Unable to read saved contrast preference.", error);
-  }
-  return "normal";
-}
-
-function persistThemeModePreference(theme: ThemeMode): void {
-  try {
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-  } catch (error) {
-    console.warn("Unable to persist theme preference.", error);
-  }
-}
-
-function persistContrastModePreference(contrast: ContrastMode): void {
-  try {
-    window.localStorage.setItem(CONTRAST_STORAGE_KEY, contrast);
-  } catch (error) {
-    console.warn("Unable to persist contrast preference.", error);
-  }
 }
 
 function applyTheme(theme: ThemeMode): void {
@@ -4312,39 +3643,6 @@ function renderContextualTips(): void {
   tipsToggleLabelEl.textContent = showTips ? "Hide Tips" : "Show Tips";
 }
 
-function loadHelpTipsDismissed(): boolean {
-  try {
-    const raw = window.localStorage.getItem(HELP_TIPS_STORAGE_KEY);
-    if (!raw) {
-      return false;
-    }
-    const parsed = JSON.parse(raw) as StoredHelpTipsState | null;
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      Number(parsed.version) === HELP_TIPS_VERSION &&
-      typeof parsed.dismissed === "boolean"
-    ) {
-      return parsed.dismissed;
-    }
-  } catch (error) {
-    console.warn("Unable to load help tips preference.", error);
-  }
-  return false;
-}
-
-function persistHelpTipsDismissed(dismissed: boolean): void {
-  try {
-    const payload: StoredHelpTipsState = {
-      version: HELP_TIPS_VERSION,
-      dismissed,
-    };
-    window.localStorage.setItem(HELP_TIPS_STORAGE_KEY, JSON.stringify(payload));
-  } catch (error) {
-    console.warn("Unable to persist help tips preference.", error);
-  }
-}
-
 function prefersReducedMotion(): boolean {
   return reduceMotionMediaQuery.matches;
 }
@@ -4368,44 +3666,8 @@ function onMediaQueryChange(
   }
 }
 
-function loadRecommendationState(index: RecommendationIndex): {
-  mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
-  modelBlendWeight: number;
-  includeCandidates: string[];
-  excludeCandidates: string[];
-} {
-  const emptyState = {
-    mode: "graph" as RecommendationMode,
-    selected: [],
-    modelBlendWeight: 0.5,
-    includeCandidates: [],
-    excludeCandidates: [],
-  };
-
-  try {
-    const raw = window.localStorage.getItem(RECOMMENDATION_STATE_STORAGE_KEY);
-    if (!raw) {
-      return emptyState;
-    }
-    const parsed = JSON.parse(raw) as StoredRecommendationState;
-    return sanitizeRecommendationState(parsed, index);
-  } catch (error) {
-    console.warn("Unable to load saved recommendation state.", error);
-    return emptyState;
-  }
-}
-
 function persistRecommendationState(): void {
-  try {
-    const payload = buildCurrentRecommendationState();
-    window.localStorage.setItem(
-      RECOMMENDATION_STATE_STORAGE_KEY,
-      JSON.stringify(payload),
-    );
-  } catch (error) {
-    console.warn("Unable to persist recommendation state.", error);
-  }
+  persistence.persistRecommendationState(buildCurrentRecommendationState());
 }
 
 function buildCurrentRecommendationState(): StoredRecommendationState {
@@ -4428,128 +3690,6 @@ function buildCurrentRecommendationState(): StoredRecommendationState {
       recommendationIndex.animeByNodeId.has(nodeId),
     ),
   };
-}
-
-function sanitizeRecommendationState(
-  parsed: StoredRecommendationState | null | undefined,
-  index: RecommendationIndex,
-): {
-  mode: RecommendationMode;
-  selected: { nodeId: string; weight: number }[];
-  modelBlendWeight: number;
-  includeCandidates: string[];
-  excludeCandidates: string[];
-} {
-  if (!parsed || (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3)) {
-    return {
-      mode: "graph",
-      selected: [],
-      modelBlendWeight: 0.5,
-      includeCandidates: [],
-      excludeCandidates: [],
-    };
-  }
-
-  const mode = parseRecommendationMode(parsed.mode);
-  const modelBlendWeight = clampModelBlendWeight(
-    Number(parsed.modelBlendWeight ?? 0.5),
-  );
-  const selected = Array.isArray(parsed.selected)
-    ? parsed.selected
-        .filter(
-          (entry) =>
-            entry &&
-            typeof entry.nodeId === "string" &&
-            index.animeByNodeId.has(entry.nodeId),
-        )
-        .map((entry) => ({
-          nodeId: entry.nodeId,
-          weight: clampWatchWeight(Number(entry.weight)),
-        }))
-    : [];
-
-  const includeCandidates = Array.isArray(parsed.includeCandidates)
-    ? parsed.includeCandidates.filter(
-        (entry) => typeof entry === "string" && index.animeByNodeId.has(entry),
-      )
-    : [];
-  const excludeCandidates = Array.isArray(parsed.excludeCandidates)
-    ? parsed.excludeCandidates.filter(
-        (entry) => typeof entry === "string" && index.animeByNodeId.has(entry),
-      )
-    : [];
-
-  return {
-    mode,
-    selected,
-    modelBlendWeight,
-    includeCandidates,
-    excludeCandidates,
-  };
-}
-
-function loadRecommendationProfiles(): Map<string, RecommendationProfileRecord> {
-  const profiles = new Map<string, RecommendationProfileRecord>();
-  try {
-    const raw = window.localStorage.getItem(RECOMMENDATION_PROFILES_STORAGE_KEY);
-    if (!raw) {
-      return profiles;
-    }
-    const parsed = JSON.parse(raw) as RecommendationProfileRecord[];
-    if (!Array.isArray(parsed)) {
-      return profiles;
-    }
-
-    for (const record of parsed) {
-      if (!record || typeof record.name !== "string" || !record.state) {
-        continue;
-      }
-      const name = record.name.trim();
-      if (!name) {
-        continue;
-      }
-      const sanitized = sanitizeRecommendationState(
-        record.state,
-        recommendationIndex,
-      );
-      profiles.set(name, {
-        name,
-        updatedAt:
-          typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString(),
-        state: {
-          version: 3,
-          mode: sanitized.mode,
-          selected: sanitized.selected,
-          modelBlendWeight: sanitized.modelBlendWeight,
-          includeCandidates: sanitized.includeCandidates,
-          excludeCandidates: sanitized.excludeCandidates,
-        },
-      });
-    }
-  } catch (error) {
-    console.warn("Unable to load saved profiles.", error);
-  }
-  return profiles;
-}
-
-function persistRecommendationProfiles(
-  profiles: Map<string, RecommendationProfileRecord>,
-): void {
-  try {
-    const payload = [...profiles.values()]
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .map((profile) => ({
-        name: profile.name,
-        updatedAt: profile.updatedAt,
-        state: profile.state,
-      }));
-    window.localStorage.setItem(
-      RECOMMENDATION_PROFILES_STORAGE_KEY,
-      JSON.stringify(payload),
-    );
-  } catch (error) {
-    console.warn("Unable to persist saved profiles.", error);
-  }
 }
 
 function renderProfileOptions(profiles: Map<string, RecommendationProfileRecord>): void {
@@ -4578,13 +3718,13 @@ function saveCurrentProfile(): void {
   }
 
   const state = buildCurrentRecommendationState();
-  const now = new Date().toISOString();
+  const now = runtime.now().toISOString();
   savedProfiles.set(profileName, {
     name: profileName,
     updatedAt: now,
     state,
   });
-  persistRecommendationProfiles(savedProfiles);
+  persistence.persistRecommendationProfiles(savedProfiles);
   renderProfileOptions(savedProfiles);
   profileSelect.value = profileName;
   profileNameInput.value = "";
@@ -4603,7 +3743,7 @@ function loadSelectedProfile(): void {
     return;
   }
 
-  const sanitized = sanitizeRecommendationState(profile.state, recommendationIndex);
+  const sanitized = persistence.sanitizeRecommendationState(profile.state, recommendationIndex);
   applyRecommendationState(sanitized);
   persistRecommendationState();
   renderSelectedAnime();
@@ -4625,7 +3765,7 @@ function deleteSelectedProfile(): void {
   }
 
   savedProfiles.delete(name);
-  persistRecommendationProfiles(savedProfiles);
+  persistence.persistRecommendationProfiles(savedProfiles);
   renderProfileOptions(savedProfiles);
   recMessageEl.textContent = `Deleted profile "${name}".`;
 }
