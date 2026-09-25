@@ -59,7 +59,7 @@ async function openNormalAppWithMockedProviders(
 
 test("MAL failure keeps the existing watched list and never routes through a proxy", async ({ page }) => {
   const requests = await openNormalAppWithMockedProviders(page, 403, "{}");
-  await expect(page.locator(".username-import .muted")).toContainText("username is sent directly");
+  await expect(page.locator(".username-import .muted").first()).toContainText("username is sent directly");
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-anime-form button").click();
   await expect(page.locator("#watched-count")).toHaveText("1");
@@ -69,6 +69,7 @@ test("MAL failure keeps the existing watched list and never routes through a pro
   expect(requests.filter((url) => new URL(url).hostname === "r.jina.ai")).toEqual([]);
   await expect(page.locator("#rec-message")).toContainText("Direct MAL import failed");
   await expect(page.locator("#rec-message")).toContainText("No proxy was contacted");
+  await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "unavailable");
   await expect(page.locator("#watched-count")).toHaveText("1");
   expect(requests.filter((url) => new URL(url).hostname === "myanimelist.net")).toHaveLength(1);
 });
@@ -80,7 +81,18 @@ test("a direct MAL response still imports a mapped synthetic rating", async ({ p
   await page.locator("#username-import-submit").click();
   await expect(page.locator("#rec-message")).toContainText("Imported MAL user");
   await expect(page.locator("#selected-anime")).toContainText("Moonlit Workshop");
+  await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "ready");
   expect(requests.filter((url) => new URL(url).hostname === "r.jina.ai")).toEqual([]);
+});
+
+test("an empty rated-list response leaves the watched list intact", async ({ page }) => {
+  await openNormalAppWithMockedProviders(page, 200, "[]");
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#username-import-submit").click();
+  await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "empty");
+  await expect(page.locator("#watched-count")).toHaveText("1");
+  await expect(page.locator("#selected-anime")).toContainText("Copper Comet");
 });
 
 test("a browser transport failure gives an actionable error without proxying", async ({ page }) => {
@@ -88,6 +100,7 @@ test("a browser transport failure gives an actionable error without proxying", a
   await page.locator("#username-import-submit").click();
   await expect(page.locator("#rec-message")).toContainText("Direct MAL import failed");
   await expect(page.locator("#rec-message")).toContainText("local file or text import");
+  await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "failed");
   expect(requests.filter((url) => new URL(url).hostname === "r.jina.ai")).toEqual([]);
   expect(requests.filter((url) => new URL(url).hostname === "myanimelist.net")).toHaveLength(1);
 });

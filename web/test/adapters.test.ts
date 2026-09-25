@@ -156,8 +156,11 @@ test("provider imports and metadata use only mocked direct transport and seeded 
   const anilist = await provider.fetchAniListUsernameImport("fixture-user", index);
   assert.deepEqual(anilist.entries.map((entry) => [entry.anime.animeId, entry.weight]), [[101, 1.8]]);
   const metadata = await provider.fetchAnimeMetadataFromJikan(102);
-  assert.deepEqual([metadata?.year, metadata?.genres, metadata?.score], [2020, ["Fantasy"], 7.8]);
-  assert.equal(await provider.fetchAnimeMetadataFromJikan(404), null);
+  assert.equal(metadata.state, "ready");
+  if (metadata.state === "ready") {
+    assert.deepEqual([metadata.metadata.year, metadata.metadata.genres, metadata.metadata.score], [2020, ["Fantasy"], 7.8]);
+  }
+  assert.deepEqual(await provider.fetchAnimeMetadataFromJikan(404), { state: "unavailable" });
   const seasonal = await provider.fetchSeasonalAnime(12);
   assert.deepEqual(seasonal.map((item) => item.title), ["Moonlit Workshop"]);
   const random = createSeededRandom(19);
@@ -175,6 +178,67 @@ test("a provider rejection is testable without the page and never uses a proxy",
   assert.equal(fake.requests.length, 1);
   assert.equal(new URL(fake.requests[0].url).hostname, "myanimelist.net");
   assert.deepEqual(fake.sleeps, []);
+});
+
+test("aborted imports and metadata discard delayed responses and stop retrying", async () => {
+  let releaseImport: (() => void) | undefined;
+  let importSignal: AbortSignal | undefined;
+  const delayed = fakeRuntime((_url, init) => {
+    importSignal = init?.signal ?? undefined;
+    return new Promise<Response>((resolve) => {
+      releaseImport = () => resolve(jsonResponse([{ anime_id: 102, score: 8 }]));
+    });
+  });
+  const importController = new AbortController();
+  const importPromise = createProviderAdapter(delayed.runtime)
+    .fetchMalUsernameImport("fixture-user", index, importController.signal);
+  await Promise.resolve();
+  assert.equal(importSignal, importController.signal);
+  importController.abort();
+  releaseImport?.();
+  await assert.rejects(importPromise, { name: "AbortError" });
+  assert.equal(delayed.requests.length, 1);
+
+  let releaseSleep: (() => void) | undefined;
+  const retrying = fakeRuntime(() => jsonResponse({}, 429));
+  retrying.runtime.sleep = async () => new Promise<void>((resolve) => { releaseSleep = resolve; });
+  const retryController = new AbortController();
+  const retryPromise = createProviderAdapter(retrying.runtime)
+    .fetchAniListUsernameImport("fixture-user", index, retryController.signal);
+  await Promise.resolve();
+  await Promise.resolve();
+  retryController.abort();
+  releaseSleep?.();
+  await assert.rejects(retryPromise, { name: "AbortError" });
+  assert.equal(retrying.requests.length, 1);
+
+  let releaseMetadata: (() => void) | undefined;
+  const metadata = fakeRuntime((_url, init) => {
+    assert.ok(init?.signal);
+    return new Promise<Response>((resolve) => {
+      releaseMetadata = () => resolve(jsonResponse({ data: { year: 2026 } }));
+    });
+  });
+  const metadataController = new AbortController();
+  const metadataPromise = createProviderAdapter(metadata.runtime)
+    .fetchAnimeMetadataFromJikan(102, metadataController.signal);
+  await Promise.resolve();
+  metadataController.abort();
+  releaseMetadata?.();
+  await assert.rejects(metadataPromise, { name: "AbortError" });
+});
+
+test("AniList distinguishes a returned empty list from an unavailable collection", async () => {
+  const empty = fakeRuntime(() => jsonResponse({ data: { MediaListCollection: { lists: [] } } }));
+  const emptyResult = await createProviderAdapter(empty.runtime)
+    .fetchAniListUsernameImport("fixture-user", index);
+  assert.deepEqual(emptyResult, { entries: [], ratedCount: 0, unmappedCount: 0 });
+
+  const unavailable = fakeRuntime(() => jsonResponse({ data: { MediaListCollection: null } }));
+  await assert.rejects(
+    createProviderAdapter(unavailable.runtime).fetchAniListUsernameImport("fixture-user", index),
+    { name: "ProviderUnavailableError" },
+  );
 });
 
 test("artifact loader validates synthetic files through injected local transport", async () => {
