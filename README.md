@@ -40,6 +40,7 @@ Run the fast checks separately:
 ```bash
 npm run data:fixture
 npm run data:fixture:check
+npm run split:fixture:check
 npm run typecheck
 npm test
 npm run test:python
@@ -55,6 +56,8 @@ npm run eval:franchise-diversity:fixture
 The Python smoke and workflow tests require NumPy and PyYAML (`python -m pip install "numpy>=2,<3" "PyYAML>=6,<7"`). The Playwright install is needed once per machine. Browser tests use the synthetic demo or a normal-mode app with mocked providers; no real usernames are queried. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
 
 The user-vector diagnostic calls the same new-user scorer used by the browser and compares it with an evaluation-only ridge fold-in reference on invented held-out ratings. It reports Hit@3, reciprocal rank, and local latency; it is not a production ranking-quality result. [Decision 0010](docs/decisions/0010-user-vector-evaluation.md) records the fixed protocol, results, and why the simpler browser average remains selected.
+
+The pinned [raw-interaction split protocol](docs/decisions/0014-raw-interaction-splits.md) creates train/validation/test IDs from invented raw scores before any centering or graph work. `npm run split:fixture:check` verifies its immutable 13-interaction manifest. The current exported ratings contain no verified rating/viewing times, so the fixture uses a seeded per-user holdout. Existing ML training/search/GNN scripts still use their older full-graph evaluation path; their metrics are not M5 release evidence until train-only preprocessing and leakage checks are wired in.
 
 The web app validates graph, demo catalog, and model JSON before scoring or rendering. New graph exports use compact or legacy v2 with explicit semantics, support, build configuration, truncation counts, and dataset identity. The browser loads a separate, identified v2 explorer sample while recommendations use the recommendation graph. Existing compact v1 and unversioned legacy graphs remain readable, including three- or four-value compact anime-pair tuples; unknown or mixed formats fail with a named artifact and field. If the optional model is missing, invalid, or cannot score eligible candidates, model/hybrid mode serves graph results or a labeled catalog coverage baseline; the selected mode stays saved. See [decision 0009](docs/decisions/0009-graph-v2-contract.md) for identities and compatibility limits.
 

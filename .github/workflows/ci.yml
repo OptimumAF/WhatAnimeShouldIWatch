@@ -27,6 +27,7 @@ jobs:
         run: |
           npm run data:fixture
           npm run data:fixture:check
+          npm run split:fixture:check
       - name: Typecheck
         run: npm run typecheck
       - name: Pipeline tests
