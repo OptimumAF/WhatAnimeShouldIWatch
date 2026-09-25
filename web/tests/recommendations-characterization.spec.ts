@@ -49,6 +49,25 @@ test("synthetic recommendation modes retain their visible ranking and explanatio
   }
 });
 
+test("browser model ranks from three explicit preference signals", async ({ page }) => {
+  await page.goto("/");
+  for (const [title, sentiment] of [
+    ["Copper Comet", "liked"], ["Moonlit Workshop", "liked"], ["Ashen Harbor", "disliked"],
+  ] as const) {
+    await page.locator("#anime-input").fill(title);
+    await page.locator("#add-preference").selectOption(sentiment);
+    await page.locator("#add-anime-form button").click();
+  }
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations");
+  await expect(page.locator("#rec-results .rec-title").first()).toHaveText("星の航路");
+  await expect(page.locator("#rec-results .rec-title").nth(1)).toHaveText("Quiet Satellite");
+  await expect(page.locator("#rec-results .rec-title").nth(2)).toHaveText("Café Nebula");
+  for (const title of ["Copper Comet", "Moonlit Workshop", "Ashen Harbor"]) {
+    await expect(page.locator("#rec-results .rec-title").filter({ hasText: title })).toHaveCount(0);
+  }
+});
+
 test("recommendation explanation renders an invented unsafe label as text", async ({ page }) => {
   const unsafeLabel = '<img src=x onerror="window.__unsafe=1">';
   await page.route("**/demo-data/graph.compact.json", async (route) => {
