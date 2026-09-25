@@ -175,7 +175,7 @@
 
 **Files changed:** `web/src/artifact-loader.ts`, `web/src/providers.ts`, `web/src/persistence.ts`, `web/src/runtime.ts`, `web/src/recommendations.ts`, `web/src/main.ts`, `web/test/adapters.test.ts`, `web/tests/persistence-characterization.spec.ts`, `AGENTS.md`, `docs/DEVELOPMENT_PLAN.md`, `docs/PROGRESS.md`.
 
-**Commit / PR and CI:** Local checks passed; record the commit, draft PR, and CI result after publishing this reviewable slice.
+**Commit / PR and CI:** Implementation commit `1a16262` in draft [PR #8](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/8), stacked on PR #7. [Fixture and fast checks run 36095214604](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36095214604) passed from a fresh PR checkout, including fixture generation, TypeScript/Python/workflow tests, web build, and all 14 browser tests; GitGuardian passed.
 
 **Checks not run / blockers:** No real username/history, provider request, production artifact regeneration, model training, release publication, or deployment. No production-scale benchmark or desktop test was run. The adapter preserves current retry and storage behavior; M2.4 still needs provider-wide scheduling, timeouts, `Retry-After`, and cancellation, while M1.4 must handle versioned migrations, backup, corrupt/quota-rejected state, and unknown IDs. M1.5, M1.7, and the M1 exit gate remain open. Provider permissions and existing public-asset remedies remain unresolved.
 
