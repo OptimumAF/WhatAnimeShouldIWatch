@@ -31,6 +31,7 @@ export function buildRecommendationIndex(graphDataValue: GraphData): Recommendat
   const animeByAnimeId = new Map<number, AnimeInfo>();
   const titleLookup = new Map<string, AnimeInfo[]>();
   const adjacency = new Map<string, { otherNodeId: string; weight: number }[]>();
+  const sampledRatingCountByNodeId = new Map<string, number>();
 
   for (const node of graphDataValue.nodes) {
     if (node.nodeType !== "anime") {
@@ -47,6 +48,7 @@ export function buildRecommendationIndex(graphDataValue: GraphData): Recommendat
     animeList.push(anime);
     animeByNodeId.set(node.id, anime);
     animeByAnimeId.set(animeId, anime);
+    sampledRatingCountByNodeId.set(node.id, 0);
 
     const normalizedTitle = normalizeTitle(node.label);
     const existing = titleLookup.get(normalizedTitle);
@@ -58,6 +60,15 @@ export function buildRecommendationIndex(graphDataValue: GraphData): Recommendat
   }
 
   for (const edge of graphDataValue.edges) {
+    if (edge.edgeType === "user-anime") {
+      const animeNodeId = animeByNodeId.has(edge.source) ? edge.source : edge.target;
+      if (animeByNodeId.has(animeNodeId)) {
+        sampledRatingCountByNodeId.set(
+          animeNodeId, (sampledRatingCountByNodeId.get(animeNodeId) ?? 0) + 1,
+        );
+      }
+      continue;
+    }
     if (edge.edgeType !== "anime-anime") {
       continue;
     }
@@ -75,6 +86,7 @@ export function buildRecommendationIndex(graphDataValue: GraphData): Recommendat
     animeByAnimeId,
     titleLookup,
     adjacency,
+    sampledRatingCountByNodeId,
   };
 }
 
@@ -89,6 +101,7 @@ export function buildRecommendationIndexFromCompact(
   const animeByAnimeId = new Map<number, AnimeInfo>();
   const titleLookup = new Map<string, AnimeInfo[]>();
   const adjacency = new Map<string, { otherNodeId: string; weight: number }[]>();
+  const sampledRatingCountByNodeId = new Map<string, number>();
 
   for (const animeEntry of graphDataValue.anime) {
     const animeId = animeEntry[0];
@@ -103,6 +116,7 @@ export function buildRecommendationIndexFromCompact(
     animeList.push(anime);
     animeByNodeId.set(nodeId, anime);
     animeByAnimeId.set(animeId, anime);
+    sampledRatingCountByNodeId.set(nodeId, 0);
 
     const normalizedTitle = normalizeTitle(label);
     const existing = titleLookup.get(normalizedTitle);
@@ -111,6 +125,13 @@ export function buildRecommendationIndexFromCompact(
     } else {
       existing.push(anime);
     }
+  }
+
+  for (const [, animeIndex] of graphDataValue.ua) {
+    const anime = graphDataValue.anime[animeIndex];
+    if (!anime) continue;
+    const nodeId = `anime:${anime[0]}`;
+    sampledRatingCountByNodeId.set(nodeId, (sampledRatingCountByNodeId.get(nodeId) ?? 0) + 1);
   }
 
   for (const [leftAnimeIndex, rightAnimeIndex, weight] of graphDataValue.aa) {
@@ -132,6 +153,7 @@ export function buildRecommendationIndexFromCompact(
     animeByAnimeId,
     titleLookup,
     adjacency,
+    sampledRatingCountByNodeId,
   };
 }
 
@@ -193,6 +215,78 @@ export function buildCatalogCoverageRecommendations(index: RecommendationIndex):
       contributions: [],
     } satisfies RecommendationResult;
   }).sort((left, right) => right.score - left.score || left.anime.animeId - right.anime.animeId);
+}
+
+/** Counts are a popularity proxy for the loaded graph sample, never global audience totals. */
+export function buildSamplePopularityExploration(index: RecommendationIndex): RecommendationResult[] {
+  return index.animeList.map((anime) => {
+    const count = index.sampledRatingCountByNodeId.get(anime.nodeId) ?? 0;
+    return { anime, score: count, strongest: 0, supportCount: count, contributions: [] } satisfies RecommendationResult;
+  }).sort((left, right) => right.score - left.score || left.anime.animeId - right.anime.animeId);
+}
+
+/** Community score is compared only for catalog items whose metadata is already available. */
+export function buildCommunityQualityExploration(
+  index: RecommendationIndex, metadataByAnimeId: ReadonlyMap<number, AnimeMetadata>,
+): RecommendationResult[] {
+  return index.animeList.flatMap((anime) => {
+    const score = metadataByAnimeId.get(anime.animeId)?.score;
+    if (score === null || score === undefined || !Number.isFinite(score)) return [];
+    return [{ anime, score, strongest: 0,
+      supportCount: index.sampledRatingCountByNodeId.get(anime.nodeId) ?? 0,
+      contributions: [] } satisfies RecommendationResult];
+  }).sort((left, right) => right.score - left.score ||
+    right.supportCount - left.supportCount || left.anime.animeId - right.anime.animeId);
+}
+
+export interface GenreOverlapRecommendation extends RecommendationResult {
+  sharedGenres: string[];
+  matchingLikedTitles: string[];
+}
+
+/** A content-only baseline: weighted exact genre overlap with explicit Liked titles. */
+export function buildGenreOverlapExploration(
+  preferences: readonly AnimePreference[], index: RecommendationIndex,
+  metadataByAnimeId: ReadonlyMap<number, AnimeMetadata>,
+): GenreOverlapRecommendation[] {
+  const likedSources = preferences.flatMap((preference) => {
+    if (preference.sentiment !== "liked") return [];
+    const anime = index.animeByNodeId.get(preference.nodeId);
+    const metadata = anime && metadataByAnimeId.get(anime.animeId);
+    if (!anime || !metadata) return [];
+    const genres = new Set(metadata.genres.map((genre) => normalizeTitle(genre)).filter(Boolean));
+    if (genres.size === 0) return [];
+    return [{ anime, genres, weight: preference.importance * preference.confidence }];
+  });
+  if (likedSources.length === 0) return [];
+
+  return index.animeList.flatMap((anime) => {
+    const metadata = metadataByAnimeId.get(anime.animeId);
+    if (!metadata) return [];
+    const genres = new Map(metadata.genres.map((genre) => [normalizeTitle(genre), genre.trim()]));
+    let score = 0;
+    let strongest = 0;
+    const sharedGenres = new Map<string, string>();
+    const matchingLikedTitles: string[] = [];
+    for (const source of likedSources) {
+      if (source.anime.nodeId === anime.nodeId) continue;
+      const overlap = [...source.genres].filter((genre) => genres.has(genre));
+      if (overlap.length === 0) continue;
+      const weighted = overlap.length * source.weight;
+      score += weighted;
+      strongest = Math.max(strongest, weighted);
+      matchingLikedTitles.push(source.anime.label);
+      for (const genre of overlap) sharedGenres.set(genre, genres.get(genre)!);
+    }
+    if (score <= 0) return [];
+    return [{ anime, score, strongest, supportCount: matchingLikedTitles.length,
+      contributions: [], sharedGenres: [...sharedGenres.values()].sort((a, b) => a.localeCompare(b)),
+      matchingLikedTitles } satisfies GenreOverlapRecommendation];
+  }).sort((left, right) => right.score - left.score ||
+    right.supportCount - left.supportCount ||
+    (index.sampledRatingCountByNodeId.get(right.anime.nodeId) ?? 0) -
+      (index.sampledRatingCountByNodeId.get(left.anime.nodeId) ?? 0) ||
+    left.anime.animeId - right.anime.animeId);
 }
 
 function scoreGraphRecommendations(

@@ -706,6 +706,8 @@ button:hover,
 }
 
 .rec-engine-control select {
+  min-width: 0;
+  width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: var(--surface-strong);
@@ -1231,6 +1233,24 @@ button:hover,
   list-style: none;
   display: grid;
   gap: 0.45rem;
+}
+
+.discovery-metadata-controls {
+  margin-top: 0.55rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.discovery-metadata-controls[hidden] {
+  display: none;
+}
+
+.discovery-metadata-controls p {
+  margin: 0;
+  flex: 1 1 18rem;
+  font-size: 0.76rem;
 }
 
 .rec-item {

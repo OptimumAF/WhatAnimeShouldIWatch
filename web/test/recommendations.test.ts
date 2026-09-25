@@ -9,10 +9,13 @@ import {
   buildGraphRecommendations,
   buildGraphRecommendationsForPreferences,
   buildCatalogCoverageRecommendations,
+  buildCommunityQualityExploration,
+  buildGenreOverlapExploration,
   buildModelRecommendations,
   buildModelRecommendationsForPreferences,
   buildRecommendationIndex,
   buildRecommendationIndexFromCompact,
+  buildSamplePopularityExploration,
   clampModelBlendWeight,
   clampWatchWeight,
   combineHybridRecommendations,
@@ -236,6 +239,64 @@ test("catalog coverage fallback is deterministic and shares the eligibility poli
     includeOnlyNodeIds: ["anime:101", "anime:102"], excludeNodeIds: ["anime:102"],
     filters: { genre: "", minYear: null, maxYear: null, minScore: null } });
   assert.deepEqual(rankEligibleCandidates("fallback", { fallback: baseline }, policy, new Map()).recommendations, []);
+});
+
+test("sample popularity counts retained user-anime edges in compact and legacy graphs", () => {
+  const popularity = buildSamplePopularityExploration(index);
+  assert.deepEqual(popularity.map((item) => [item.anime.animeId, item.score]), [
+    [101, 4], [102, 4], [103, 3], [105, 3], [104, 2], [106, 1], [107, 1], [108, 0],
+  ]);
+  const legacy: GraphData = {
+    generatedAt: graph.generatedAt, userCount: graph.userIds.length,
+    animeCount: graph.anime.length, nodeCount: graph.userIds.length + graph.anime.length,
+    edgeCount: graph.ua.length + graph.aa.length,
+    nodes: [
+      ...graph.userIds.map((id) => ({ id: `user:${id}`, label: id, nodeType: "user" as const })),
+      ...graph.anime.map(([id, label]) => ({ id: `anime:${id}`, label, nodeType: "anime" as const })),
+    ],
+    edges: [
+      ...graph.ua.map(([user, anime, weight], i) => ({ id: `ua:${i}`,
+        source: `user:${graph.userIds[user]}`, target: `anime:${graph.anime[anime][0]}`,
+        edgeType: "user-anime" as const, weight })),
+      ...graph.aa.map(([left, right, weight], i) => ({ id: `aa:${i}`,
+        source: `anime:${graph.anime[left][0]}`, target: `anime:${graph.anime[right][0]}`,
+        edgeType: "anime-anime" as const, weight })),
+    ],
+  };
+  assert.deepEqual(buildSamplePopularityExploration(buildRecommendationIndex(legacy)), popularity);
+  assert.deepEqual(buildSamplePopularityExploration(buildRecommendationIndexFromCompact({ ...graph,
+    ua: [...graph.ua].reverse(),
+  })), popularity);
+});
+
+test("quality and content exploration use known metadata and only Liked genre evidence", () => {
+  const metadata = new Map<number, AnimeMetadata>(
+    parseDemoCatalog(fixture("catalog.json"), "synthetic catalog")
+      .map((item) => [item.animeId, item]),
+  );
+  const quality = buildCommunityQualityExploration(index, metadata);
+  assert.deepEqual(quality.slice(0, 3).map((item) => item.anime.animeId), [105, 101, 108]);
+  metadata.set(105, { ...metadata.get(105)!, score: null });
+  assert.equal(buildCommunityQualityExploration(index, metadata).some((item) => item.anime.animeId === 105), false);
+  metadata.delete(105);
+  assert.equal(buildCommunityQualityExploration(index, metadata).some((item) => item.anime.animeId === 105), false);
+  metadata.set(105, parseDemoCatalog(fixture("catalog.json"), "synthetic catalog")
+    .find((item) => item.animeId === 105)!);
+  const related = buildGenreOverlapExploration([
+    manualPreference("anime:101", "liked"), manualPreference("anime:102", "liked"),
+    manualPreference("anime:103", "disliked"), manualPreference("anime:104", "seen"),
+  ], index, metadata);
+  assert.equal(related[0].anime.animeId, 105);
+  assert.equal(related[0].score, 2);
+  assert.deepEqual(related[0].sharedGenres, ["Adventure", "Fantasy"]);
+  assert.deepEqual(related[0].matchingLikedTitles, ["Copper Comet", "Moonlit Workshop"]);
+  const policy = createCandidateEligibilityPolicy({ index,
+    preferences: [manualPreference("anime:101", "liked"), manualPreference("anime:102", "liked"),
+      manualPreference("anime:103", "disliked"), manualPreference("anime:104", "seen")],
+    history: [], includeOnlyNodeIds: [], excludeNodeIds: [],
+    filters: { genre: "", minYear: null, maxYear: null, minScore: null } });
+  assert.equal(rankEligibleCandidates("fallback", { fallback: related }, policy, metadata)
+    .recommendations.some((item) => [101, 102, 103, 104].includes(item.anime.animeId)), false);
 });
 
 test("explanations select the two strongest contributors of each sign as plain text", () => {

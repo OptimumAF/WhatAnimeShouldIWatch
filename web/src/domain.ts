@@ -37,6 +37,8 @@ export interface RecommendationIndex {
   animeByAnimeId: Map<number, AnimeInfo>;
   titleLookup: Map<string, AnimeInfo[]>;
   adjacency: Map<string, { otherNodeId: string; weight: number }[]>;
+  /** Counts only user-anime edges retained in the loaded recommendation graph. */
+  sampledRatingCountByNodeId: Map<string, number>;
 }
 
 export interface ModelRecommendationIndex {
