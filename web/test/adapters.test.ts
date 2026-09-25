@@ -54,11 +54,11 @@ test("runtime randomness is repeatable from an injected synthetic seed", () => {
   assert.ok(sequence.every((value) => value >= 0 && value < 1));
 });
 
-test("persistence uses injected storage, prefix, and clock while preserving legacy keys", () => {
+test("persistence uses injected storage, prefix, and clock while migrating legacy keys", () => {
   const fake = fakeRuntime(() => { throw new Error("network must not be used"); });
   const persistence = createPersistenceAdapter(fake.runtime, "wasiw.demo");
   const state = {
-    version: 3,
+    version: 4,
     mode: "hybrid" as const,
     selected: [{ nodeId: "anime:101", weight: 1.7 }],
     modelBlendWeight: 0.35,
@@ -66,20 +66,20 @@ test("persistence uses injected storage, prefix, and clock while preserving lega
     excludeCandidates: ["anime:105"],
   };
   persistence.persistRecommendationState(state);
-  assert.equal(fake.values.has("wasiw.demo.recommendationState.v1"), true);
-  assert.deepEqual(persistence.loadRecommendationState(index), {
+  assert.equal(fake.values.has("wasiw.demo.recommendationState.v4"), true);
+  assert.deepEqual(persistence.loadRecommendationState(), {
     mode: "hybrid", selected: state.selected, modelBlendWeight: 0.35,
     includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"],
   });
 
   fake.values.set("wasiw.demo.recommendationProfiles.v1", JSON.stringify([
-    { name: " Fixture Profile ", state },
+    { name: " Fixture Profile ", state: { ...state, version: 3 } },
   ]));
-  const profiles = persistence.loadRecommendationProfiles(index);
+  const profiles = persistence.loadRecommendationProfiles();
   assert.equal(profiles.get("Fixture Profile")?.updatedAt, "2026-09-24T12:34:56.000Z");
   persistence.persistRecommendationProfiles(profiles);
-  assert.deepEqual(JSON.parse(fake.values.get("wasiw.demo.recommendationProfiles.v1") ?? "null")
-    .map((item: { name: string }) => item.name), ["Fixture Profile"]);
+  assert.deepEqual(JSON.parse(fake.values.get("wasiw.demo.recommendationProfiles.v4") ?? "null")
+    .profiles.map((item: { name: string }) => item.name), ["Fixture Profile"]);
 
   assert.equal(persistence.loadThemeModePreference(() => true), "light");
   persistence.persistThemeModePreference("dark");
@@ -106,14 +106,14 @@ test("denied browser storage has deterministic fallbacks without DOM setup", () 
   const oldWarn = console.warn;
   console.warn = () => {};
   try {
-    assert.deepEqual(persistence.loadRecommendationState(index), {
+    assert.deepEqual(persistence.loadRecommendationState(), {
       mode: "graph", selected: [], modelBlendWeight: 0.5,
       includeCandidates: [], excludeCandidates: [],
     });
     assert.equal(persistence.loadThemeModePreference(() => true), "light");
-    assert.deepEqual(persistence.loadRecommendationProfiles(index), new Map());
+    assert.deepEqual(persistence.loadRecommendationProfiles(), new Map());
     assert.doesNotThrow(() => persistence.persistRecommendationState({
-      version: 3, mode: "graph", selected: [],
+      version: 4, mode: "graph", selected: [],
     }));
   } finally {
     console.warn = oldWarn;
