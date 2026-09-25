@@ -100,28 +100,42 @@ test("model and hybrid ranking retain their fixture scores and blend endpoints",
   assert.equal(combineHybridRecommendations(graphResults, modelResults, 1)[0].anime.label, "星の航路");
 });
 
-test("current graph evidence retains its selection-order behavior for negative edges", () => {
+test("v1 negative pair preference never seeds or penalizes graph candidates", () => {
   const tinyGraph: GraphData = {
-    generatedAt: "synthetic", userCount: 0, animeCount: 3, nodeCount: 3, edgeCount: 2,
+    generatedAt: "synthetic", userCount: 0, animeCount: 5, nodeCount: 5, edgeCount: 4,
     nodes: [
       { id: "anime:1", label: "Positive", nodeType: "anime" },
       { id: "anime:2", label: "Negative", nodeType: "anime" },
       { id: "anime:3", label: "Candidate", nodeType: "anime" },
+      { id: "anime:4", label: "Neutral only", nodeType: "anime" },
+      { id: "anime:5", label: "Negative only", nodeType: "anime" },
     ],
     edges: [
       { id: "aa:1:3", source: "anime:1", target: "anime:3", edgeType: "anime-anime", weight: 0.6 },
       { id: "aa:2:3", source: "anime:2", target: "anime:3", edgeType: "anime-anime", weight: -0.4 },
+      { id: "aa:1:4", source: "anime:1", target: "anime:4", edgeType: "anime-anime", weight: 0 },
+      { id: "aa:2:5", source: "anime:2", target: "anime:5", edgeType: "anime-anime", weight: -0.8 },
     ],
   };
   const tinyIndex = buildRecommendationIndex(tinyGraph);
   const positiveFirst = buildGraphRecommendations(["anime:1", "anime:2"], new Map(), tinyIndex);
   const negativeFirst = buildGraphRecommendations(["anime:2", "anime:1"], new Map(), tinyIndex);
+  assert.deepEqual(buildGraphRecommendations(["anime:2"], new Map(), tinyIndex), []);
+  assert.deepEqual(positiveFirst, negativeFirst);
+  assert.deepEqual(positiveFirst.map((item) => item.anime.animeId), [3]);
   assert.equal(positiveFirst[0].score, 0.6);
-  assert.equal(negativeFirst[0].score, 0.6);
   assert.deepEqual(positiveFirst[0].contributions.map((item) => formatWeight(item.weightedScore)),
-    ["+0.600", "-0.400"]);
-  assert.deepEqual(negativeFirst[0].contributions.map((item) => formatWeight(item.weightedScore)),
     ["+0.600"]);
+  const compact = parseCompactGraph({
+    format: "graph-compact-v1", generatedAt: "2026-01-01T00:00:00.000Z", userIds: [], userCount: 0,
+    animeCount: 5, nodeCount: 5, edgeCount: 4,
+    anime: [[1, "Positive"], [2, "Negative"], [3, "Candidate"],
+      [4, "Neutral only"], [5, "Negative only"]],
+    ua: [], aa: [[0, 2, 0.6], [1, 2, -0.4], [0, 3, 0], [1, 4, -0.8]],
+  }, "signed synthetic graph");
+  assert.deepEqual(buildGraphRecommendations(
+    ["anime:2", "anime:1"], new Map(), buildRecommendationIndexFromCompact(compact),
+  ), positiveFirst);
 });
 
 test("candidate and metadata eligibility retain exclusion precedence and missing count", () => {

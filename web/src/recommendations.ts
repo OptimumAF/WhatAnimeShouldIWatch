@@ -177,20 +177,14 @@ export function buildGraphRecommendations(
       if (selected.has(neighbor.otherNodeId)) {
         continue;
       }
+      // V1 weights are pair preference, so a nonpositive mean does not prove
+      // opposition to a selected anime. It cannot seed or penalize a pick.
+      if (neighbor.weight <= 0) {
+        continue;
+      }
       const weightedScore = neighbor.weight * weightFactor;
 
       const current = scored.get(neighbor.otherNodeId);
-      if (neighbor.weight <= 0) {
-        if (current) {
-          current.sourceMap.set(selectedNodeId, {
-            edgeWeight: neighbor.weight,
-            weightFactor,
-            weightedScore,
-          });
-        }
-        continue;
-      }
-
       if (!current) {
         scored.set(neighbor.otherNodeId, {
           score: weightedScore,

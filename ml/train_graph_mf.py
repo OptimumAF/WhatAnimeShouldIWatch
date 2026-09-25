@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
         "--graph-min-abs-weight",
         type=float,
         default=0.0,
-        help="Ignore anime-anime edges where abs(weight) is below this threshold",
+        help="Minimum positive anime-anime weight for attractive regularization (legacy option name)",
     )
     parser.add_argument(
         "--graph-sample-rate",
@@ -275,7 +275,8 @@ def load_anime_graph_edges_legacy(
 ) -> np.ndarray:
     edges_raw = raw.get("edges", [])
 
-    # Deduplicate undirected pairs and average by absolute edge weight.
+    # V1 negative pair preference is not an attractive relationship.
+    # Deduplicate only positive undirected pairs for this legacy trainer.
     pair_weights: Dict[Tuple[int, int], List[float]] = {}
 
     for edge in edges_raw:
@@ -290,11 +291,11 @@ def load_anime_graph_edges_legacy(
             continue
         if src_anime_id == dst_anime_id:
             continue
-        if not isinstance(weight, (int, float)) or math.isnan(float(weight)):
+        if not isinstance(weight, (int, float)) or not math.isfinite(float(weight)):
             continue
 
-        w = abs(float(weight))
-        if w < min_abs_weight:
+        w = float(weight)
+        if w <= 0.0 or w < min_abs_weight:
             continue
 
         src_idx = anime_id_to_idx.get(src_anime_id)
@@ -351,10 +352,10 @@ def load_anime_graph_edges_compact(
             continue
         if left_idx == right_idx:
             continue
-        if not isinstance(weight, (int, float)) or math.isnan(float(weight)):
+        if not isinstance(weight, (int, float)) or not math.isfinite(float(weight)):
             continue
-        w = abs(float(weight))
-        if w < min_abs_weight:
+        w = float(weight)
+        if w <= 0.0 or w < min_abs_weight:
             continue
 
         dataset_left = compact_anime_to_dataset_idx[left_idx]

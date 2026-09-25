@@ -20,5 +20,20 @@
       { "animeId": 3, "normalizedScore": 2 },
       { "animeId": 4, "normalizedScore": -2 }
     ] }
+  ],
+  "signedCases": [
+    { "label": "opposite tastes", "observations": [{ "left": 2, "right": -2 }, { "left": -2, "right": 2 }], "cosine": -1, "shrunk": -0.5 },
+    { "label": "universally disliked pair", "observations": [{ "left": -2, "right": -1 }, { "left": -4, "right": -2 }], "cosine": 1, "shrunk": 0.5 },
+    { "label": "orthogonal neutral pair", "observations": [{ "left": 1, "right": 0 }, { "left": 0, "right": 1 }], "cosine": 0, "shrunk": 0 },
+    { "label": "constant nonzero item vectors", "observations": [{ "left": 1, "right": 1 }, { "left": 1, "right": 1 }], "cosine": 1, "shrunk": 0.5 },
+    { "label": "no within-user variation", "observations": [{ "left": 0, "right": 0 }, { "left": 0, "right": 0 }], "cosine": null, "shrunk": null },
+    { "label": "one opposite observation", "observations": [{ "left": 2, "right": -1 }], "cosine": -1, "shrunk": -0.3333333333333333 },
+    { "label": "no overlap", "observations": [], "cosine": null, "shrunk": null }
+  ],
+  "uniformRaters": [
+    { "label": "uniformly high rater", "raw": [9, 9, 7, 7], "centered": [1, 1, -1, -1] },
+    { "label": "uniformly low rater", "raw": [3, 3, 1, 1], "centered": [1, 1, -1, -1] },
+    { "label": "high flat rater", "raw": [8, 8, 8, 8], "centered": [0, 0, 0, 0] },
+    { "label": "low flat rater", "raw": [2, 2, 2, 2], "centered": [0, 0, 0, 0] }
   ]
 }
