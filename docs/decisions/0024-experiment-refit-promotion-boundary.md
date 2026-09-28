@@ -1,6 +1,6 @@
 # 0024 — Experiment, final refit, and model promotion boundaries
 
-**Status:** M5.9 protocol fixed on 2026-09-28 before a final-refit run. The private invented MF refit and local synthetic/mock gate pass; fresh PR CI and final review are pending. LightGCN/content adapters and promotion/rollback controls are still absent, so M5.9 and the M5 exit gate remain open. Provider source/use holds remain active.
+**Status:** M5.9 protocol fixed on 2026-09-28 before a final-refit run. The private invented MF refit, local synthetic/mock gate, and [PR #38 fixture CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36398190484) pass on implementation commit `079ed50`; final stacked review found no release or provider path change. LightGCN/content adapters and promotion/rollback controls are still absent, so M5.9 and the M5 exit gate remain open. Provider source/use holds remain active.
 
 ## Separate stages
 
