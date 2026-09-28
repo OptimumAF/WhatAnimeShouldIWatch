@@ -1186,3 +1186,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI and stacked-diff review remain. This same-runtime reproduced refit is an invented engineering check; the nonfixture package still accepts a constructed archive. The frozen evidence filenames must be reconciled and a genuine selected/refit package fixture built before the package can require this check. Predeclared cohort/policy timing, real source/use and owner approvals, immutable publication, exact-tag Pages trigger, hosted checks, and rollback remain. M8.4 and M8 stay unchecked.
 
 **Single next task:** Reconcile the private package's marker/digest filenames with the original split-first refit output, build a genuine invented selection/final-refit package fixture, and require parameter reproduction for nonfixture package approval.
+
+## Session 2026-09-28 — M8.4 refit reproduction CI review
+
+**PR / exact head:** Committed `25ac24a46b2b59e6247814cb8f8a9aca529b6e4b` and opened draft [PR #54](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/54) against PR #53's branch. The ten-file stacked diff passed `git diff --check`; the checkout was clean. [Fixture CI run 36455869532](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36455869532) and GitGuardian passed on that implementation SHA. CI installed clean Node/Python dependencies, generated and verified synthetic artifacts, typechecked, ran pipeline/Python/workflow checks, built web, and passed mocked browser smoke. No provider request, production model, publication, deployment, or private watchlist was used.
+
+**Checks not run / blockers:** The nonfixture package still uses legacy private final-report digest and marker names and a constructed archive, so it cannot yet require this genuine frozen-refit reproduction. A permitted real source, predeclared serving policy/cohort timing, owner/source-use approvals, immutable model publication, exact-tag Pages trigger, hosted checks, and rollback practice remain absent. M8.4 and M8 stay unchecked. This documentation-only handoff commit needs final-head CI.
+
+**Single next task:** Align the package's private evidence paths with the original split-first selection/refit files, generate a real invented frozen selection and numeric refit for the package fixture, and reject nonfixture packages unless the parameters reproduce from the validated split.
