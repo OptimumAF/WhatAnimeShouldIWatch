@@ -1232,3 +1232,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI, final stacked-diff review, and final commit/PR reference remain. The authored final label was chosen to pass the invented gate; real source/use and owner approvals, permitted held-out quality, immutable model publication, exact-tag deployment, hosted verification, and rollback are absent. A repository precommit cannot detect experiments performed off-record. M8.4 and M8 stay unchecked.
 
 **Plan revision / single next task:** The plan's M8 status is now accurately in progress; its M8.4 evidence order now requires prefit bytes/policy and a prior owner plan entry without lowering any real release criterion. Next: build the immutable model release preflight and exact six-file upload/post-upload digest verification with mocked GitHub responses, keeping the real approval registries empty and no release mutation in routine checks.
+
+## Session 2026-09-28 — M8.4 serving freeze CI review
+
+**PR / exact implementation head:** Committed `48db4019df8c193621e9931463d92ae6680f2662` and opened draft [PR #56](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/56) against PR #55's branch. The 16-file stacked diff passed `git diff --check`, and the implementation checkout was clean. [Fixture CI run 36462844571](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36462844571) passed on that SHA, as did GitGuardian. CI used clean Node/Python dependencies, generated and verified invented fixtures, typechecked, ran pipeline/Python/workflow tests, built web, and passed mocked browser smoke.
+
+**Checks not run / blockers:** This documentation-only handoff commit needs its own final-head CI check. No provider or private watchlist input, production quality evidence, release, deployment, or hosted check was used. The committed plan/model/provider approval registries still authorize no real promotion; immutable model publication, exact-tag deployment, hosted verification, and rollback remain. M8.4 and M8 stay unchecked.
+
+**Single next task:** Build the immutable model release preflight and six-file remote digest verification with mocked GitHub responses, retaining the empty approval registries and no real release mutation.
