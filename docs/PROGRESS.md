@@ -1056,3 +1056,13 @@
 **Checks not run / blockers:** Clean-checkout PR CI and final stacked-diff review remain. There is still no v3 promotion package, exact model release approval, reviewed raw-to-graph dataset bridge, permitted serving-path final quality evidence, immutable model publication, deployment trigger, hosted check, or practiced rollback. All provider-use and model-promotion approval records remain empty. M8.4 and the M8 exit gate stay unchecked.
 
 **Single next task:** Build a synthetic v3 model-promotion package/verifier that pins the unchanged approved data base, model/refit/final-report evidence, exact owner/source-use approvals, and a public asset allowlist; keep remote publication and deployment held.
+
+## Session 2026-09-28 — M8.4 model-contract CI review
+
+**PR / implementation:** Committed `04a9c4742e94f683c852592b4b4fa8d60eb081c4` and opened draft [PR #48](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/48) against `codex/m8-reviewed-bootstrap`. The ten-file stacked diff passed `git diff --check` and contains the v3 contract, strict item-model parser, invented manifest/browser tests, agent guidance, and living records.
+
+**Exact-head evidence:** [Fixture CI run 36433078974](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36433078974) and GitGuardian passed on `04a9c47`. CI completed a clean Node/Python dependency install, fixture generation, typecheck, pipeline/web/Python/workflow test gates, web build, and mocked browser smoke test. No release, deployment, provider, or private-history path was dispatched.
+
+**Checks not run / blockers:** No permitted raw-to-v3 dataset bridge, serving-path quality decision, committed model package approval, immutable model release, exact-tag deployment, hosted check, or rollback practice exists. M8.4 and M8 remain unchecked. This documentation-only CI handoff commit still needs its final-head check.
+
+**Single next task:** Implement the synthetic v3 model-promotion package and independent verifier with exact data-base, private-evidence, approval, and public-inventory binding; leave remote mutation held.
