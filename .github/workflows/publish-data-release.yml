@@ -96,6 +96,7 @@ jobs:
 
           test -f release-data/graph.compact.json.gz
           test -f release-data/anonymized-ratings.compact.json.gz
+          python3 scripts/verify_data_release_payload.py release-data
 
           (
             cd release-data
@@ -122,6 +123,12 @@ jobs:
               "utf8",
             );
           NODE
+
+      - name: Verify target release contains no model
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.inputs.tag_name || 'data-latest' }}
+        run: python3 scripts/verify_data_release_target.py "${GITHUB_REPOSITORY}" "${TAG_NAME}"
 
       - name: Publish/Update GitHub release
         uses: ncipollo/release-action@v1
