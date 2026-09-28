@@ -880,3 +880,15 @@
 **Plan revisions and reasons:** M8.2 is checked after its exact-head CI and review. Decision 0027's scope continues to separate local atomic activation from publication and hosted deployment; no acceptance criterion or task ID was lowered.
 
 **Single next task:** M8.3 — make release-data publication auditable using an invented asset inventory and approval-gated workflow checks, without publishing or collecting data.
+
+## Session 2026-09-28 — M8.3 publication boundary
+
+**Branch / starting commit:** `codex/m8-publication-audit` from clean `1aaac778c7d2ada7c2b0b310f0dd7c196e850f9c` (PR #42 final-head CI passing). Read the root `AGENTS.md`, M8.3 plan and latest handoff, decisions 0001/0002/0024/0026, both local and Actions publishers, data-release guards, M8.1 graph contract, and applicable tests. No nested agent instructions or local changes were present.
+
+**Finding and affected files:** The legacy `publish-data-release.yml` and `pipeline/src/publish-release-data.ts` both stage `anonymized-ratings.compact.json.gz`. The workflow can also source from a mutable release; the current v2 graph carries `userIds` and `ua` per-user edges. This violates M8.3's public-history boundary even if a filename allowlist blocks SQLite or salts. Added [decision 0028](decisions/0028-publication-audit-boundary.md), merged its guidance into `AGENTS.md`, and recorded the dependency in the plan. Decision 0009's v2 truncation semantics mean dropping user rows without a new version would misstate pair provenance.
+
+**Checks / blockers:** Protocol and source inspection only at this stage; no publisher or graph code changed yet. No real release, provider data, private history, publication, or deployment was accessed. M8.3 remains unchecked until legacy upload routes fail closed, a truthful aggregate-only graph and audited immutable package exist, synthetic privacy/quality/workflow tests and clean-checkout CI pass, and source/use approval is recorded for any real release. The M8 exit gate stays open.
+
+**Plan revision and reason:** Added the aggregate-only graph contract as an explicit M8.3 dependency rather than treating pseudonymous per-user edges as public-safe; task ID and acceptance criteria are unchanged.
+
+**Single next task:** Disable the two legacy upload routes before release mutation and verify with invented inputs and mocked command/network seams that ratings and model files cannot reach publication.
