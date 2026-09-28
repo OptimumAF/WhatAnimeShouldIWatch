@@ -6,6 +6,7 @@ import { parseCompactModel, parseReleaseManifest, RELEASE_BUNDLE_LIMITS } from
   "../../web/src/artifacts.js";
 import type { CompactGraphDataV3 } from "./types.js";
 import { prepareGraphBridge, verifyGraphDatasetBridge } from "./core/split-graph-bridge.js";
+import { verifyServingFreeze } from "./core/model-serving-freeze.js";
 import { RELEASE_FILES, releaseSha256, verifyReleaseBundle } from "./release-manifest.js";
 
 export const MODEL_SOURCE_FILES = [RELEASE_FILES.manifest, RELEASE_FILES.neighborhood,
@@ -13,8 +14,9 @@ export const MODEL_SOURCE_FILES = [RELEASE_FILES.manifest, RELEASE_FILES.neighbo
 export const MODEL_PRIVATE_FILES = ["model-promotion-review.json", "selection.json",
   "final-report.json", "final-report.json.sha256.json", "selection.json.test-used",
   "refit-record.json", "model.npz", "model.metadata.json", "model-mf-web.compact.json",
-  "dataset-bridge.json", "quality-policy.json",
-  "serving-cohort.json", "serving-report.json"] as const;
+  "dataset-bridge.json", "quality-plan.json", "quality-policy.json",
+  "serving-cohort.json", "serving-final.json", "serving-freeze.json",
+  "serving-final.json.test-used", "serving-report.json"] as const;
 export const MODEL_OUTPUT_FILES = [...MODEL_SOURCE_FILES, "model-promotion-audit.json"] as const;
 export const MODEL_BRIDGE_SOURCE_FILES = ["raw-ratings.json", "split-manifest.json",
   "anime-metadata.json"] as const;
@@ -38,8 +40,8 @@ export interface ModelPackageOptions {
   beforeActivate?: () => void;
 }
 
-export interface ModelPromotionAuditV1 {
-  format: "model-promotion-audit-v1";
+export interface ModelPromotionAuditV2 {
+  format: "model-promotion-audit-v2";
   status: "synthetic-only" | "pending-approval";
   promotionId: string;
   tag: string;
@@ -54,9 +56,11 @@ export interface ModelPromotionAuditV1 {
   modelCoverage: number;
   evidence: { reviewSha256: string; selectionFileSha256: string;
     finalReportSha256: string; refitRecordSha256: string;
-    datasetBridgeSha256: string; qualityPolicySha256: string; servingCohortSha256: string;
+    datasetBridgeSha256: string; qualityPlanSha256: string; qualityPolicySha256: string;
+    servingCohortSha256: string; servingFinalSha256: string; servingFreezeSha256: string;
     servingReportSha256: string };
-  approvals: { owner: string; ownerApprovalRef: string; trainingApprovalRef: string;
+  approvals: { owner: string; ownerApprovalRef: string; freezeApprovalRef: string;
+    trainingApprovalRef: string;
     publicationApprovalRef: string; deploymentApprovalRef: string };
   assets: { path: string; bytes: number; sha256: string }[];
 }
@@ -190,18 +194,19 @@ function modelMetrics(value: unknown, field: string) {
 }
 
 function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, manifest: ReturnType<typeof parseReleaseManifest>,
-  modelBytes: Buffer, syntheticFixture: boolean): Pick<ModelPromotionAuditV1, "promotionId" | "sourceName" |
+  modelBytes: Buffer, syntheticFixture: boolean): Pick<ModelPromotionAuditV2, "promotionId" | "sourceName" |
     "numericArchiveSha256" | "modelCoverage" | "evidence" | "approvals"> {
   const required = ["format", "promotionId", "tag", "bundleId", "manifestSha256", "baseTag",
     "baseBundleId", "baseManifestSha256", "sourceName", "sourceDecisionRef", "datasetBridgeDecisionRef",
     "graphDatasetSha256", "rawContentSha256", "modelSha256", "numericArchiveSha256",
     "numericMetadataSha256",
     "selectionFileSha256", "selectionSha256", "finalReportSha256", "refitRecordSha256",
-    "datasetBridgeSha256", "qualityPolicySha256", "servingCohortSha256", "servingReportSha256",
-    "minimumModelCoverage", "owner", "ownerApprovalRef",
+    "datasetBridgeSha256", "qualityPlanSha256", "qualityPolicySha256",
+    "servingCohortSha256", "servingFinalSha256", "servingFreezeSha256", "servingReportSha256",
+    "minimumModelCoverage", "owner", "ownerApprovalRef", "freezeApprovalRef",
     "trainingApprovalRef", "publicationApprovalRef", "deploymentApprovalRef"];
   fields(review, required, "review");
-  same(review.format, "model-promotion-review-v2", "review.format");
+  same(review.format, "model-promotion-review-v3", "review.format");
   const promotionId = text(review.promotionId, "review.promotionId");
   const sourceName = text(review.sourceName, "review.sourceName");
   tag(review.tag, "review.tag");
@@ -210,7 +215,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
     "graphDatasetSha256", "rawContentSha256", "modelSha256", "numericArchiveSha256",
     "numericMetadataSha256",
     "selectionFileSha256", "selectionSha256", "finalReportSha256", "refitRecordSha256",
-    "datasetBridgeSha256", "qualityPolicySha256", "servingCohortSha256",
+    "datasetBridgeSha256", "qualityPlanSha256", "qualityPolicySha256",
+    "servingCohortSha256", "servingFinalSha256", "servingFreezeSha256",
     "servingReportSha256"] as const) {
     digest(review[key], `review.${key}`);
   }
@@ -220,7 +226,7 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   const minimumModelCoverage = fraction(review.minimumModelCoverage, "review.minimumModelCoverage");
   if (minimumModelCoverage <= 0) fail("review.minimumModelCoverage", "must be positive");
   const owner = text(review.owner, "review.owner");
-  for (const key of ["ownerApprovalRef", "trainingApprovalRef", "publicationApprovalRef",
+  for (const key of ["ownerApprovalRef", "freezeApprovalRef", "trainingApprovalRef", "publicationApprovalRef",
     "deploymentApprovalRef"] as const) https(review[key], `review.${key}`);
 
   same(review.tag, manifest.tag, "review.tag");
@@ -265,7 +271,7 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
       "minimumPositiveLabels", "minimumServingCoverage", "minimumNdcgLift",
       "maximumP95LatencyMs", "latencyWarmups", "latencySamples"], "quality-policy.json");
   const serving = fields(readEvidence(privateBytes, "serving-report.json"),
-    ["format", "evaluator", "policySha256", "cohortSha256", "graphSha256",
+    ["format", "evaluator", "policySha256", "cohortSha256", "freezeSha256", "graphSha256",
       "modelSha256", "tag", "bundleId", "rawContentSha256", "graphDatasetSha256",
       "selectionSha256", "finalReportSha256", "topK", "suppliedCount",
       "baselineValidation", "validationUsers", "finalUsers", "eligibleUsers",
@@ -276,6 +282,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   same(selection.format, "split-first-selection-v1", "selection.format");
   same(selection.selectionSha256, review.selectionSha256, "selection.selectionSha256");
   same(selection.rawContentSha256, review.rawContentSha256, "selection.rawContentSha256");
+  same(selection.servingFreezeSha256, review.servingFreezeSha256,
+    "selection.servingFreezeSha256");
   const selected = object(selection.selectedCandidate, "selection.selectedCandidate");
   const selectedId = text(selected.id, "selection.selectedCandidate.id");
 
@@ -336,8 +344,14 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
 
   same(review.qualityPolicySha256, releaseSha256(privateBytes.get("quality-policy.json")!),
     "review.qualityPolicySha256");
+  same(review.qualityPlanSha256, releaseSha256(privateBytes.get("quality-plan.json")!),
+    "review.qualityPlanSha256");
   same(review.servingCohortSha256, releaseSha256(privateBytes.get("serving-cohort.json")!),
     "review.servingCohortSha256");
+  same(review.servingFinalSha256, releaseSha256(privateBytes.get("serving-final.json")!),
+    "review.servingFinalSha256");
+  same(review.servingFreezeSha256, releaseSha256(privateBytes.get("serving-freeze.json")!),
+    "review.servingFreezeSha256");
   same(policy.format, "model-promotion-quality-policy-v1", "quality-policy.format");
   decisionRef(policy.decisionRef, "quality-policy.decisionRef");
   text(policy.baselineName, "quality-policy.baselineName");
@@ -361,6 +375,7 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
     "serving-report.evaluator");
   same(serving.policySha256, review.qualityPolicySha256, "serving-report.policySha256");
   same(serving.cohortSha256, review.servingCohortSha256, "serving-report.cohortSha256");
+  same(serving.freezeSha256, review.servingFreezeSha256, "serving-report.freezeSha256");
   same(serving.graphSha256, manifest.neighborhood.sha256, "serving-report.graphSha256");
   same(serving.modelSha256, review.modelSha256, "serving-report.modelSha256");
   for (const key of ["tag", "bundleId", "rawContentSha256", "graphDatasetSha256",
@@ -391,10 +406,14 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
       finalReportSha256: review.finalReportSha256 as string,
       refitRecordSha256: review.refitRecordSha256 as string,
       datasetBridgeSha256: review.datasetBridgeSha256 as string,
+      qualityPlanSha256: review.qualityPlanSha256 as string,
       qualityPolicySha256: review.qualityPolicySha256 as string,
       servingCohortSha256: review.servingCohortSha256 as string,
+      servingFinalSha256: review.servingFinalSha256 as string,
+      servingFreezeSha256: review.servingFreezeSha256 as string,
       servingReportSha256: review.servingReportSha256 as string },
     approvals: { owner, ownerApprovalRef: review.ownerApprovalRef as string,
+      freezeApprovalRef: review.freezeApprovalRef as string,
       trainingApprovalRef: review.trainingApprovalRef as string,
       publicationApprovalRef: review.publicationApprovalRef as string,
       deploymentApprovalRef: review.deploymentApprovalRef as string } };
@@ -419,7 +438,7 @@ function outputPath(options: ModelPackageOptions): string {
 }
 
 /** Build only a local package. An independent approval verifier must run before any publication. */
-export function packageModelRelease(options: ModelPackageOptions): ModelPromotionAuditV1 {
+export function packageModelRelease(options: ModelPackageOptions): ModelPromotionAuditV2 {
   if (!options.syntheticFixture && !options.sourceDir) {
     fail("sourceDir", "nonfixture packaging requires private raw ratings, split, and fixed metadata");
   }
@@ -465,6 +484,13 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
   const evidence = evidenceAudit(privateBytes, review, manifest,
     candidateBytes.get(RELEASE_FILES.model)!, options.syntheticFixture === true);
   same(evidence.sourceName, manifest.dataset.source, "review.sourceName");
+  verifyServingFreeze(options.evidenceDir, { sourceName: evidence.sourceName,
+    rawContentSha256: review.rawContentSha256 as string,
+    graphDatasetSha256: manifest.dataset.sha256,
+    cohortSha256: review.servingCohortSha256 as string,
+    finalSha256: review.servingFinalSha256 as string,
+    freezeSha256: review.servingFreezeSha256 as string },
+  readEvidence(privateBytes, "quality-policy.json"));
   if (!options.syntheticFixture) {
     const prepared = prepareGraphBridge(
       path.join(options.sourceDir!, "raw-ratings.json"),
@@ -530,8 +556,8 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
   if (synthetic !== (manifest.dataset.source === "synthetic-fixture")) {
     fail("release-manifest.json.dataset.source", "must match syntheticFixture");
   }
-  const audit: ModelPromotionAuditV1 = {
-    format: "model-promotion-audit-v1", status: synthetic ? "synthetic-only" : "pending-approval",
+  const audit: ModelPromotionAuditV2 = {
+    format: "model-promotion-audit-v2", status: synthetic ? "synthetic-only" : "pending-approval",
     promotionId: evidence.promotionId, tag: manifest.tag, bundleId: manifest.bundleId,
     manifestSha256: releaseSha256(candidateBytes.get(RELEASE_FILES.manifest)!),
     base: { tag: base.tag, bundleId: base.bundleId,

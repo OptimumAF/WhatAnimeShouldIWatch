@@ -6,9 +6,10 @@ import { Command } from "commander";
 import { RELEASE_BUNDLE_LIMITS } from "../../web/src/artifacts.js";
 import { getRepoRoot } from "./paths.js";
 import { MODEL_OUTPUT_FILES, MODEL_SOURCE_FILES, packageModelRelease,
-  type ModelPromotionAuditV1 } from "./package-model-release.js";
+  type ModelPromotionAuditV2 } from "./package-model-release.js";
 import { releaseSha256 } from "./release-manifest.js";
 import { verifyPublicationPackage } from "./verify-publication-package.js";
+import { verifyPriorPlanApproval } from "./core/model-evaluation-plan-approval.js";
 
 const repoRoot = getRepoRoot(import.meta.url);
 const TAG = /^data-v[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -32,6 +33,9 @@ export interface ModelPackageVerificationOptions {
   providerApprovals: unknown;
   publicationApprovals: unknown;
   modelApprovals: unknown;
+  planApprovals: unknown;
+  /** Tests use an isolated Git history; the executable always uses this repository. */
+  approvalRepoDir?: string;
 }
 
 function fail(field: string, reason: string): never {
@@ -91,7 +95,7 @@ function exactPackage(directory: string): void {
 }
 
 function providerUse(value: unknown, use: "training" | "publication" | "deployment",
-  audit: ModelPromotionAuditV1): void {
+  audit: ModelPromotionAuditV2): void {
   const entry = object(value, `providerApprovals.approvals.${use}`);
   if (entry.approved !== true || entry.approvalRef !== audit.approvals[`${use}ApprovalRef`] ||
       entry.owner !== audit.approvals.owner || !Array.isArray(entry.sources) ||
@@ -118,7 +122,7 @@ function cleanTemporary(directory: string): void {
 }
 
 /** Recompute the six public bytes from a private review and require exact committed approvals. */
-export function verifyModelReleasePackage(options: ModelPackageVerificationOptions): ModelPromotionAuditV1 {
+export function verifyModelReleasePackage(options: ModelPackageVerificationOptions): ModelPromotionAuditV2 {
   match(options.dispatch.tag, TAG, "dispatch.tag");
   match(options.dispatch.baseTag, TAG, "dispatch.baseTag");
   if (options.dispatch.tag === options.dispatch.baseTag) fail("dispatch.baseTag", "must differ from tag");
@@ -128,11 +132,15 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
   const auditBytes = fs.readFileSync(path.join(options.packageDir, "model-promotion-audit.json"));
   const suppliedAudit = object(JSON.parse(auditBytes.toString("utf8")),
     "model-promotion-audit.json");
+  if (suppliedAudit.format !== "model-promotion-audit-v2") {
+    fail("model-promotion-audit.json.format", "is unsupported");
+  }
   if (suppliedAudit.status === "synthetic-only") {
     fail("model-promotion-audit.json.status", "synthetic packages cannot be approved");
   }
   if (!options.sourceDir) fail("sourceDir", "requires private raw/split/metadata inputs");
   const earlyApprovals = fields(suppliedAudit.approvals, ["owner", "ownerApprovalRef",
+    "freezeApprovalRef",
     "trainingApprovalRef", "publicationApprovalRef", "deploymentApprovalRef"],
   "model-promotion-audit.json.approvals");
   if (suppliedAudit.status !== "pending-approval" ||
@@ -146,20 +154,36 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
   if (earlyProvider.schemaVersion !== 1) fail("providerApprovals.schemaVersion", "is unsupported");
   const earlyUses = object(earlyProvider.approvals, "providerApprovals.approvals");
   for (const use of ["training", "publication", "deployment"] as const) {
-    providerUse(earlyUses[use], use, suppliedAudit as unknown as ModelPromotionAuditV1);
+    providerUse(earlyUses[use], use, suppliedAudit as unknown as ModelPromotionAuditV2);
   }
   const earlyRegistry = object(options.modelApprovals, "modelApprovals");
-  if (earlyRegistry.schemaVersion !== 1 || !Array.isArray(earlyRegistry.promotions) ||
-      earlyRegistry.promotions.filter((value) => {
+  const earlyMatches = earlyRegistry.schemaVersion === 1 && Array.isArray(earlyRegistry.promotions)
+    ? earlyRegistry.promotions.filter((value) => {
         if (!value || typeof value !== "object" || Array.isArray(value)) return false;
         const entry = value as Record<string, unknown>;
         return entry.tag === options.dispatch.tag &&
           entry.auditSha256 === releaseSha256(auditBytes) &&
           entry.ownerApprovalRef === earlyApprovals.ownerApprovalRef &&
-          entry.trainingApprovalRef === earlyApprovals.trainingApprovalRef;
-      }).length !== 1) {
+          entry.trainingApprovalRef === earlyApprovals.trainingApprovalRef &&
+          entry.freezeApprovalRef === earlyApprovals.freezeApprovalRef;
+      }) : [];
+  if (earlyMatches.length !== 1) {
     fail("modelApprovals", "requires one exact committed owner record before reading private rows");
   }
+  const earlyOwner = object(earlyMatches[0], "modelApprovals.promotion");
+  const earlyEvidence = object(suppliedAudit.evidence, "model-promotion-audit.json.evidence");
+  verifyPriorPlanApproval(options.approvalRepoDir ?? repoRoot, earlyOwner.freezeRevision,
+    options.planApprovals, options.modelApprovals, options.dispatch.tag, {
+      sourceName: suppliedAudit.sourceName as string,
+      graphDatasetSha256: suppliedAudit.datasetSha256 as string,
+      qualityPlanSha256: earlyEvidence.qualityPlanSha256 as string,
+      servingCohortSha256: earlyEvidence.servingCohortSha256 as string,
+      servingFinalSha256: earlyEvidence.servingFinalSha256 as string,
+      servingFreezeSha256: earlyEvidence.servingFreezeSha256 as string,
+      owner: earlyApprovals.owner as string,
+      approvalRef: earlyApprovals.freezeApprovalRef as string,
+      decisionRef: "docs/decisions/0035-serving-evaluation-freeze.md",
+    });
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "model-verify-"));
   try {
     const candidate = path.join(temporary, "candidate");
@@ -228,7 +252,9 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
     const entries = registry.promotions.map((value, index) => fields(value,
       ["promotionId", "tag", "bundleId", "manifestSha256", "auditSha256", "baseTag",
         "baseBundleId", "baseManifestSha256", "sourceRunId", "artifactName", "decisionRef",
-        "datasetBridgeSha256", "datasetBridgeReviewRef", "qualityPolicySha256",
+        "datasetBridgeSha256", "datasetBridgeReviewRef", "qualityPlanSha256",
+        "qualityPolicySha256", "servingFinalSha256", "servingFreezeSha256",
+        "freezeRevision", "freezeApprovalRef",
         "numericMetadataSha256",
         "servingCohortSha256", "servingReportSha256", "owner", "ownerApprovalRef", "trainingApprovalRef",
         "publicationApprovalRef", "deploymentApprovalRef"],
@@ -237,7 +263,8 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
     for (const [index, entry] of entries.entries()) {
       match(entry.tag, TAG, `modelApprovals.promotions[${index}].tag`);
       for (const key of ["bundleId", "manifestSha256", "auditSha256", "baseBundleId",
-        "baseManifestSha256", "datasetBridgeSha256", "qualityPolicySha256",
+        "baseManifestSha256", "datasetBridgeSha256", "qualityPlanSha256",
+        "qualityPolicySha256", "servingFinalSha256", "servingFreezeSha256",
         "numericMetadataSha256",
         "servingCohortSha256", "servingReportSha256"] as const) {
         match(entry[key], DIGEST, `modelApprovals.promotions[${index}].${key}`);
@@ -245,6 +272,8 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
       decisionRef(entry.decisionRef, `modelApprovals.promotions[${index}].decisionRef`);
       runId(entry.sourceRunId, `modelApprovals.promotions[${index}].sourceRunId`);
       match(entry.artifactName, ARTIFACT, `modelApprovals.promotions[${index}].artifactName`);
+      match(entry.freezeRevision, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/,
+        `modelApprovals.promotions[${index}].freezeRevision`);
       if (seen.has(entry.tag as string)) fail("modelApprovals.promotions", "contains duplicate tags");
       seen.add(entry.tag as string);
     }
@@ -262,7 +291,11 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
         entry.decisionRef !== qualityPolicy.decisionRef ||
         entry.datasetBridgeSha256 !== audit.evidence.datasetBridgeSha256 ||
         entry.datasetBridgeReviewRef !== bridge.reviewRef ||
+        entry.qualityPlanSha256 !== audit.evidence.qualityPlanSha256 ||
         entry.qualityPolicySha256 !== audit.evidence.qualityPolicySha256 ||
+        entry.servingFinalSha256 !== audit.evidence.servingFinalSha256 ||
+        entry.servingFreezeSha256 !== audit.evidence.servingFreezeSha256 ||
+        entry.freezeApprovalRef !== audit.approvals.freezeApprovalRef ||
         entry.numericMetadataSha256 !== audit.numericMetadataSha256 ||
         entry.servingCohortSha256 !== audit.evidence.servingCohortSha256 ||
         entry.servingReportSha256 !== audit.evidence.servingReportSha256 ||
@@ -299,7 +332,9 @@ function main(): void {
     publicationApprovals: JSON.parse(fs.readFileSync(path.join(repoRoot,
       "docs/approvals/publication-bundles.json"), "utf8")),
     modelApprovals: JSON.parse(fs.readFileSync(path.join(repoRoot,
-      "docs/approvals/model-release-bundles.json"), "utf8")) });
+      "docs/approvals/model-release-bundles.json"), "utf8")),
+    planApprovals: JSON.parse(fs.readFileSync(path.join(repoRoot,
+      "docs/approvals/model-evaluation-plans.json"), "utf8")) });
   process.stdout.write(`Verified model package ${result.tag} ${result.bundleId}.\n`);
 }
 

@@ -1,0 +1,15 @@
+# 0035 — Freeze serving evaluation before model selection
+
+**Status:** M8.4 synthetic protocol, 2026-09-28. This decision authorizes invented and mocked checks only. It does not approve a source, a model, publication, deployment, or a real quality claim.
+
+## Prefit commitment
+
+Before fitting or choosing a model, write an exact private `serving-cohort.json` containing the fixed metadata, fit-user IDs, and baseline-validation profiles, plus a separate reserved `serving-final.json`. The cohort carries only the final file's SHA-256, so validation selection need not parse final labels. Write `quality-plan.json` with the cohort/final byte digests, source and graph identity, the raw-snapshot digest, all static sample/metric/coverage/latency settings, and the ordered graph/genre/catalog baseline candidates. Create `serving-freeze.json` exclusively while the selection, numeric model, and serving report do not exist. Bind its exact bytes in the frozen MF selection. Later `quality-policy.json` may add only the candidate bundle ID and validation-selected baseline; all predeclared fields must match the plan.
+
+The first serving report chooses its baseline using validation users only. It writes `serving-final.json.test-used` exclusively **before parsing the reserved final bytes**, then scores the final group through the existing browser preference, eligibility, ranking, and display path. A failure after the marker consumes that attempt. Package verification is read-only: it requires the exact plan, freeze, selection, marker, policy, cohort, final, report, and review digests, then recomputes the report. The public model package retains six files and contains none of the private profiles or labels.
+
+## Independent approval order
+
+The separate `model-evaluation-plans.json` approval registry starts empty. Before scoring a permitted candidate, an owner would record the exact plan, cohort, reserved-final, and freeze digests in a Git commit. A later exact model approval names that **full prior revision** and a separate freeze approval reference. The independent verifier reads that earlier committed entry, requires it to be a strict ancestor of the current approval checkout, and confirms the candidate model tag was absent there, all before it reads private rows. It then recomputes the private package and its serving scores. Development tests use an isolated Git history and invented entries; no real entry is committed here.
+
+This precommitment establishes repository approval order and makes later changes to the reserved final file or thresholds detectable. It cannot prove that nobody ran an unrecorded experiment before the commitment. An owner must review that chronology and the permitted evaluation source separately. The current authored invented final labels were chosen to exercise a passing gate and remain unsuitable for a production ranking-quality claim. M8.4 stays open for permitted source/quality evidence, owner approval, immutable model publication, exact-tag deployment, hosted checks, and rollback.
