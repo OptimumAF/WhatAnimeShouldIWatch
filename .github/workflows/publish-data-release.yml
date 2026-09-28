@@ -16,8 +16,8 @@ on:
         required: true
         type: string
       previous_tag:
-        description: Separate versioned last-known-good release
-        required: true
+        description: Separate versioned last-known-good release; empty only for separately approved first bundle
+        required: false
         type: string
 
 concurrency:
@@ -72,13 +72,16 @@ jobs:
           PRIOR_TAG: ${{ inputs.previous_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir candidate prior
+          mkdir candidate
           gh run download "$SOURCE_RUN_ID" --name "$ARTIFACT_NAME" --dir candidate
-          gh release download "$PRIOR_TAG" --dir prior \
-            --pattern release-manifest.json \
-            --pattern graph.compact.json \
-            --pattern graph-explorer.compact.json \
-            --pattern catalog.identity.json
+          if [[ -n "$PRIOR_TAG" ]]; then
+            mkdir prior
+            gh release download "$PRIOR_TAG" --dir prior \
+              --pattern release-manifest.json \
+              --pattern graph.compact.json \
+              --pattern graph-explorer.compact.json \
+              --pattern catalog.identity.json
+          fi
 
       - name: Recompute audited package and exact approvals
         env:
@@ -88,10 +91,13 @@ jobs:
           PRIOR_TAG: ${{ inputs.previous_tag }}
           APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
         run: |
-          node --import tsx pipeline/src/verify-publication-package.ts \
-            --package candidate --previous prior --tag "$RELEASE_TAG" \
+          args=(--package candidate --tag "$RELEASE_TAG" \
             --run-id "$SOURCE_RUN_ID" --artifact-name "$ARTIFACT_NAME" \
-            --prior-tag "$PRIOR_TAG" --approval-ref "$APPROVAL_REF"
+            --approval-ref "$APPROVAL_REF")
+          if [[ -n "$PRIOR_TAG" ]]; then
+            args+=(--previous prior --prior-tag "$PRIOR_TAG")
+          fi
+          node --import tsx pipeline/src/verify-publication-package.ts "${args[@]}"
 
       - name: Pass only five verified assets to publication job
         uses: actions/upload-artifact@v4
@@ -149,12 +155,14 @@ jobs:
           PRIOR_TAG: ${{ inputs.previous_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir prior
-          gh release download "$PRIOR_TAG" --dir prior \
-            --pattern release-manifest.json \
-            --pattern graph.compact.json \
-            --pattern graph-explorer.compact.json \
-            --pattern catalog.identity.json
+          if [[ -n "$PRIOR_TAG" ]]; then
+            mkdir prior
+            gh release download "$PRIOR_TAG" --dir prior \
+              --pattern release-manifest.json \
+              --pattern graph.compact.json \
+              --pattern graph-explorer.compact.json \
+              --pattern catalog.identity.json
+          fi
 
       - name: Reverify package before publication
         env:
@@ -164,10 +172,13 @@ jobs:
           PRIOR_TAG: ${{ inputs.previous_tag }}
           APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
         run: |
-          node --import tsx pipeline/src/verify-publication-package.ts \
-            --package candidate --previous prior --tag "$RELEASE_TAG" \
+          args=(--package candidate --tag "$RELEASE_TAG" \
             --run-id "$SOURCE_RUN_ID" --artifact-name "$ARTIFACT_NAME" \
-            --prior-tag "$PRIOR_TAG" --approval-ref "$APPROVAL_REF"
+            --approval-ref "$APPROVAL_REF")
+          if [[ -n "$PRIOR_TAG" ]]; then
+            args+=(--previous prior --prior-tag "$PRIOR_TAG")
+          fi
+          node --import tsx pipeline/src/verify-publication-package.ts "${args[@]}"
 
       - name: Recheck immutable setting and absent target
         env:

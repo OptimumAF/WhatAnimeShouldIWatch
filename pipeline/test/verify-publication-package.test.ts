@@ -9,7 +9,8 @@ import { projectAggregateGraph } from "../src/core/aggregate-projection.js";
 import { buildExplorerGraph } from "../src/core/explorer-graph.js";
 import { aggregateRecommendationGraphId } from "../src/core/graph-contract.js";
 import { packageDataRelease, PUBLIC_FIELDS, type PublicationReviewV1,
-  type ValidatedPublicationApproval } from "../src/package-data-release.js";
+  type ValidatedFirstBundleApproval, type ValidatedPublicationApproval } from
+  "../src/package-data-release.js";
 import { RELEASE_FILES, releaseSha256, writeReleaseManifest } from "../src/release-manifest.js";
 import { verifyPublicationPackage, type PublicationDispatch } from
   "../src/verify-publication-package.js";
@@ -30,7 +31,8 @@ function root(t: TestContext): string {
   return directory;
 }
 
-function bundle(directory: string, name: string, previous?: string, reviewed = false) {
+function bundle(directory: string, name: string, previous?: string, reviewed = false,
+  reviewedGenesis = false) {
   const out = path.join(directory, name);
   fs.mkdirSync(out);
   const source = JSON.parse(fs.readFileSync(path.join(fixtureDir,
@@ -46,13 +48,14 @@ function bundle(directory: string, name: string, previous?: string, reviewed = f
     encoded(buildExplorerGraph(graph, 5, 0)));
   fs.copyFileSync(path.join(fixtureDir, RELEASE_FILES.catalog),
     path.join(out, RELEASE_FILES.catalog));
-  const manifest = writeReleaseManifest(out, `data-v${name}`, previous, !previous);
+  const manifest = writeReleaseManifest(out, `data-v${name}`, previous,
+    !previous && !reviewedGenesis, reviewedGenesis);
   return { out, manifest };
 }
 
 function setup(t: TestContext) {
   const directory = root(t);
-  const prior = bundle(directory, "prior");
+  const prior = bundle(directory, "prior", undefined, true);
   const current = bundle(directory, "current", prior.out, true);
   const approvalRef = "https://example.test/invented-owner-approval";
   const decisionRef = "docs/decisions/0029-aggregate-only-graph.md";
@@ -91,11 +94,78 @@ function setup(t: TestContext) {
     manifestSha256: audit.manifestSha256,
     auditSha256: releaseSha256(fs.readFileSync(path.join(packageDir, "publication-audit.json"))),
     sourceRunId: dispatch.sourceRunId, artifactName: dispatch.artifactName,
-    previousTag: prior.manifest.tag, decisionRef, approvalRef, owner };
-  const packageApprovals = { schemaVersion: 1, packages: [approvedPackage] };
+    previousTag: prior.manifest.tag, decisionRef, approvalRef, owner, bootstrap: null };
+  const priorApprovedPackage = { tag: prior.manifest.tag,
+    bundleId: prior.manifest.bundleId,
+    manifestSha256: releaseSha256(fs.readFileSync(path.join(prior.out, RELEASE_FILES.manifest))),
+    auditSha256: "a".repeat(64), sourceRunId: 12344,
+    artifactName: "invented-prior-approved-package", previousTag: null,
+    decisionRef, approvalRef, owner,
+    bootstrap: { decisionRef: "docs/decisions/0032-reviewed-first-release-bootstrap.md",
+      approvalRef: "https://example.test/invented-prior-bootstrap-review", owner } };
+  const packageApprovals = { schemaVersion: 1, packages: [priorApprovedPackage, approvedPackage] };
   return { directory, prior, current, packageDir, audit, dispatch, providerApprovals,
-    packageApprovals, approvedPackage };
+    packageApprovals, approvedPackage, priorApprovedPackage, review, approval };
 }
+
+function setupFirst(t: TestContext) {
+  const fixture = setup(t);
+  const first = bundle(fixture.directory, "first", undefined, true, true);
+  const review: PublicationReviewV1 = {
+    ...fixture.review, tag: first.manifest.tag, bundleId: first.manifest.bundleId,
+    manifestSha256: releaseSha256(fs.readFileSync(path.join(first.out, RELEASE_FILES.manifest))),
+    changes: { previousTag: null, summary: "Invented first candidate" },
+  };
+  const bootstrapApproval: ValidatedFirstBundleApproval = {
+    scope: "first-real-bundle", approved: true, tag: review.tag,
+    bundleId: review.bundleId, manifestSha256: review.manifestSha256,
+    decisionRef: "docs/decisions/0032-reviewed-first-release-bootstrap.md",
+    approvalRef: "https://example.test/invented-separate-bootstrap-review",
+    owner: fixture.approval.owner,
+  };
+  const packageDir = path.join(fixture.directory, "first-package");
+  const audit = packageDataRelease({ candidateDir: first.out, outputDir: packageDir,
+    review, approval: fixture.approval, bootstrapApproval });
+  const dispatch: PublicationDispatch = { ...fixture.dispatch, tag: review.tag,
+    previousTag: null };
+  const approvedPackage = { ...fixture.approvedPackage,
+    tag: review.tag, bundleId: review.bundleId,
+    manifestSha256: review.manifestSha256,
+    auditSha256: releaseSha256(fs.readFileSync(path.join(packageDir, "publication-audit.json"))),
+    previousTag: null,
+    bootstrap: { decisionRef: bootstrapApproval.decisionRef,
+      approvalRef: bootstrapApproval.approvalRef, owner: bootstrapApproval.owner } };
+  return { ...fixture, first, review, bootstrapApproval, packageDir, audit, dispatch,
+    approvedPackage, packageApprovals: { schemaVersion: 1, packages: [approvedPackage] } };
+}
+
+test("a first publishable bundle needs separate exact bootstrap approval and no invented prior", (t) => {
+  const fixture = setupFirst(t);
+  assert.equal(fixture.first.manifest.lastKnownGood, null);
+  assert.equal(verifyPublicationPackage({ packageDir: fixture.packageDir,
+    dispatch: fixture.dispatch, providerApprovals: fixture.providerApprovals,
+    packageApprovals: fixture.packageApprovals }).publishable, true);
+  assert.throws(() => packageDataRelease({ candidateDir: fixture.first.out,
+    outputDir: path.join(fixture.directory, "without-bootstrap"), review: fixture.review,
+    approval: fixture.approval }), /bootstrapApproval.*separate exact/);
+  assert.throws(() => verifyPublicationPackage({ packageDir: fixture.packageDir,
+    dispatch: fixture.dispatch, providerApprovals: fixture.providerApprovals,
+    packageApprovals: { schemaVersion: 1, packages: [{ ...fixture.approvedPackage,
+      bootstrap: null }] } }), /bootstrap.*object/);
+  assert.throws(() => verifyPublicationPackage({ packageDir: fixture.packageDir,
+    dispatch: fixture.dispatch, providerApprovals: fixture.providerApprovals,
+    packageApprovals: { schemaVersion: 1, packages: [{ ...fixture.approvedPackage,
+      bootstrap: { ...fixture.approvedPackage.bootstrap,
+        approvalRef: fixture.approval.approvalRef } }] } }), /bootstrap.*separate approval/);
+  assert.throws(() => verifyPublicationPackage({ packageDir: fixture.packageDir,
+    previousDir: fixture.prior.out, dispatch: fixture.dispatch,
+    providerApprovals: fixture.providerApprovals,
+    packageApprovals: fixture.packageApprovals }), /previousDir.*absent/);
+  assert.throws(() => verifyPublicationPackage({ packageDir: fixture.packageDir,
+    dispatch: { ...fixture.dispatch, previousTag: fixture.prior.manifest.tag },
+    providerApprovals: fixture.providerApprovals,
+    packageApprovals: fixture.packageApprovals }), /previousDir.*absent/);
+});
 
 test("exact five-file package and two independent approvals recompute byte-identically", (t) => {
   const fixture = setup(t);
@@ -105,6 +175,11 @@ test("exact five-file package and two independent approvals recompute byte-ident
     packageApprovals: fixture.packageApprovals });
   assert.deepEqual(verified, fixture.audit);
   assert.equal(verified.publishable, true);
+  assert.throws(() => verifyPublicationPackage({ packageDir: fixture.packageDir,
+    previousDir: fixture.prior.out, dispatch: fixture.dispatch,
+    providerApprovals: fixture.providerApprovals,
+    packageApprovals: { schemaVersion: 1, packages: [fixture.approvedPackage] } }),
+  /packageApprovals.*predecessor needs an exact approved/);
 });
 
 test("empty, stale, duplicate, or mismatched independent approvals fail closed", (t) => {
@@ -152,8 +227,9 @@ test("extra private-looking assets and changed package bytes never pass", (t) =>
   changed.quality.computed.pairCount++;
   fs.writeFileSync(auditFile, encoded(changed));
   assert.throws(() => run(), /packageApprovals.*no exact/);
-  const approvedChangedAudit = { schemaVersion: 1, packages: [{ ...fixture.approvedPackage,
-    auditSha256: releaseSha256(fs.readFileSync(auditFile)) }] };
+  const approvedChangedAudit = { schemaVersion: 1, packages: [fixture.priorApprovedPackage,
+    { ...fixture.approvedPackage,
+      auditSha256: releaseSha256(fs.readFileSync(auditFile)) }] };
   assert.throws(() => run(approvedChangedAudit),
     /publication-audit.json.*independently recomputed package/);
   fs.writeFileSync(auditFile, originalAudit);

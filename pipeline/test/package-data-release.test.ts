@@ -197,7 +197,7 @@ test("review fields, quality evidence, rights, and manifest bindings fail closed
 
 test("a mocked real review binds the named prior and separately validated approval", (t) => {
   const root = tempRoot(t);
-  const prior = makeBundle(root, "prior");
+  const prior = makeBundle(root, "prior", undefined, "invented-reviewed-source");
   const bundle = makeBundle(root, "next", prior.candidateDir, "invented-reviewed-source");
   const outputDir = path.join(root, "package");
   const review = reviewFor(bundle, prior.manifest.tag);
@@ -221,6 +221,15 @@ test("a mocked real review binds the named prior and separately validated approv
   fs.appendFileSync(priorManifest, " ");
   assert.throws(() => run(), /lastKnownGood.*manifest-byte hash/);
   fs.writeFileSync(priorManifest, originalPrior);
+  const syntheticPrior = makeBundle(root, "synthetic-prior");
+  const syntheticNext = makeBundle(root, "synthetic-next", syntheticPrior.candidateDir,
+    "invented-reviewed-source");
+  assert.throws(() => packageDataRelease({ candidateDir: syntheticNext.candidateDir,
+    previousDir: syntheticPrior.candidateDir,
+    outputDir: path.join(root, "synthetic-prior-package"),
+    review: { ...reviewFor(syntheticNext, syntheticPrior.manifest.tag),
+      redistribution: review.redistribution }, approval }),
+  /previousDir.*reviewed data-only v3 predecessor/);
   const audit = run();
   assert.equal(audit.publishable, true);
   assert.equal(audit.changes.previousTag, prior.manifest.tag);

@@ -43,8 +43,8 @@ def validate_dispatch(repo: str, tag: str, source_run_id: str,
         raise ReleaseCheckError("source run ID must be a positive safe integer")
     if not ARTIFACT_NAME.fullmatch(artifact_name):
         raise ReleaseCheckError("artifact name is invalid")
-    if not TAG.fullmatch(previous_tag) or previous_tag == tag:
-        raise ReleaseCheckError("previous tag must be a distinct versioned data-v tag")
+    if previous_tag and (not TAG.fullmatch(previous_tag) or previous_tag == tag):
+        raise ReleaseCheckError("previous tag must be empty or a distinct versioned data-v tag")
 
 
 def _get(repo: str, endpoint: str, token: str, opener=urlopen, *, allow_missing=False):

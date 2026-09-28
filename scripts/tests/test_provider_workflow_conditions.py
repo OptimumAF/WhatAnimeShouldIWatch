@@ -78,6 +78,7 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         self.assertEqual(verify["permissions"], {"contents": "read", "actions": "read"})
         self.assertEqual(publish["permissions"], {"contents": "write", "actions": "read"})
         self.assertEqual(publish["needs"], "verify")
+        self.assertFalse(workflow[True]["workflow_dispatch"]["inputs"]["previous_tag"]["required"])
         verify_steps = verify["steps"]
         publish_steps = publish["steps"]
         verify_names = [step.get("name") for step in verify_steps]
@@ -86,6 +87,16 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
                         verify_names.index("Download exact candidate and named prior"))
         self.assertLess(verify_names.index("Recompute audited package and exact approvals"),
                         verify_names.index("Pass only five verified assets to publication job"))
+        for steps, download_name, verify_name in [
+            (verify_steps, "Download exact candidate and named prior",
+             "Recompute audited package and exact approvals"),
+            (publish_steps, "Download exact named prior", "Reverify package before publication"),
+        ]:
+            self.assertIn('if [[ -n "$PRIOR_TAG" ]]',
+                          steps[[step.get("name") for step in steps].index(download_name)]["run"])
+            verifier = steps[[step.get("name") for step in steps].index(verify_name)]["run"]
+            self.assertIn('if [[ -n "$PRIOR_TAG" ]]', verifier)
+            self.assertIn('args+=(--previous prior --prior-tag "$PRIOR_TAG")', verifier)
         self.assertLess(publish_names.index("Reverify package before publication"),
                         publish_names.index("Recheck immutable setting and absent target"))
         self.assertLess(publish_names.index("Recheck immutable setting and absent target"),

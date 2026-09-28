@@ -1,0 +1,13 @@
+# 0032 — Reviewed first real data bundle
+
+**Status:** M8.3 bootstrap protocol, 2026-09-28. This permits implementation and invented tests only. It is not a source/use grant, a per-bundle approval, or authorization to publish or install real data.
+
+## First bundle
+
+The first approved `data-v...` bundle has no predecessor. Its existing `release-manifest-v1` field `lastKnownGood: null` states that fact; a synthetic bundle, current mutable `data-latest`, or a legacy provider-derived public asset must not be manufactured into a last-known-good predecessor. The byte-level manifest writer and verifier accept an explicit reviewed-genesis mode, mutually exclusive with fixture genesis and a prior directory. A bare null prior or mode flag is not publication authority.
+
+A publishable first bundle requires the same exact four-file v3 source inventory, five-file audited package, use-specific provider source/use approval, and committed exact-bundle approval as a normal release. Its `changes.previousTag` and dispatch prior are null. The exact-bundle approval entry additionally includes a non-null `bootstrap` record: a separate bootstrap decision reference, HTTPS owner approval reference distinct from source/use approval, and the same owner. That entry pins the bundle ID, manifest and audit hashes, run ID and artifact name. All ordinary entries require `bootstrap: null` and a distinct versioned prior. An ordinary candidate's predecessor must itself match a committed exact-bundle approval entry and be a data-only v3 bundle whose source is not the synthetic fixture. The local packager accepts a separately validated exact bootstrap approval; the publication verifier obtains it only from the committed registry and recomputes every package byte. Neither free-text review nor the general protocol decision in this file constitutes the owner review.
+
+The workflow may receive an empty `previous_tag` only for this first-bundle path. Both jobs skip prior download in that case, then require the verifier to match the exact bootstrap entry before any release mutation. Existing source/use, repository immutable-release setting, unused tag/release, five explicit assets, and post-publication digest gates remain. No new use-specific approval variable is set here. The committed approval registries remain empty. Do not dispatch the workflow with invented data to exercise this route.
+
+The local installer still requires fixture bootstrap for an initially empty store. M8.5 must add an approved first-real install route bound to the verified published bundle before connecting real deployment; an ad hoc installer flag is insufficient. M8.3 and the M8 exit gate remain open until the actual reviewed source/use, bundle, bootstrap, quality, and hosted conditions pass.
