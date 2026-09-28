@@ -916,3 +916,13 @@
 **Unrun / remaining:** Real source rights, privacy-safe graph export, an audited immutable release, hosted deployment, and rollback remain unverified. M8.3 remains unchecked, and the M8 exit gate remains open.
 
 **Single next task:** Implement the separately versioned aggregate-only graph/export contract and its synthetic runtime and manifest checks.
+
+## Session 2026-09-28 — M8.3 aggregate-only graph protocol
+
+**Branch / start:** `codex/m8-aggregate-graph` from clean `450b2da451c23babaac690f5c427fcb3948a0984`, final-head CI-passing PR #43. Re-read the root instructions, latest M8.3 handoff, v2 graph parser/types, graph ID and explorer producers, manifest producer/parser, recommendation index, and browser loader. No private or provider data was accessed.
+
+**Design and affected files:** Added [decision 0029](decisions/0029-aggregate-only-graph.md), merged its rules into `AGENTS.md`, and logged the versioned dependency in the living plan. A v3 public projection preserves selected-rating and pair statistics while carrying no user identifiers or user-anime edges. Exact-field validation is required so an extra JSON property cannot hide a history inside a valid hash-pinned artifact. A zero-edge dummy or a relabeled v2 graph would not satisfy the task.
+
+**Checks / blockers:** Protocol only; no graph code or tests changed yet. M8.3 and M8 remain unchecked. Source/use rights, audit packaging, quality review, and deployment remain held.
+
+**Single next task:** Implement and test the v3 projector, strict parser, linked explorer, manifest and browser path with invented data and mocked transport.
