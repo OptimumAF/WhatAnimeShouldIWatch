@@ -67,6 +67,13 @@ test("synthetic manifest pins exact bytes, graph IDs, item maps, and explicit ge
   assert.equal(manifest.explorer.sourceGraphId, manifest.neighborhood.graphId);
   assert.throws(() => buildReleaseManifest(source, { tag: "data-latest" }), /tag.*versioned/);
   assert.throws(() => buildReleaseManifest(source, { tag: "data-vnext" }), /lastKnownGood.*required/);
+  const prior = { tag: "data-vprior", bundleId: "a".repeat(64), manifestSha256: "b".repeat(64) };
+  const reorderedPrior = { manifestSha256: prior.manifestSha256, bundleId: prior.bundleId,
+    tag: prior.tag };
+  assert.equal(
+    buildReleaseManifest(source, { tag: "data-vnext", lastKnownGood: prior }).bundleId,
+    buildReleaseManifest(source, { tag: "data-vnext", lastKnownGood: reorderedPrior }).bundleId,
+  );
 
   const root = directory(t);
   const genesis = path.join(root, "genesis");

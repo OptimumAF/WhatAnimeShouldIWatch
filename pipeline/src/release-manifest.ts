@@ -133,7 +133,9 @@ export function buildReleaseManifest(files: ReleaseFileBytes, options: ReleaseBu
   }
 
   const payload: Omit<ReleaseManifestV1, "bundleId"> = {
-    format: "release-manifest-v1", tag: options.tag, dataset: neighborhood.dataset,
+    format: "release-manifest-v1", tag: options.tag,
+    dataset: { sha256: neighborhood.dataset.sha256, scope: neighborhood.dataset.scope,
+      source: neighborhood.dataset.source },
     catalog: { ...asset(files.catalog, RELEASE_FILES.catalog, "anime-catalog-v1"),
       animeCount: catalog.anime.length, itemMapSha256 },
     neighborhood: { ...asset(files.neighborhood, RELEASE_FILES.neighborhood, "graph-compact-v2"),
@@ -141,7 +143,10 @@ export function buildReleaseManifest(files: ReleaseFileBytes, options: ReleaseBu
     explorer: { ...asset(files.explorer, RELEASE_FILES.explorer, "graph-compact-v2"),
       graphId: explorer.graphId, sourceGraphId: explorer.sourceGraphId },
     model: modelEntry,
-    lastKnownGood: options.lastKnownGood ?? null,
+    lastKnownGood: options.lastKnownGood ? {
+      tag: options.lastKnownGood.tag, bundleId: options.lastKnownGood.bundleId,
+      manifestSha256: options.lastKnownGood.manifestSha256,
+    } : null,
   };
   const manifest: ReleaseManifestV1 = {
     ...payload,
