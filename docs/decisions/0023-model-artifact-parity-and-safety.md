@@ -1,6 +1,6 @@
 # 0023 — Safe model exchange and Python/browser parity
 
-**Status:** M5.8 protocol fixed on 2026-09-28 before its synthetic export or parity run. Eight focused Python and three focused parity TypeScript cases, the local synthetic/mock gate, and the browser artifact checks passed; fresh PR CI and final review are pending. M5.8 and the M5 exit gate remain open.
+**Status:** M5.8 protocol fixed on 2026-09-28 before its synthetic export or parity run. Eight focused Python and three focused parity TypeScript cases, the local synthetic/mock gate, browser artifact checks, [fresh PR #37 CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36395838119), GitGuardian, and final diff review passed on implementation commit `2bfb4e5`. M5.8 is complete; the M5 exit gate remains open.
 
 ## Restricted parity contract
 
