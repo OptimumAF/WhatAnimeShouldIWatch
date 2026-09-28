@@ -806,3 +806,15 @@
 **Commit / PR and clean-checkout CI:** Protocol commit `b77b212` preceded model training and validation scoring. Implementation commit `70f04f5` is in stacked draft [PR #40](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/40), based on PR #39. [Fixture CI run 36403724089](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36403724089) and GitGuardian passed on exact implementation SHA `70f04f5ffd256141da7f3cedf02862490b956691`: clean npm install, CPU Torch install, synthetic fixture/refit/experiment commands, typecheck, 59 pipeline/104 web/68 ML/12 workflow tests, build, and 58 mocked browser cases. The stacked 15-file diff passed `git diff --check` and review; no browser runtime or provider path changed. The documentation evidence commit will get separate final-head CI.
 
 **Single next task:** M8.1 — define an immutable synthetic bundle manifest and compatibility contract for graph/catalog/model versions, with a named last-known-good bundle; keep model promotion disabled until source/use, quality, owner approval, and remote rollback evidence exist.
+
+## Session 2026-09-28 — M8.1 release bundle protocol
+
+**Branch / starting commit:** `codex/m8-release-manifest` from clean `19776fa196a16ab1cdfe7ea525324d632261f6ab`, the final-head CI-passing PR #40 revision. Read root `AGENTS.md`, the living plan and latest handoff, decisions 0002/0009/0024, normal artifact fetch/sync/loader paths, graph and model contracts, and the read-only promotion preflight. No provider endpoint, production artifact, or private account history was read.
+
+**Finding and scope:** Normal mode currently fetches mutable `data-*` release assets and selects compact/legacy graph and model files independently. It has no standalone pinned catalog file; the recommendation graph supplies the fixed ID/title map, while richer metadata comes from bounded provider lookups. [Decision 0026](decisions/0026-immutable-release-bundle.md) fixes an opt-in immutable manifest with a separate identity catalog, exact bytes/schemas, cross-file mapping checks, and a physically separate named last-known-good bundle. M8.2 retains atomic download and installation; this protocol does not enable real publication or deployment.
+
+**Files in this protocol slice:** New decision 0026; appended the existing `AGENTS.md`, living plan, and this progress record. No release manifest or bundle has been generated yet.
+
+**Checks / blockers:** M8.1 remains unchecked pending implementation, synthetic corruption/compatibility/LKG tests, full fixture/mock gate, and clean-checkout review. The current provider source/use, model promotion, and Pages deployment approvals remain unset.
+
+**Single next task:** Implement the M8.1 catalog/manifest producer and verifier on synthetic fixture bundles, then verify exact bytes, mapping, cross-version rejection, and last-known-good retention.
