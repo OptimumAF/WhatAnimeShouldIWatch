@@ -984,3 +984,13 @@
 **Unrun / remaining:** No real candidate, release upload, provider data, private watchlist, deployment, or model promotion was read or changed. The packager has no upload caller; the approval manifest is empty. M8.3 remains unchecked because source/use and quality approval and an immutable publication workflow are unverified. M8's exit gate remains open.
 
 **Single next task:** Add and statically test an immutable, approval-gated publication workflow that consumes only the audited five-file package, while preserving the real publication hold.
+
+## Session 2026-09-28 — M8.3 immutable workflow protocol
+
+**Branch / starting state:** `codex/m8-publication-workflow` from clean `e026531c1f7c5bbc3be641b0c281da853a14d6f5`, draft PR #45's final documentation head. PR #45's [CI run 36425921606](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36425921606) and GitGuardian both passed on that exact head. Read the root `AGENTS.md`, M8.3 plan and latest handoff, decisions 0001/0002/0026/0028/0030, current held workflow, approval verifiers and workflow tests, and local GitHub CLI help. No nested instructions or local changes were present.
+
+**Finding and plan revision:** A package's own review text does not independently approve the exact bytes. A pinned Actions run can still have its artifact changed or removed, and the repository's read-only immutable-release setting endpoint reported `enabled:false`. Added [decision 0031](decisions/0031-immutable-publication-workflow.md), merged its guidance into `AGENTS.md`, and recorded the new exact-bundle approval, immutable setting, tag/release absence, and post-publication digest requirements in the plan. The first real bundle also has no permitted bootstrap under decision 0026; that needs a separate reviewed decision. Task ID and M8.3 acceptance criteria remain unchanged.
+
+**Checks / blockers:** Protocol and read-only GitHub setting inspection only. Official GitHub documentation confirms the immutable setting protects a release after publication. No repository setting, approval variable, release, provider data, or private history was changed or fetched. M8.3 and M8 remain unchecked.
+
+**Single next task:** Implement a strict five-file package verifier and committed exact-bundle approval check, then wire the held workflow to those checks with mocked and static tests before any release mutation.
