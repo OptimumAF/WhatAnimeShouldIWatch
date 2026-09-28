@@ -92,7 +92,7 @@ test("persistence uses injected storage, prefix, and clock while migrating legac
   assert.deepEqual(persistence.loadRecommendationState(), {
     mode: "hybrid", preferences: state.preferences, modelBlendWeight: 0.35,
     allowRelatedTitles: false,
-    includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"], history: [],
+    includeCandidates: ["anime:102"], excludeCandidates: ["anime:105"], history: [], watchlist: [],
   });
 
   fake.values.set("wasiw.demo.recommendationProfiles.v1", JSON.stringify([
@@ -133,7 +133,7 @@ test("denied browser storage has deterministic fallbacks without DOM setup", () 
     assert.deepEqual(persistence.loadRecommendationState(), {
       mode: "graph", preferences: [], modelBlendWeight: 0.5,
       allowRelatedTitles: false,
-      includeCandidates: [], excludeCandidates: [], history: [],
+      includeCandidates: [], excludeCandidates: [], history: [], watchlist: [],
     });
     assert.equal(persistence.loadThemeModePreference(() => true), "light");
     assert.deepEqual(persistence.loadRecommendationProfiles(), new Map());

@@ -88,7 +88,7 @@ test("legacy profiles keep catalog-missing selections and overrides through load
       { nodeId: "anime:101", sentiment: "liked", importance: 1.7, confidence: 0.5, source: "legacy" },
       { nodeId: "anime:999", sentiment: "liked", importance: 2.4, confidence: 0.5, source: "legacy" },
     ],
-    includeCandidates: ["anime:998"], excludeCandidates: ["anime:997"], history: [],
+    includeCandidates: ["anime:998"], excludeCandidates: ["anime:997"], history: [], watchlist: [],
   });
   await expect(page.locator("#preference-migration-notice")).toContainText("migrated conservatively");
   expect(migrated.stateBackup).toBe(JSON.stringify(legacy));

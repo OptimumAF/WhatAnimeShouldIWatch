@@ -34,7 +34,8 @@ test("local backup download, merge preview, and reload keep unknown identities a
   const download = await downloadPromise;
   const raw = await readFile(await download.path(), "utf8");
   const exported = JSON.parse(raw);
-  expect(exported).toMatchObject({ format: "wasiw-profile-backup", version: 1, state: backupState });
+  expect(exported).toMatchObject({ format: "wasiw-profile-backup", version: 2,
+    state: { ...backupState, watchlist: [] } });
   expect(exported.profiles[0].name).toBe("<Shared> Profile");
 
   await page.evaluate(({ localState }) => {
@@ -49,7 +50,7 @@ test("local backup download, merge preview, and reload keep unknown identities a
     name: "invented-backup.json", mimeType: "application/json", buffer: Buffer.from(raw),
   });
   await expect(page.locator("#profile-backup-preview")).toBeVisible();
-  await expect(page.locator("#profile-backup-summary")).toContainText("Merge adds 1 preferences, 1 history entries");
+  await expect(page.locator("#profile-backup-summary")).toContainText("Merge adds 1 preferences, 1 history entries, 0 watchlist titles");
   await expect(page.locator("#profile-backup-unmapped")).toContainText("identities are retained");
   await expect(page.locator("#profile-backup-preview")).not.toContainText("<script>");
   await page.locator("#profile-backup-apply").click();
@@ -65,7 +66,7 @@ test("local backup download, merge preview, and reload keep unknown identities a
   expect(saved.state.includeCandidates).toEqual(["anime:998"]);
   expect(saved.profiles.profiles).toHaveLength(2);
   expect(saved.profiles.profiles.find((entry: { name: string }) => entry.name === "<Shared> Profile").state)
-    .toEqual(localState);
+    .toEqual({ ...localState, watchlist: [] });
   await expect(page.locator("#selected-anime")).toContainText("anime:999");
 });
 
@@ -168,7 +169,7 @@ test("invalid file, rejected storage, and corrupt-current repair leave reviewabl
   expect(await page.evaluate(() => localStorage.getItem("wasiw.demo.recommendationProfiles.v5.corrupt")))
     .toBe("{corrupt invented profiles");
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("wasiw.demo.recommendationState.v5") ?? "null")))
-    .toEqual(backupState);
+    .toEqual({ ...backupState, watchlist: [] });
 });
 
 test("a delayed local backup read cannot preview after recommendation state changes", async ({ page }) => {

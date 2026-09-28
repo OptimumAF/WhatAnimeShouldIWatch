@@ -77,6 +77,8 @@ import type {
 } from "./persistence";
 import { createBrowserRuntime, isAbortError } from "./runtime";
 import { safeExternalImageUrl } from "./safe-url";
+import { mergeWatchlistFeedback, validateWatchlist, watchedWatchlistAnimeIds } from "./watchlist";
+import type { WatchlistEntry, WatchlistStatus } from "./watchlist";
 import "./style.css";
 
 const runtime = createBrowserRuntime();
@@ -285,6 +287,17 @@ app.innerHTML = `
             </div>
             <div id="selected-anime" class="selected-anime"></div>
 
+            <section class="local-watchlist" aria-labelledby="watchlist-title">
+              <h3 id="watchlist-title">My Watchlist <span id="watchlist-count" class="count-pill">0</span></h3>
+              <p class="muted">Save a shortlist, set a watch status, and rate titles from 1–10. Status alone never becomes a preference or training permission. An explicit rating can refine suggestions in this browser; a manually chosen preference takes precedence. Planned titles do not supply preference evidence.</p>
+              <form id="watchlist-form" class="add-form add-form-compact">
+                <input id="watchlist-input" type="text" list="anime-options" autocomplete="off" aria-label="Anime to add to watchlist" placeholder="Exact title or anime ID" />
+                <button type="submit">Plan to Watch</button>
+              </form>
+              <p id="watchlist-status" class="muted" role="status" aria-live="polite"></p>
+              <ul id="watchlist-list" class="watchlist-list"></ul>
+            </section>
+
             <details class="accordion">
               <summary>Import & Profiles</summary>
               <section class="bulk-import">
@@ -358,7 +371,7 @@ app.innerHTML = `
               </section>
               <section class="profiles profile-backup">
                 <h3>Backup &amp; Recovery</h3>
-                <p class="muted">Download your current preferences, imported history, candidate overrides, and named profiles as a versioned JSON file. It stays on your device; store it privately because it contains your watch history. A backup does not depend on the current catalog or model release.</p>
+                <p class="muted">Download your current preferences, imported history, local watchlist, candidate overrides, and named profiles as a versioned JSON file. It stays on your device; store it privately because it contains your watch history. A backup does not depend on the current catalog or model release.</p>
                 <div class="profile-backup-actions">
                   <button id="profile-export-btn" type="button">Download Profile Backup</button>
                   <label for="profile-backup-file">Import a local .json backup (up to 8 MiB)</label>
@@ -603,6 +616,11 @@ const preferenceMigrationNoticeEl = mustElement<HTMLParagraphElement>("#preferen
 const selectedAnimeEl = mustElement<HTMLDivElement>("#selected-anime");
 const watchedCountEl = mustElement<HTMLSpanElement>("#watched-count");
 const clearWatchedBtn = mustElement<HTMLButtonElement>("#clear-watched");
+const watchlistForm = mustElement<HTMLFormElement>("#watchlist-form");
+const watchlistInput = mustElement<HTMLInputElement>("#watchlist-input");
+const watchlistCountEl = mustElement<HTMLSpanElement>("#watchlist-count");
+const watchlistListEl = mustElement<HTMLUListElement>("#watchlist-list");
+const watchlistStatusEl = mustElement<HTMLParagraphElement>("#watchlist-status");
 const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
 const bulkImportFile = mustElement<HTMLInputElement>("#bulk-import-file");
 const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
@@ -777,6 +795,7 @@ const recommendationIndex = isCompactGraphData(graphData)
 const selectedAnimeNodeIds: string[] = [];
 const selectedAnimePreferences = new Map<string, AnimePreference>();
 const historyEntries: HistoryEntry[] = [];
+const watchlistEntries: WatchlistEntry[] = [];
 const includeCandidateNodeIds: string[] = [];
 const excludeCandidateNodeIds: string[] = [];
 const persistedState = persistence.loadRecommendationState();
@@ -788,6 +807,7 @@ for (const entry of persistedState.preferences) {
   selectedAnimePreferences.set(entry.nodeId, entry);
 }
 historyEntries.push(...persistedState.history);
+watchlistEntries.push(...persistedState.watchlist);
 preferenceMigrationNoticeEl.textContent = persistence.getMigrationNotice() ??
   (persistedState.preferences.some((item) => item.source === "legacy")
     ? "Earlier watch weights were migrated conservatively. Unrated watches stay Seen; low scores are Disliked; clear likes are Liked. Review preferences and importance below."
@@ -812,6 +832,7 @@ populateAnimeOptions(recommendationIndex.animeList, animeOptions);
 populateNetworkNodeOptions(graphNodes, networkNodeOptions);
 renderSelectedAnime();
 renderImportedHistory();
+renderWatchlist();
 renderIncludeCandidates();
 renderExcludeCandidates();
 renderProfileOptions(savedProfiles);
@@ -1069,6 +1090,49 @@ tipsDismissNetworkBtn.addEventListener("click", () => {
 addAnimeForm.addEventListener("submit", (event) => {
   event.preventDefault();
   addAnimeFromInput();
+});
+
+watchlistForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addWatchlistFromInput();
+});
+
+watchlistListEl.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) return;
+  const animeId = Number(target.dataset.watchlistStatusId ?? target.dataset.watchlistRatingId);
+  if (!Number.isSafeInteger(animeId) || animeId <= 0) return;
+  const existing = watchlistEntries.find((item) => item.animeId === animeId);
+  if (!existing) return;
+  if (target.dataset.watchlistStatusId !== undefined) {
+    const status = target.value as WatchlistStatus;
+    if (!["plan_to_watch", "watching", "completed", "on_hold", "dropped"].includes(status)) return;
+    changeWatchlistEntry({ ...existing, status });
+  } else {
+    const rating = target.value === "" ? null : Number(target.value);
+    if (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 10)) return;
+    changeWatchlistEntry({ ...existing, rating });
+  }
+});
+
+watchlistListEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const button = target.closest<HTMLButtonElement>("button[data-watchlist-remove-id]");
+  if (!button) return;
+  const animeId = Number(button.dataset.watchlistRemoveId);
+  if (!Number.isSafeInteger(animeId) || animeId <= 0) return;
+  applyWatchlistChange(watchlistEntries.filter((item) => item.animeId !== animeId), "Removed from your watchlist.");
+});
+
+recResultsEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const button = target.closest<HTMLButtonElement>("button[data-watchlist-save-id]");
+  if (!button) return;
+  const animeId = Number(button.dataset.watchlistSaveId);
+  const anime = recommendationIndex.animeByAnimeId.get(animeId);
+  if (anime) addToWatchlist(anime);
 });
 
 bulkImportForm.addEventListener("submit", (event) => {
@@ -2563,6 +2627,125 @@ function removeSelectedAnime(nodeId: string): void {
   void updateRecommendations();
 }
 
+function addWatchlistFromInput(): void {
+  const raw = watchlistInput.value.trim();
+  const numeric = /^(?:anime:)?([1-9]\d*)$/i.exec(raw);
+  const anime = numeric ? recommendationIndex.animeByAnimeId.get(Number(numeric[1])) : null;
+  const exact = numeric ? [] : recommendationIndex.titleLookup.get(normalizeTitle(raw)) ?? [];
+  const matched = anime ?? (exact.length === 1 ? exact[0] : null);
+  if (!matched) {
+    watchlistStatusEl.textContent = exact.length > 1
+      ? "Several catalog titles have that exact name. Enter an anime ID to choose one."
+      : "Choose an exact catalog title or anime ID for the watchlist.";
+    return;
+  }
+  if (addToWatchlist(matched)) watchlistInput.value = "";
+}
+
+function addToWatchlist(anime: AnimeInfo): boolean {
+  if (watchlistEntries.some((item) => item.animeId === anime.animeId)) {
+    watchlistStatusEl.textContent = `${anime.label} is already on your watchlist.`;
+    return false;
+  }
+  return applyWatchlistChange([...watchlistEntries, {
+    animeId: anime.animeId, title: anime.label, status: "plan_to_watch", rating: null,
+  }], `Saved ${anime.label} to Plan to Watch.`);
+}
+
+function changeWatchlistEntry(nextEntry: WatchlistEntry): void {
+  const current = watchlistEntries.find((item) => item.animeId === nextEntry.animeId);
+  if (!current || JSON.stringify(current) === JSON.stringify(nextEntry)) return;
+  const field = current.status !== nextEntry.status ? "status" : "rating";
+  applyWatchlistChange(watchlistEntries.map((item) =>
+    item.animeId === nextEntry.animeId ? nextEntry : item),
+  `Saved local ${field} for ${nextEntry.title}.`,
+  field === "status" ? `select[data-watchlist-status-id="${nextEntry.animeId}"]`
+    : `select[data-watchlist-rating-id="${nextEntry.animeId}"]`);
+}
+
+function applyWatchlistChange(next: WatchlistEntry[], message: string, focusSelector?: string): boolean {
+  let checked: WatchlistEntry[];
+  try { checked = validateWatchlist(next); } catch {
+    watchlistStatusEl.textContent = "Invalid watchlist change; your list was not changed.";
+    renderWatchlist();
+    return false;
+  }
+  const previous = [...watchlistEntries];
+  watchlistEntries.splice(0, watchlistEntries.length, ...checked);
+  if (!persistRecommendationState()) {
+    watchlistEntries.splice(0, watchlistEntries.length, ...previous);
+    renderWatchlist();
+    watchlistStatusEl.textContent = "Browser storage rejected the watchlist change; your previous list is intact.";
+    return false;
+  }
+  renderWatchlist();
+  if (focusSelector) watchlistListEl.querySelector<HTMLElement>(focusSelector)?.focus({ preventScroll: true });
+  watchlistStatusEl.textContent = message;
+  void updateRecommendations();
+  return true;
+}
+
+function renderWatchlist(): void {
+  watchlistCountEl.textContent = String(watchlistEntries.length);
+  watchlistListEl.replaceChildren();
+  if (watchlistEntries.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "muted";
+    empty.textContent = "No saved titles yet. Save a recommendation or enter an exact catalog title.";
+    watchlistListEl.append(empty);
+    return;
+  }
+  const statusOptions: [WatchlistStatus, string][] = [
+    ["plan_to_watch", "Plan to Watch"], ["watching", "Watching"],
+    ["completed", "Completed"], ["on_hold", "On Hold"], ["dropped", "Dropped"],
+  ];
+  for (const entry of watchlistEntries) {
+    const row = document.createElement("li");
+    row.className = "watchlist-item";
+    const title = document.createElement("span");
+    title.className = "watchlist-item-title";
+    const known = recommendationIndex.animeByAnimeId.get(entry.animeId);
+    title.textContent = known?.label ?? entry.title;
+    row.append(title);
+    if (!known) {
+      const missing = document.createElement("span");
+      missing.className = "chip-missing-note";
+      missing.textContent = "Unavailable in this catalog; saved title and ID retained";
+      row.append(missing);
+    }
+    const controls = document.createElement("div");
+    controls.className = "watchlist-item-controls";
+    const statusLabel = document.createElement("label");
+    statusLabel.textContent = "Status ";
+    const status = document.createElement("select");
+    status.dataset.watchlistStatusId = String(entry.animeId);
+    status.setAttribute("aria-label", `Watch status for ${known?.label ?? entry.title}`);
+    for (const [value, label] of statusOptions) status.add(new Option(label, value));
+    status.value = entry.status;
+    statusLabel.append(status);
+    controls.append(statusLabel);
+    const ratingLabel = document.createElement("label");
+    ratingLabel.textContent = "My rating ";
+    const rating = document.createElement("select");
+    rating.dataset.watchlistRatingId = String(entry.animeId);
+    rating.setAttribute("aria-label", `My rating for ${known?.label ?? entry.title}`);
+    rating.add(new Option("Unrated", ""));
+    for (let score = 1; score <= 10; score += 1) rating.add(new Option(`${score}/10`, String(score)));
+    rating.value = entry.rating === null ? "" : String(entry.rating);
+    ratingLabel.append(rating);
+    controls.append(ratingLabel);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost-btn";
+    remove.dataset.watchlistRemoveId = String(entry.animeId);
+    remove.setAttribute("aria-label", `Remove ${known?.label ?? entry.title} from watchlist`);
+    remove.textContent = "Remove";
+    controls.append(remove);
+    row.append(controls);
+    watchlistListEl.append(row);
+  }
+}
+
 function renderSelectedAnime(): void {
   watchedCountEl.textContent = String(selectedAnimeNodeIds.length);
   if (selectedAnimeNodeIds.length === 0) {
@@ -2707,12 +2890,16 @@ function renderCandidateChips(
 }
 
 function selectVisibleFranchises(eligible: readonly RecommendationResult[]): FranchiseSelection {
-  const seen = new Set(seenHistoryAnimeIds(historyEntries, recommendationIndex));
+  const planned = new Set(watchlistEntries.filter((entry) => entry.status === "plan_to_watch")
+    .map((entry) => entry.animeId));
+  const seen = new Set(seenHistoryAnimeIds(historyEntries, recommendationIndex)
+    .filter((animeId) => !planned.has(animeId)));
+  for (const animeId of watchedWatchlistAnimeIds(watchlistEntries)) seen.add(animeId);
   for (const nodeId of selectedAnimeNodeIds) {
     const rawId = /^anime:([1-9]\d*)$/.exec(nodeId)?.[1];
     const animeId = recommendationIndex.animeByNodeId.get(nodeId)?.animeId ??
       (rawId ? Number(rawId) : undefined);
-    if (animeId !== undefined && Number.isSafeInteger(animeId)) seen.add(animeId);
+    if (animeId !== undefined && Number.isSafeInteger(animeId) && !planned.has(animeId)) seen.add(animeId);
   }
   const titles = new Map(recommendationIndex.animeList.map((item) => [item.animeId, item.label]));
   return selectFranchiseDiverseRecommendations(
@@ -2733,9 +2920,10 @@ async function updateRecommendations(): Promise<void> {
   const controller = new AbortController();
   recommendationController = controller;
   const runId = ++recommendationRunId;
-  const preferences = selectedAnimeNodeIds
+  const selectedPreferences = selectedAnimeNodeIds
     .map((nodeId) => selectedAnimePreferences.get(nodeId))
     .filter((item): item is AnimePreference => item !== undefined);
+  const preferences = mergeWatchlistFeedback(selectedPreferences, watchlistEntries, recommendationIndex);
   const hasEngineSignal = recommendationMode === "graph"
     ? preferences.some((item) => item.sentiment === "liked")
     : preferences.some((item) => item.sentiment !== "seen");
@@ -2743,6 +2931,7 @@ async function updateRecommendations(): Promise<void> {
     index: recommendationIndex,
     preferences,
     history: historyEntries,
+    watchlist: watchlistEntries,
     includeOnlyNodeIds: includeCandidateNodeIds,
     excludeNodeIds: excludeCandidateNodeIds,
     filters: recommendationFilters,
@@ -3211,6 +3400,7 @@ function renderRecommendationCard(
             <p class="${synopsisClass}">${escapeHtml(synopsisText)}</p>
             <div class="rec-why">${reason}</div>
             <div class="rec-relationship">${escapeHtml(relationshipNote ?? "Prerequisites unverified; relationship data may be incomplete.")}</div>
+            <button type="button" class="ghost-btn rec-watchlist-save" data-watchlist-save-id="${item.anime.animeId}">Plan to Watch</button>
           </div>
         </div>
         <div class="rec-score">${score}</div>
@@ -4436,6 +4626,7 @@ function buildCurrentRecommendationState(): StoredRecommendationState {
     includeCandidates: [...includeCandidateNodeIds],
     excludeCandidates: [...excludeCandidateNodeIds],
     history: [...historyEntries],
+    watchlist: [...watchlistEntries],
   };
 }
 
@@ -4520,7 +4711,7 @@ function renderProfileBackupPreview(): void {
     profileBackupModeRowEl.hidden = true;
     profileBackupApplyBtn.textContent = "Reset Local Profiles";
     profileBackupSummaryEl.textContent =
-      `Reset will clear ${selectedAnimeNodeIds.length} current preferences, ${historyEntries.length} imported history entries, ` +
+      `Reset will clear ${selectedAnimeNodeIds.length} current preferences, ${historyEntries.length} imported history entries, ${watchlistEntries.length} watchlist titles, ` +
       `${savedProfiles.size} named profiles, and current candidate overrides. Older source keys and raw backups remain in browser storage.`;
     profileBackupUnmappedEl.textContent = persistence.getStorageWarnings().length > 0
       ? "Unreadable browser copies may also exist. Reset archives them when storage permits. Download a readable backup first if possible."
@@ -4544,20 +4735,22 @@ function renderProfileBackupPreview(): void {
   profileBackupModeRowEl.hidden = false;
   profileBackupApplyBtn.textContent = "Apply Profile Backup";
   profileBackupSummaryEl.textContent = mode === "merge"
-    ? `Backup has ${c.importedPreferences} preferences, ${c.importedHistory} history entries, and ${c.importedProfiles} named profiles. ` +
-      `Merge adds ${c.addedPreferences} preferences, ${c.addedHistory} history entries, and ${c.addedProfiles} profiles; ` +
-      `keeps your local values for ${c.keptPreferences}, ${c.keptHistory}, and ${c.keptProfiles} matching identities. ` +
+    ? `Backup has ${c.importedPreferences} preferences, ${c.importedHistory} history entries, ${c.importedWatchlist} watchlist titles, and ${c.importedProfiles} named profiles. ` +
+      `Merge adds ${c.addedPreferences} preferences, ${c.addedHistory} history entries, ${c.addedWatchlist} watchlist titles, and ${c.addedProfiles} profiles; ` +
+      `keeps your local values for ${c.keptPreferences}, ${c.keptHistory}, ${c.keptWatchlist}, and ${c.keptProfiles} matching identities. ` +
       "Your current engine and settings stay; candidate lists are extended and exclusions still win."
-    : `Backup has ${c.importedPreferences} preferences, ${c.importedHistory} history entries, and ${c.importedProfiles} named profiles. ` +
-      `Replace removes ${c.removedPreferences} local preferences, ${c.removedHistory} history entries, and ${c.removedProfiles} profiles absent from the file; ` +
-      `overwrites ${c.replacedPreferences} preferences, ${c.replacedHistory} history entries, and ${c.replacedProfiles} matching profiles. ` +
+    : `Backup has ${c.importedPreferences} preferences, ${c.importedHistory} history entries, ${c.importedWatchlist} watchlist titles, and ${c.importedProfiles} named profiles. ` +
+      `Replace removes ${c.removedPreferences} local preferences, ${c.removedHistory} history entries, ${c.removedWatchlist} watchlist titles, and ${c.removedProfiles} profiles absent from the file; ` +
+      `overwrites ${c.replacedPreferences} preferences, ${c.replacedHistory} history entries, ${c.replacedWatchlist} watchlist titles, and ${c.replacedProfiles} matching profiles. ` +
       "It also replaces the engine, settings, and candidate overrides.";
   const unmappedPreferences = plan.state.preferences.filter((item) =>
     !recommendationIndex.animeByNodeId.has(item.nodeId)).length;
   const unmappedHistory = (plan.state.history ?? []).filter((item) =>
     item.animeId === null || !recommendationIndex.animeByAnimeId.has(item.animeId)).length;
+  const unmappedWatchlist = (plan.state.watchlist ?? []).filter((item) =>
+    !recommendationIndex.animeByAnimeId.has(item.animeId)).length;
   profileBackupUnmappedEl.textContent =
-    `${unmappedPreferences} resulting preferences and ${unmappedHistory} history entries are unavailable in this catalog; their original identities are retained.`;
+    `${unmappedPreferences} resulting preferences, ${unmappedHistory} history entries, and ${unmappedWatchlist} watchlist titles are unavailable in this catalog; their original identities are retained.`;
 }
 
 function previewProfileReset(): void {
@@ -4591,10 +4784,12 @@ function applyCommittedProfileCollection(
     includeCandidates: state.includeCandidates ?? [],
     excludeCandidates: state.excludeCandidates ?? [],
     history: state.history ?? [],
+    watchlist: state.watchlist ?? [],
   });
   renderProfileOptions(savedProfiles);
   renderSelectedAnime();
   renderImportedHistory();
+  renderWatchlist();
   renderIncludeCandidates();
   renderExcludeCandidates();
   renderStorageWarnings();
@@ -4734,10 +4929,12 @@ function loadSelectedProfile(): void {
     includeCandidates: profile.state.includeCandidates ?? [],
     excludeCandidates: profile.state.excludeCandidates ?? [],
     history: profile.state.history ?? [],
+    watchlist: profile.state.watchlist ?? [],
   });
   const saved = persistRecommendationState();
   renderSelectedAnime();
   renderImportedHistory();
+  renderWatchlist();
   renderIncludeCandidates();
   renderExcludeCandidates();
   void updateRecommendations();
@@ -4780,12 +4977,14 @@ function applyRecommendationState(state: {
   includeCandidates: string[];
   excludeCandidates: string[];
   history?: HistoryEntry[];
+  watchlist?: WatchlistEntry[];
 }): void {
   selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length);
   selectedAnimePreferences.clear();
   includeCandidateNodeIds.splice(0, includeCandidateNodeIds.length);
   excludeCandidateNodeIds.splice(0, excludeCandidateNodeIds.length);
   historyEntries.splice(0, historyEntries.length, ...(state.history ?? []));
+  watchlistEntries.splice(0, watchlistEntries.length, ...(state.watchlist ?? []));
   clearPendingHistoryImport();
 
   for (const entry of state.preferences) {

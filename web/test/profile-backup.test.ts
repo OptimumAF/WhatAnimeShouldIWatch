@@ -34,6 +34,7 @@ function state(nodeId: string, importance = 1.7): StoredRecommendationState {
     history: [{ provider: "local", sourceId: "anime:999", title: "Invented Unknown",
       animeId: 999, status: "completed", sourceStatus: "Completed", progressEpisodes: 12,
       score: 9, scoreScale: "local-10" }],
+    watchlist: [{ animeId: 999, title: "<Invented Unknown>", status: "on_hold", rating: 4 }],
   };
 }
 
@@ -56,7 +57,7 @@ test("versioned JSON backup round-trips unknown IDs, native history, profiles, a
   assert.equal(fake.values.size, 0);
 
   for (const bad of [
-    { ...parsed, version: 2 },
+    { ...parsed, version: 3 },
     { ...parsed, extra: "future field" },
     { ...parsed, state: { ...parsed.state, version: 6 } },
     { ...parsed, state: { ...parsed.state, preferences: [{ ...parsed.state.preferences[0], extra: 1 }] } },
@@ -64,6 +65,29 @@ test("versioned JSON backup round-trips unknown IDs, native history, profiles, a
   ]) {
     assert.throws(() => adapter.parseProfileBackup(JSON.stringify(bad)));
   }
+});
+
+test("v2 backup preserves local watchlist and upgrades strict v1 documents without inventing entries", () => {
+  const adapter = createPersistenceAdapter(fakeRuntime().runtime, prefix);
+  const current = state("anime:101");
+  const raw = adapter.createProfileBackup(current, new Map([["Invented", profile("Invented", current)]]));
+  const parsed = adapter.parseProfileBackup(raw);
+  assert.equal(parsed.version, 2);
+  assert.deepEqual(parsed.state.watchlist, current.watchlist);
+  assert.deepEqual(parsed.profiles[0].state.watchlist, current.watchlist);
+  const { watchlist: _ignored, ...oldState } = current;
+  const legacy = { format: PROFILE_BACKUP_FORMAT, version: 1,
+    exportedAt: "2026-09-28T12:00:00.000Z", state: oldState,
+    profiles: [profile("Invented", oldState)] };
+  const upgraded = adapter.parseProfileBackup(JSON.stringify(legacy));
+  assert.equal(upgraded.version, 2);
+  assert.deepEqual(upgraded.state.watchlist, []);
+  assert.deepEqual(upgraded.profiles[0].state.watchlist, []);
+  assert.throws(() => adapter.parseProfileBackup(JSON.stringify({ ...legacy, state: current })));
+  assert.throws(() => adapter.parseProfileBackup(JSON.stringify({ ...parsed,
+    state: { ...parsed.state, watchlist: undefined } })));
+  assert.throws(() => adapter.parseProfileBackup(JSON.stringify({ ...parsed,
+    state: { ...parsed.state, watchlist: [{ ...current.watchlist![0], extra: true }] } })));
 });
 
 test("merge keeps local conflicting intent and adds imported unknown identities; replace previews losses", () => {
@@ -75,6 +99,10 @@ test("merge keeps local conflicting intent and adds imported unknown identities;
   imported.history = [{ ...local.history![0], sourceId: "anime:999", score: 2 },
     { ...local.history![0], sourceId: "anime:998", animeId: 998, title: "Invented Other" }];
   imported.includeCandidates = ["anime:996"];
+  imported.watchlist = [
+    { animeId: 999, title: "Changed invented title", status: "completed", rating: 9 },
+    { animeId: 998, title: "Imported invented title", status: "plan_to_watch", rating: null },
+  ];
   const localProfiles = new Map([["Shared", profile("Shared", local)], ["Local", profile("Local", local)]]);
   const importedProfiles = new Map([["Shared", profile("Shared", imported)], ["Imported", profile("Imported", imported)]]);
   const document = adapter.parseProfileBackup(adapter.createProfileBackup(imported, importedProfiles));
@@ -86,6 +114,7 @@ test("merge keeps local conflicting intent and adds imported unknown identities;
   assert.equal(merged.state.history?.[0].score, 9);
   assert.equal(merged.state.history?.[1].sourceId, "anime:998");
   assert.deepEqual(merged.state.includeCandidates, ["anime:998", "anime:996"]);
+  assert.deepEqual(merged.state.watchlist, [local.watchlist![0], imported.watchlist[1]]);
   assert.equal(merged.profiles.get("Shared")?.state.preferences[0].importance, 1.7);
   assert.equal(merged.profiles.get("Imported")?.state.preferences[0].importance, 2.4);
   assert.deepEqual([merged.counts.addedPreferences, merged.counts.keptPreferences,
@@ -97,6 +126,9 @@ test("merge keeps local conflicting intent and adds imported unknown identities;
   assert.equal(replaced.profiles.has("Local"), false);
   assert.equal(replaced.counts.replacedPreferences, 1);
   assert.equal(replaced.counts.replacedHistory, 1);
+  assert.equal(replaced.counts.replacedWatchlist, 1);
+  assert.equal(merged.counts.addedWatchlist, 1);
+  assert.equal(merged.counts.keptWatchlist, 1);
   assert.equal(replaced.counts.replacedProfiles, 1);
   assert.equal(replaced.counts.removedProfiles, 1);
 });

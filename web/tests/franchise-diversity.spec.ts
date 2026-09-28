@@ -75,6 +75,14 @@ test("mocked normal metadata withholds a known unwatched sequel without extra pr
   await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop"]);
   await expect(page.locator("#rec-summary")).toContainText("1 known-unwatched sequel");
   expect(metadataRequests).toBe(2);
+  await page.locator("#watchlist-input").fill("Moonlit Workshop");
+  await page.locator("#watchlist-form button").click();
+  await expect(page.locator("#rec-results .rec-title")).toHaveCount(0);
+  await expect(page.locator("#rec-summary")).toContainText("Known immediate prequels block");
+  await page.locator("select[data-watchlist-status-id='102']").selectOption("completed");
+  await expect(page.locator("#rec-results .rec-title")).toHaveText(["星の航路"]);
+  await page.locator("button[data-watchlist-remove-id='102']").click();
+  await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop"]);
   await page.locator("#allow-related-titles").check();
   await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop", "星の航路"]);
   await expect(page.locator("#rec-results .rec-relationship").nth(1)).toContainText(unsafeTitle);
