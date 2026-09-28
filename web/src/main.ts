@@ -151,10 +151,10 @@ app.innerHTML = `
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">Graph + ML Recommendation Lab</p>
+        <p class="eyebrow">ANIME DISCOVERY</p>
         <h1>What Anime Should I Watch</h1>
         ${demoMode ? '<p class="demo-banner" role="status">SYNTHETIC DEMO DATA · Invented titles and ratings · No live metadata requests</p>' : ""}
-        <p>Recommendation-first anime discovery powered by the rating network.</p>
+        <p>Browse ideas or shape your picks with favorites.</p>
         <p class="shortcut-hint">Shortcuts: Alt+1 Recommendations, Alt+2 Network, Ctrl/Cmd+K Commands, Alt+/ Focus</p>
       </div>
       <nav class="topnav" aria-label="Primary">
@@ -213,49 +213,39 @@ app.innerHTML = `
           </ul>
         </section>
 
-        <section class="panel intro-panel">
+        <section class="panel intro-panel" aria-labelledby="intro-title">
           <div class="intro-copy">
-            <h2>Explore or Personalize in 3 Steps</h2>
-            <p class="muted">
-              Browse the catalog now, or add what you watched to get preference-based suggestions.
-            </p>
+            <p class="intro-eyebrow">GET STARTED</p>
+            <h2 id="intro-title">How would you like to find your next anime?</h2>
+            <p class="muted">Choose one path to start. Saved picks stay in this browser; local files are previewed before import.</p>
           </div>
-          <ol class="intro-steps">
-            <li><strong>Step 1:</strong> Explore sampled popularity or community scores without adding a title.</li>
-            <li><strong>Step 2:</strong> Mark watched titles Liked, Disliked, or Seen/Unrated.</li>
-            <li><strong>Step 3:</strong> Compare ranking modes, filters, and reasons.</li>
-          </ol>
+          <div class="intro-paths">
+            <button id="quickstart-favorites" class="intro-path" type="button" aria-controls="add-anime-form">
+              <strong>Add favorites</strong>
+              <span>Add one or two titles you liked to shape your picks.</span>
+            </button>
+            <button id="quickstart-import" class="intro-path" type="button" aria-controls="import-profiles">
+              <strong>Import a list</strong>
+              <span>Choose a local file or paste text, then review before applying.</span>
+            </button>
+            <button id="quickstart-browse" class="intro-path" type="button" aria-controls="rec-results">
+              <strong>Browse without a list</strong>
+              <span>See sampled popularity when available, without adding history.</span>
+            </button>
+          </div>
           <div class="intro-actions">
-            <button id="quickstart-seasonal" type="button" class="primary-btn">${demoMode ? "Browse Demo Ideas" : "Browse Seasonal Ideas"}</button>
-            <button id="quickstart-network" type="button" class="ghost-btn">Open Network Explorer</button>
+            <button id="quickstart-seasonal" type="button" class="ghost-btn">${demoMode ? "See demo ideas" : "See seasonal ideas"}</button>
+            <button id="quickstart-network" type="button" class="ghost-btn">Open network explorer</button>
           </div>
         </section>
 
         <div class="recommend-layout">
           <section class="card">
-            <h2>Find Your Next Anime</h2>
-            <p class="muted">${demoMode ? "Explore invented anime, then compare graph edges with a tiny synthetic model." : "Explore the loaded catalog, or add anime you have seen to rank next picks."}</p>
+            <h2>Your starting point</h2>
+            <p class="muted">${demoMode ? "Try the invented catalog. Mark a favorite or browse without adding anything." : "Mark a favorite or browse the loaded catalog without adding anything."}</p>
 
-            <label class="rec-engine-control" for="rec-method">
-              <span>Recommendation engine</span>
-              <select id="rec-method">
-                <option value="graph" selected>Graph (anime-to-anime edges)</option>
-                <option value="model">${demoMode ? "Synthetic Model" : "ML Model (matrix factorization)"}</option>
-                <option value="hybrid">Hybrid (blend graph + ML)</option>
-              </select>
-            </label>
-            <label id="rec-blend-control" class="rec-blend-control" for="rec-blend" hidden>
-              <span>Model blend weight</span>
-              <input id="rec-blend" type="range" min="${MIN_MODEL_BLEND_WEIGHT}" max="${MAX_MODEL_BLEND_WEIGHT}" step="${MODEL_BLEND_WEIGHT_STEP}" value="0.50" />
-              <output id="rec-blend-value">50% model / 50% graph</output>
-            </label>
-            <label class="rec-diversity-control" for="allow-related-titles">
-              <input id="allow-related-titles" type="checkbox" />
-              <span>Allow related titles and known sequels</span>
-            </label>
-            <p class="muted rec-diversity-help">By default, show one title per known or title-suggested series and withhold known sequels whose immediate prequel is not in watched history. Relationship checks are incomplete; switch this on to see the original eligible order with warnings.</p>
             <label class="rec-engine-control" for="discovery-view">
-              <span>Discovery view</span>
+              <span>Browse by</span>
               <select id="discovery-view">
                 <option value="auto">Automatic: explore until a ranking has a preference signal</option>
                 <option value="popularity">Popularity proxy: ratings in loaded recommendation graph</option>
@@ -265,6 +255,7 @@ app.innerHTML = `
             </label>
             <p id="rec-engine-status" class="rec-engine-status">Using graph recommendations.</p>
 
+            <h3 id="manual-entry-heading" class="manual-entry-heading">Add a title you know</h3>
             <form id="add-anime-form" class="add-form">
               <input id="anime-input" type="text" list="anime-options" autocomplete="off" placeholder="Type an anime title" aria-label="Anime title input" />
               <select id="add-preference" aria-label="Preference for added anime">
@@ -275,8 +266,32 @@ app.innerHTML = `
               <button type="submit" class="primary-btn">Add</button>
             </form>
             <datalist id="anime-options"></datalist>
-            <p class="muted" id="preference-guidance">Seen titles are excluded from picks without acting as likes. Liked titles seed graph suggestions; the model also uses dislikes as negative evidence. Importance is your emphasis; confidence records how certain an imported score is. Your manual choice takes precedence over later imports.</p>
+            <p class="muted" id="preference-guidance">Choose Liked for a favorite. Seen keeps a title out of your picks without treating it as a like. You can add more later.</p>
             <p id="preference-migration-notice" class="muted" role="status" hidden></p>
+
+            <details id="advanced-recommendation-settings" class="accordion advanced-settings">
+              <summary>Advanced recommendation settings</summary>
+              <p class="muted">Compare ranking engines and adjust how related titles appear. Your manual choices take precedence over later imports.</p>
+              <label class="rec-engine-control" for="rec-method">
+                <span>Recommendation engine</span>
+                <select id="rec-method">
+                  <option value="graph" selected>Graph (anime-to-anime edges)</option>
+                  <option value="model">${demoMode ? "Synthetic Model" : "ML Model (matrix factorization)"}</option>
+                  <option value="hybrid">Hybrid (blend graph + ML)</option>
+                </select>
+              </label>
+              <label id="rec-blend-control" class="rec-blend-control" for="rec-blend" hidden>
+                <span>Model blend weight</span>
+                <input id="rec-blend" type="range" min="${MIN_MODEL_BLEND_WEIGHT}" max="${MAX_MODEL_BLEND_WEIGHT}" step="${MODEL_BLEND_WEIGHT_STEP}" value="0.50" />
+                <output id="rec-blend-value">50% model / 50% graph</output>
+              </label>
+              <label class="rec-diversity-control" for="allow-related-titles">
+                <input id="allow-related-titles" type="checkbox" />
+                <span>Allow related titles and known sequels</span>
+              </label>
+              <p class="muted rec-diversity-help">By default, show one title per known or title-suggested series and withhold known sequels whose immediate prequel is not in watched history. Relationship checks are incomplete; switch this on to see the original eligible order with warnings.</p>
+              <p class="muted rec-diversity-help">Liked titles seed graph suggestions. The model also uses dislikes as negative evidence. Importance is your emphasis; confidence records how certain an imported score is.</p>
+            </details>
 
             <p id="rec-message" class="rec-message" role="status" aria-live="polite"></p>
             <p id="storage-status" class="storage-status" role="alert" aria-live="assertive"></p>
@@ -298,7 +313,7 @@ app.innerHTML = `
               <ul id="watchlist-list" class="watchlist-list"></ul>
             </section>
 
-            <details class="accordion">
+            <details id="import-profiles" class="accordion">
               <summary>Import & Profiles</summary>
               <section class="bulk-import">
                 <h3>Import From Local File or Text (Recommended)</h3>
@@ -598,6 +613,10 @@ const tipsDismissRecommendationsBtn = mustElement<HTMLButtonElement>(
 const tipsDismissNetworkBtn = mustElement<HTMLButtonElement>("#tips-dismiss-network");
 const quickstartSeasonalBtn = mustElement<HTMLButtonElement>("#quickstart-seasonal");
 const quickstartNetworkBtn = mustElement<HTMLButtonElement>("#quickstart-network");
+const quickstartFavoritesBtn = mustElement<HTMLButtonElement>("#quickstart-favorites");
+const quickstartImportBtn = mustElement<HTMLButtonElement>("#quickstart-import");
+const quickstartBrowseBtn = mustElement<HTMLButtonElement>("#quickstart-browse");
+let favoriteQuickstartActive = false;
 
 const addAnimeForm = mustElement<HTMLFormElement>("#add-anime-form");
 const animeInput = mustElement<HTMLInputElement>("#anime-input");
@@ -622,6 +641,7 @@ const watchlistCountEl = mustElement<HTMLSpanElement>("#watchlist-count");
 const watchlistListEl = mustElement<HTMLUListElement>("#watchlist-list");
 const watchlistStatusEl = mustElement<HTMLParagraphElement>("#watchlist-status");
 const bulkImportForm = mustElement<HTMLFormElement>("#bulk-import-form");
+const importProfilesDetails = mustElement<HTMLDetailsElement>("#import-profiles");
 const bulkImportFile = mustElement<HTMLInputElement>("#bulk-import-file");
 const bulkImportInput = mustElement<HTMLTextAreaElement>("#bulk-import-input");
 const bulkImportStatusEl = mustElement<HTMLParagraphElement>("#bulk-import-status");
@@ -1040,6 +1060,34 @@ quickstartNetworkBtn.addEventListener("click", () => {
 
 quickstartSeasonalBtn.addEventListener("click", () => {
   showSeasonalIdeas();
+});
+
+quickstartFavoritesBtn.addEventListener("click", () => {
+  favoriteQuickstartActive = true;
+  addPreferenceSelect.value = "liked";
+  animeInput.scrollIntoView({ block: "center", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  animeInput.focus({ preventScroll: true });
+  recMessageEl.textContent = "Enter a favorite title, then Add. Liked is selected.";
+});
+
+quickstartImportBtn.addEventListener("click", () => {
+  favoriteQuickstartActive = false;
+  addPreferenceSelect.value = "seen";
+  importProfilesDetails.open = true;
+  bulkImportInput.scrollIntoView({ block: "center", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  bulkImportInput.focus({ preventScroll: true });
+});
+
+quickstartBrowseBtn.addEventListener("click", () => {
+  favoriteQuickstartActive = false;
+  addPreferenceSelect.value = "seen";
+  discoveryViewSelect.value = "popularity";
+  discoveryViewSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  recResultsEl.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+});
+
+addPreferenceSelect.addEventListener("change", () => {
+  favoriteQuickstartActive = false;
 });
 
 themeToggleBtn.addEventListener("click", () => {
@@ -2249,7 +2297,7 @@ function addAnimeFromInput(): void {
 
   animeInput.value = "";
   const sentiment = addPreferenceSelect.value as PreferenceSentiment;
-  addPreferenceSelect.value = "seen";
+  addPreferenceSelect.value = favoriteQuickstartActive && sentiment === "liked" ? "liked" : "seen";
   addAnimeToWatchedList(anime, "Added", ["seen", "liked", "disliked"].includes(sentiment) ? sentiment : "seen");
 }
 

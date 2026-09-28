@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("seen is exclusion only; explicit likes and dislikes change the active engines", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#allow-related-titles").check();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-anime-form button").click();
@@ -28,6 +29,7 @@ test("seen is exclusion only; explicit likes and dislikes change the active engi
 
 test("local import preserves low, unscored, and high preferences and honors manual overrides", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("summary").filter({ hasText: "Import & Profiles" }).click();
   await page.locator("#bulk-import-input").fill("101, 2, Completed, 12\n102, 0, Watching, 3\n103, 9, Completed, 12");
   await page.locator("#bulk-import-form button").click();

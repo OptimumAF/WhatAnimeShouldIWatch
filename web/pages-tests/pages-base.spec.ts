@@ -62,6 +62,7 @@ test("direct project-path navigation loads a pinned data-only release and graph 
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
   expect(requested).toContain(`${base}data/active.json`);

@@ -72,6 +72,7 @@ test("a model with the wrong embedding width is named while eligible graph resul
   }));
 
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
@@ -93,6 +94,7 @@ test("a present malformed source model digest is named and graph fallback remain
     contentType: "application/json", body: JSON.stringify(model),
   }));
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
@@ -110,6 +112,7 @@ test("a compact model with undeclared user factors fails visibly and keeps graph
     contentType: "application/json", body: JSON.stringify(model),
   }));
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
@@ -127,6 +130,7 @@ test("a present malformed model dataset digest names the field and keeps graph f
     contentType: "application/json", body: JSON.stringify(model),
   }));
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
@@ -167,6 +171,7 @@ test("normal mode still loads valid unversioned legacy graph and model artifacts
   });
 
   await page.goto(normalAppUrl);
+  await page.locator("#advanced-recommendation-settings summary").click();
   await expect(page.locator("#diagnostic-data")).toContainText("Legacy unversioned data");
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
@@ -196,6 +201,7 @@ test("normal mode keeps graph suggestions when the optional model files are abse
   });
 
   await page.goto(normalAppUrl);
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();

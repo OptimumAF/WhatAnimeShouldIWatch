@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("synthetic recommendation modes retain their visible ranking and explanations", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#allow-related-titles").check();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
@@ -70,6 +71,7 @@ test("synthetic recommendation modes retain their visible ranking and explanatio
 
 test("browser model ranks from three explicit preference signals", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#allow-related-titles").check();
   for (const [title, sentiment] of [
     ["Copper Comet", "liked"], ["Moonlit Workshop", "liked"], ["Ashen Harbor", "disliked"],
@@ -103,6 +105,7 @@ test("browser model ranks from three explicit preference signals", async ({ page
 
 test("hybrid endpoints keep the lowest source item and a missing graph gives the model full weight", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#allow-related-titles").check();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");

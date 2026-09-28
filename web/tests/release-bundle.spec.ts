@@ -130,6 +130,7 @@ async function routeAggregateBundle(page: Page, options: { withModel?: boolean }
 test("normal mode pins one verified bundle for graph, model, and explorer", async ({ page }) => {
   const requests = await routeBundle(page);
   await page.goto(normalAppUrl);
+  await page.locator("#advanced-recommendation-settings summary").click();
   await expect(page.locator("#diagnostic-app")).toHaveText(`${appVersion} · source ${sourceRevision}`);
   await expect(page.locator("#diagnostic-data")).toContainText(manifest.tag);
   await expect(page.locator("#diagnostic-data")).toContainText(manifest.bundleId.slice(0, 12));
@@ -227,6 +228,7 @@ test("an explorer transport exception stays out of local status and diagnostics"
 test("a data-only bundle does not borrow a legacy model", async ({ page }) => {
   const requests = await routeBundle(page, { withoutModel: true });
   await page.goto(normalAppUrl);
+  await page.locator("#advanced-recommendation-settings summary").click();
   await expect(page.locator("#diagnostic-model")).toHaveText("Not included in this data release");
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
@@ -257,6 +259,7 @@ test("aggregate-only graph can serve a pinned item-only model without user histo
   const { requests, release } = await routeAggregateBundle(page, { withModel: true });
   expect(release.model?.coverage.mappedAnimeCount).toBe(8);
   await page.goto(normalAppUrl);
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();

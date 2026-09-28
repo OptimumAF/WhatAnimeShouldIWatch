@@ -240,7 +240,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     try {
       const raw = runtime.storage.getItem(HELP_TIPS_STORAGE_KEY);
       if (!raw) {
-        return false;
+        return true;
       }
       const parsed = JSON.parse(raw) as StoredHelpTipsState | null;
       if (
@@ -254,7 +254,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     } catch {
       console.warn("Unable to load help tips preference.");
     }
-    return false;
+    return true;
   }
 
   function persistHelpTipsDismissed(dismissed: boolean): void {
