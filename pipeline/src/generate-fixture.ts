@@ -4,7 +4,7 @@ import { datasetIdentity, recommendationGraphId, recommendationMetadata } from "
 import { buildExplorerGraph } from "./core/explorer-graph.js";
 import { aggregateAnimePairs } from "./core/pair-aggregation.js";
 import { getRepoRoot } from "./paths.js";
-import { buildReleaseManifest } from "./release-manifest.js";
+import { buildReleaseManifest, releaseSha256 } from "./release-manifest.js";
 import type { CompactGraphDataV2 } from "./types.js";
 
 interface FixtureAnime {
@@ -169,10 +169,15 @@ const outputs = new Map<string, unknown>([
   ["model-mf-web.compact.json", model],
 ]);
 const encoded = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
-outputs.set("release-manifest.json", buildReleaseManifest({
+const releaseFiles = {
   neighborhood: encoded(graph), explorer: encoded(explorerGraph),
   catalog: encoded(identityCatalog), model: encoded(model),
-}, { tag: "data-vsynthetic-demo-1", fixtureGenesis: true }));
+};
+const fixtureTag = `data-vsynthetic-${releaseSha256(JSON.stringify(
+  Object.values(releaseFiles).map(releaseSha256),
+))}`;
+outputs.set("release-manifest.json", buildReleaseManifest(releaseFiles,
+  { tag: fixtureTag, fixtureGenesis: true }));
 const check = process.argv.includes("--check");
 if (!check) fs.mkdirSync(outputDir, { recursive: true });
 for (const [filename, value] of outputs) {

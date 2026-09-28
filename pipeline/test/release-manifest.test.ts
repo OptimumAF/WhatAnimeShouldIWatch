@@ -52,8 +52,9 @@ function writeFiles(dir: string, source: ReleaseFileBytes): void {
 
 test("synthetic manifest pins exact bytes, graph IDs, item maps, and explicit genesis", (t) => {
   const source = files();
+  const fixtureTag = read(fixture(RELEASE_FILES.manifest)).tag;
   const manifest = buildReleaseManifest(source,
-    { tag: "data-vsynthetic-demo-1", fixtureGenesis: true });
+    { tag: fixtureTag, fixtureGenesis: true });
   const fixtureManifest = read(fixture(RELEASE_FILES.manifest));
   assert.deepEqual(manifest, fixtureManifest);
   assert.equal(manifest.neighborhood.sha256, releaseSha256(source.neighborhood));
@@ -67,10 +68,10 @@ test("synthetic manifest pins exact bytes, graph IDs, item maps, and explicit ge
   const root = directory(t);
   const genesis = path.join(root, "genesis");
   writeFiles(genesis, source);
-  writeReleaseManifest(genesis, "data-vsynthetic-demo-1", undefined, true);
+  writeReleaseManifest(genesis, fixtureTag, undefined, true);
   assert.equal(verifyReleaseBundle(genesis, undefined, true).bundleId, manifest.bundleId);
   assert.throws(() => verifyReleaseBundle(genesis), /lastKnownGood.*genesis/);
-  assert.throws(() => writeReleaseManifest(genesis, "data-vsynthetic-demo-1", undefined, true),
+  assert.throws(() => writeReleaseManifest(genesis, fixtureTag, undefined, true),
     /release-manifest.json.*already exists/);
 });
 
