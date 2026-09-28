@@ -12,6 +12,7 @@
     "fetch:release": "tsx src/fetch-release-data.ts",
     "publish:release": "tsx src/publish-release-data.ts",
     "check:model-promotion": "tsx src/check-model-promotion.ts",
+    "check:model-release-package": "tsx src/verify-model-release-package.ts",
     "sync:web": "tsx src/sync-web.ts",
     "generate:fixture": "tsx src/generate-fixture.ts",
     "verify:fixture": "tsx src/generate-fixture.ts --check",
