@@ -1,6 +1,6 @@
 # 0022 — Broader metrics for the restricted synthetic comparison
 
-**Status:** Protocol fixed on 2026-09-28 before running M5.7 metric or latency reports. Seven focused metric cases and the full local synthetic/mock gate passed; fresh PR CI and final review are pending. M5.7 and the M5 exit gate remain open.
+**Status:** Protocol fixed on 2026-09-28 before running M5.7 metric or latency reports. Seven focused metric cases, the full local synthetic/mock gate, and [fresh PR #36 fixture CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36392780916) passed on implementation commit `e78a0d1`. M5.7 is checked for this invented report; the M5 exit gate remains open.
 
 ## Inputs and unit of analysis
 
