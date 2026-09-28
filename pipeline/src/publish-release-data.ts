@@ -50,8 +50,6 @@ const requiredInputFiles = [
   "graph.compact.json",
   "anonymized-ratings.compact.json",
 ];
-const optionalInputFiles = ["model-mf-web.compact.json"];
-
 main();
 
 function main(): void {
@@ -61,25 +59,44 @@ function main(): void {
       throw new Error(`Missing required local data file: ${filepath}`);
     }
   }
+  const sourceModel = fs.readdirSync(options.sourceDir).find((name) =>
+    name.toLowerCase().startsWith("model") &&
+    fs.statSync(path.join(options.sourceDir, name)).isFile(),
+  );
+  if (sourceModel) {
+    throw new Error(
+      `Data release cannot publish ${sourceModel}; use a reviewed model promotion workflow.`,
+    );
+  }
 
   fs.mkdirSync(options.workDir, { recursive: true });
   cleanDirectory(options.workDir);
 
-  const packagedFiles = [
-    ...requiredInputFiles,
-    ...optionalInputFiles.filter((filename) =>
-      fs.existsSync(path.join(options.sourceDir, filename)),
-    ),
-  ].map((filename) => packageGzipAsset(filename));
+  const packagedFiles = requiredInputFiles.map((filename) => packageGzipAsset(filename));
 
   writeChecksums(packagedFiles);
   writeManifest(packagedFiles);
+  verifyReleaseTarget();
   ensureReleaseExists();
   uploadReleaseAssets(packagedFiles);
 
   process.stdout.write(
     `Published ${packagedFiles.length} data assets to ${options.owner}/${options.repo}@${options.tag}\n`,
   );
+}
+
+function verifyReleaseTarget(): void {
+  const authToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ??
+    execFileSync("gh", ["auth", "token"], { encoding: "utf8" }).trim();
+  const python = process.platform === "win32" ? "python" : "python3";
+  execFileSync(python, [
+    path.join(repoRoot, "scripts/verify_data_release_target.py"),
+    `${options.owner}/${options.repo}`, options.tag,
+  ], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    env: { ...process.env, GH_TOKEN: authToken },
+  });
 }
 
 function cleanDirectory(dir: string): void {
