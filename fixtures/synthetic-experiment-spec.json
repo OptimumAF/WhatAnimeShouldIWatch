@@ -1,0 +1,29 @@
+{
+  "format": "split-first-experiment-spec-v1",
+  "baselineSpecSha256": "9b9beefe8a461fcea2ef704dae16dd220f61442bbd50af6e0062c498d2257303",
+  "contentMetadataSha256": "0550674621e50cfdcee5da1e1dd7737478b36f388de2bae3bf849464e85fce6e",
+  "methods": ["lightgcn-bpr", "content-multihot"],
+  "suppliedCounts": [1, 3, 5, 10],
+  "topK": 10,
+  "positiveRawScoreMin": 7,
+  "missingSignalScore": 0,
+  "tieBreak": "anime-id-ascending",
+  "objective": "mean-displayed-ndcg-at-10",
+  "lightgcn": {
+    "factors": 8,
+    "layers": 1,
+    "epochs": 2,
+    "batchSize": 128,
+    "lr": 0.01,
+    "reg": 0.0001,
+    "seed": 42,
+    "centeredPositiveThreshold": 0,
+    "pairEdges": "train-positive-only"
+  },
+  "content": {
+    "featureFields": ["genres", "studios"],
+    "dropUniversalTokens": true,
+    "normalize": "item-l2",
+    "scorer": "browser-signed-item-vector"
+  }
+}
