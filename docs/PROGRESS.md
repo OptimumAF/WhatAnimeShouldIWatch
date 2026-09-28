@@ -832,3 +832,15 @@
 **Plan revisions and reasons:** The separate `anime-catalog-v1` records exact graph item identity because normal metadata is incomplete; M6.4 still owns richer coverage. A manifested compact model requires a declared dataset ID, while older compact models remain readable. Byte identity and prior-bundle verification belong to M8.1; atomic download, size limits, and runtime installation remain M8.2. No acceptance criterion was lowered.
 
 **Single next task:** Run clean-checkout CI and review the final M8.1 stacked diff, then check M8.1 only if its exit criteria pass.
+
+## Session 2026-09-28 — M8.1 acceptance and handoff
+
+**Branch / commit / PR:** `codex/m8-release-manifest` at `a648f8c29be12844719d9e7b88f4959f9a95490f`, stacked draft [PR #41](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/41) over PR #40. Protocol commit `a1e8c96` preceded generation; implementation `b56a359`, content-derived synthetic tag `3899074`, tag assertion `c20cfb3`, and canonical payload `a648f8c` complete the code slice. The final 10-file stacked diff against `codex/m5-experiment-adapters` passed `git diff --check` and review; checkout is clean.
+
+**Acceptance evidence:** [Fixture CI run 36406610980](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36406610980) passed on exact implementation SHA `a648f8c`: clean Node/Python/CPU Torch install, synthetic generation and fixture/refit/experiment/metric/parity checks, typecheck, 63 pipeline/105 web unit/68 ML/12 workflow tests, build, and 59 mocked browser cases. GitGuardian passed. Local focused regression and full gate results are recorded in the preceding session. The separate named previous bundle, exact manifest-byte pointer, content hashes, schema and graph links, item map compatibility, optional model coverage, genesis guard, and overwrite refusal meet M8.1's stated criteria. M8.1 is now checked; the M8 milestone exit remains open.
+
+**Checks not run / blockers:** No live provider call, private Crunchyroll import, production dataset or model regeneration, release publication, Pages deployment, atomic installation, or remote rollback was run. M8.2 owns bounded download and atomic activation; decision 0001/0002/0024 source-use, approval, quality, and promotion holds remain. The declared model dataset ID is a compatibility assertion and does not prove training provenance. The documentation-only acceptance commit will receive a separate final-head CI run.
+
+**Plan revisions and reasons:** The demo tag is derived from exact synthetic asset hashes to prevent one fixture tag naming changed bytes. The manifest payload normalizes dataset and previous-pointer field order so equivalent prior pointers yield the same bundle ID. Decision 0026 records both refinements; no task ID or acceptance criterion changed.
+
+**Single next task:** M8.2 — validate bounded downloads into a temporary complete bundle and atomically activate it only after manifest, byte, schema, and last-known-good checks pass, using invented assets and mocked transport.
