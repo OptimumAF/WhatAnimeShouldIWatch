@@ -1142,3 +1142,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI and stacked-diff review remain. The current package does not invoke this verifier or bind its result to owner approval; its invented archive is constructed rather than fit from the raw rows. A larger permitted snapshot needs a deliberate streaming/resource review beyond the bounded local row pipe. Actual source/use and owner approvals, predeclared final policy evidence, immutable model publication, exact-tag deployment, hosted checks, and rollback remain absent. M8.4 and M8 stay unchecked.
 
 **Single next task:** Require the private raw/split/metadata bridge inputs and recomputed result in nonfixture model-package approval, with synthetic tamper coverage and no user-bearing public output.
+
+## Session 2026-09-28 — M8.4 bridge CI review
+
+**PR / exact head:** Committed `6e71e0636fac97756ddb10e9b3076e39134d4d4d` and opened draft [PR #52](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/52) against PR #51's branch. The 12-file stacked diff passed `git diff --check`; the checkout was clean. [Fixture CI run 36447164203](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36447164203) passed on that exact SHA, as did GitGuardian. CI used clean Node/Python dependencies, generated and verified synthetic artifacts, typechecked, ran pipeline/Python/workflow checks, built web, and passed mocked browser smoke.
+
+**Checks not run / blockers:** No real provider input, private Crunchyroll watchlist, publication, deployment, or hosted check was used. The standalone bridge only verifies invented inputs and is not invoked by the local model package. Model fit provenance beyond the constructed archive, predeclared evaluation policy, source/use and owner approvals, immutable model release, exact-tag Pages trigger, hosted verification, and rollback remain. M8.4 and M8 stay unchecked. This documentation-only handoff commit still needs final-head CI.
+
+**Single next task:** Integrate the private raw/split/metadata bridge and verified graph/refit result into nonfixture model-package approval with tamper tests and no user-bearing public output.
