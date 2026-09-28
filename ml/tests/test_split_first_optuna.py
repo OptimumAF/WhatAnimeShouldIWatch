@@ -143,7 +143,7 @@ class SplitFirstOptunaTests(unittest.TestCase):
                 "--metadata", str(ROOT / "fixtures" / "synthetic-anime-metadata.json"),
                 "--selection", str(path)]
             final = subprocess.run(final_command, cwd=ROOT, capture_output=True, text=True, check=True)
-            self.assertIn("one frozen synthetic test report", final.stdout)
+            self.assertIn("one frozen warm-user report", final.stdout)
             self.assertTrue(Path(str(path) + ".test-used").exists())
             self.assertEqual(json.loads(report.read_text(encoding="utf-8"))["selectionSha256"],
                              record["selectionSha256"])

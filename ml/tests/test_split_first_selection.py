@@ -232,7 +232,7 @@ class SplitFirstSelectionTests(unittest.TestCase):
                 sys.executable, script, "report-test", *shared,
                 "--selection", str(selection_path),
             ], cwd=ROOT, capture_output=True, text=True, check=True)
-            self.assertIn("one frozen synthetic test report", final.stdout)
+            self.assertIn("one frozen warm-user report", final.stdout)
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(report["format"], "split-first-final-test-v1")
             self.assertEqual(report["selectedCandidateId"], "graph-two-epochs")
