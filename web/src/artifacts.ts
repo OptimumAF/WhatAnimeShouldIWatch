@@ -158,6 +158,7 @@ export interface ModelRecommendationData {
 export interface CompactModelRecommendationData {
   format: "model-mf-compact-v1";
   generatedAt: string;
+  sourceModel?: string;
   sourceModelSha256?: string;
   /** Declared graph-compatible input identity; required only by release-manifest-v1. */
   datasetSha256?: string;
@@ -167,6 +168,7 @@ export interface CompactModelRecommendationData {
   titles: string[];
   biases: number[];
   embeddings: number[][];
+  animeCount?: number;
 }
 
 export interface ReleaseIdentityCatalog {
@@ -773,6 +775,10 @@ function checkEmbedding(value: unknown, factors: number, label: string, location
 
 export function parseCompactModel(value: unknown, label: string): CompactModelRecommendationData {
   const model = record(value, label, "root");
+  const optional = ["sourceModel", "sourceModelSha256", "datasetSha256", "animeCount"]
+    .filter((field) => Object.hasOwn(model, field));
+  exactFields(model, ["format", "generatedAt", "globalMean", "factors", "animeIds",
+    "titles", "biases", "embeddings", ...optional], label, "root");
   expectFormat(model, "model-mf-compact-v1", label);
   const factors = checkModelBase(model, label);
   const animeIds = list(model.animeIds, label, "animeIds");

@@ -9,7 +9,8 @@ import type { CompactGraphDataV2 } from "../src/types.js";
 import { projectAggregateGraph } from "../src/core/aggregate-projection.js";
 import { buildExplorerGraph } from "../src/core/explorer-graph.js";
 import { installReleaseBundle } from "../src/install-release-bundle.js";
-import { RELEASE_FILES, verifyReleaseBundle, writeReleaseManifest } from "../src/release-manifest.js";
+import { buildReleaseManifest, RELEASE_FILES, releaseSha256, verifyReleaseBundle,
+  writeReleaseManifest } from "../src/release-manifest.js";
 
 const fixtureDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/public/demo-data");
 const source = (): CompactGraphDataV2 => JSON.parse(fs.readFileSync(
@@ -93,6 +94,56 @@ test("a data-only v3 bundle verifies and installs exact manifest, catalog, and e
       /graph-explorer.compact.json.*same compact graph format/);
   } finally {
     const resolved = fs.realpathSync(directory);
+    if (!resolved.startsWith(path.resolve(os.tmpdir()) + path.sep)) {
+      throw new Error("Refusing cleanup outside the temporary directory");
+    }
+    fs.rmSync(resolved, { recursive: true, force: true });
+  }
+});
+
+test("a model-bearing v3 bundle preserves the exact aggregate data base and item map", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "invented-aggregate-model-"));
+  try {
+    const base = path.join(root, "base");
+    const promoted = path.join(root, "promoted");
+    fs.mkdirSync(base);
+    fs.mkdirSync(promoted);
+    const graph = projectAggregateGraph(source());
+    const assets = new Map([
+      [RELEASE_FILES.neighborhood, encoded(graph)],
+      [RELEASE_FILES.explorer, encoded(buildExplorerGraph(graph, 5, 0))],
+      [RELEASE_FILES.catalog, fs.readFileSync(path.join(fixtureDir,
+        RELEASE_FILES.catalog))],
+    ]);
+    for (const [name, bytes] of assets) {
+      fs.writeFileSync(path.join(base, name), bytes);
+      fs.writeFileSync(path.join(promoted, name), bytes);
+    }
+    const baseManifest = writeReleaseManifest(base, "data-vinvented-model-base", undefined, true);
+    fs.copyFileSync(path.join(fixtureDir, RELEASE_FILES.model),
+      path.join(promoted, RELEASE_FILES.model));
+    const modelManifest = writeReleaseManifest(promoted, "data-vinvented-model-next", base);
+    assert.equal(modelManifest.neighborhood.format, "graph-compact-v3");
+    assert.equal(modelManifest.model?.coverage.mappedAnimeCount, graph.anime.length);
+    assert.equal(modelManifest.model?.itemMapSha256, baseManifest.catalog.itemMapSha256);
+    assert.equal(modelManifest.neighborhood.sha256, baseManifest.neighborhood.sha256);
+    assert.equal(modelManifest.explorer.sha256, baseManifest.explorer.sha256);
+    assert.equal(modelManifest.catalog.sha256, baseManifest.catalog.sha256);
+    assert.equal(modelManifest.lastKnownGood?.bundleId, baseManifest.bundleId);
+    assert.deepEqual(verifyReleaseBundle(promoted, base), modelManifest);
+    const badModel = JSON.parse(fs.readFileSync(path.join(promoted, RELEASE_FILES.model), "utf8"));
+    badModel.userFactors = [[1, 0]];
+    assert.throws(() => buildReleaseManifest({
+      neighborhood: fs.readFileSync(path.join(promoted, RELEASE_FILES.neighborhood)),
+      explorer: fs.readFileSync(path.join(promoted, RELEASE_FILES.explorer)),
+      catalog: fs.readFileSync(path.join(promoted, RELEASE_FILES.catalog)),
+      model: Buffer.from(encoded(badModel)),
+    }, { tag: "data-vinvented-hidden-factor",
+      lastKnownGood: { tag: baseManifest.tag, bundleId: baseManifest.bundleId,
+        manifestSha256: releaseSha256(fs.readFileSync(path.join(base, RELEASE_FILES.manifest))) } }),
+    /model-mf-web.compact.json: root.userFactors is unsupported/);
+  } finally {
+    const resolved = fs.realpathSync(root);
     if (!resolved.startsWith(path.resolve(os.tmpdir()) + path.sep)) {
       throw new Error("Refusing cleanup outside the temporary directory");
     }

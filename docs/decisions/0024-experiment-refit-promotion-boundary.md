@@ -16,6 +16,8 @@ Retrain uploads and experimental outputs are not release candidates. Model promo
 
 M5.9 requires the existing optional-model publication routes to stop bypassing promotion, plus invented approval, compatibility, corruption, and rollback checks. The data-only guards and structural preflight below address that local part. M8.1–M8.4 and M8.7 still own the full immutable release manifest, atomic installation, deployment trigger, and practiced recovery. No job dispatch, release update, Pages deployment, or promotion is authorized by this decision.
 
+[Decision 0033](0033-public-model-promotion-contract.md) specifies the separate public v3 model-bundle path. The private v2 preflight below remains useful for its original structural check but cannot be substituted for that path or its source/use, evaluation, and deployment gates.
+
 ## Data-only containment and promotion preflight
 
 The existing data-release workflow and local publisher are data-only routes. Both refuse a staged or source model before upload. The workflow also refuses unexpected gzip assets and checks the destination release metadata before updating it; the local publisher makes the same destination check. A lookup error other than a missing tag fails closed. This prevents an update from leaving an existing model beside a new graph without a promotion review. It does not revoke or delete an older public release.
