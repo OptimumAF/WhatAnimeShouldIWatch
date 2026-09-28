@@ -53,6 +53,9 @@ function writeFiles(dir: string, source: ReleaseFileBytes): void {
 test("synthetic manifest pins exact bytes, graph IDs, item maps, and explicit genesis", (t) => {
   const source = files();
   const fixtureTag = read(fixture(RELEASE_FILES.manifest)).tag;
+  assert.equal(fixtureTag, `data-vsynthetic-${releaseSha256(JSON.stringify(
+    [source.neighborhood, source.explorer, source.catalog, source.model!].map(releaseSha256),
+  ))}`);
   const manifest = buildReleaseManifest(source,
     { tag: fixtureTag, fixtureGenesis: true });
   const fixtureManifest = read(fixture(RELEASE_FILES.manifest));
