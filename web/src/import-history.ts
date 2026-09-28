@@ -5,6 +5,11 @@ export const MAX_TEXT_IMPORT_BYTES = 128 * 1024;
 export const MAX_MAL_XML_IMPORT_BYTES = 2 * 1024 * 1024;
 export const MAX_HISTORY_ENTRIES = 10_000;
 
+/** Parser-authored messages contain only fixed field names and entry numbers, never input text. */
+export class HistoryImportValidationError extends Error {
+  readonly name = "HistoryImportValidationError";
+}
+
 export type HistoryProvider = "mal" | "anilist" | "local";
 export type HistoryStatus = "watching" | "completed" | "on_hold" | "dropped" | "plan_to_watch" | "unknown";
 export type HistoryScoreScale =
@@ -150,23 +155,23 @@ export function deduplicateHistory(entries: HistoryEntry[]): ParsedHistory {
 }
 
 export function parseTextHistory(text: string): ParsedHistory {
-  if (byteLength(text) > MAX_TEXT_IMPORT_BYTES) throw new Error("Text import exceeds 128 KiB.");
+  if (byteLength(text) > MAX_TEXT_IMPORT_BYTES) throw new HistoryImportValidationError("Text import exceeds 128 KiB.");
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length > MAX_HISTORY_ENTRIES) throw new Error("Text import has too many entries.");
+  if (lines.length > MAX_HISTORY_ENTRIES) throw new HistoryImportValidationError("Text import has too many entries.");
   const entries: HistoryEntry[] = lines.map((line, index) => {
     const parts = line.split(/[,\t|]/).map((part) => part.trim());
-    if (parts.length > 4 || !parts[0]) throw new Error(`Invalid text import line ${index + 1}.`);
+    if (parts.length > 4 || !parts[0]) throw new HistoryImportValidationError(`Invalid text import line ${index + 1}.`);
     const token = parts[0];
     const numeric = /^(?:anime:)?(\d+)$/.exec(token);
     const animeId = numeric ? integerToken(numeric[1], Number.MAX_SAFE_INTEGER) : null;
-    if (numeric && (!animeId || animeId <= 0)) throw new Error(`Invalid anime ID on line ${index + 1}.`);
-    if (!numeric && token.length > 500) throw new Error(`Title on line ${index + 1} is too long.`);
+    if (numeric && (!animeId || animeId <= 0)) throw new HistoryImportValidationError(`Invalid anime ID on line ${index + 1}.`);
+    if (!numeric && token.length > 500) throw new HistoryImportValidationError(`Title on line ${index + 1} is too long.`);
     const scoreValue = parts[1] ? scoreToken(parts[1], false) : 0;
-    if (scoreValue === null) throw new Error(`Invalid score on line ${index + 1}.`);
+    if (scoreValue === null) throw new HistoryImportValidationError(`Invalid score on line ${index + 1}.`);
     const sourceStatus = parts[2] ?? "";
-    if (sourceStatus.length > 80) throw new Error(`Status on line ${index + 1} is too long.`);
+    if (sourceStatus.length > 80) throw new HistoryImportValidationError(`Status on line ${index + 1} is too long.`);
     const progress = parts[3] ? integerToken(parts[3], 1_000_000) : null;
-    if (parts[3] && progress === null) throw new Error(`Invalid progress on line ${index + 1}.`);
+    if (parts[3] && progress === null) throw new HistoryImportValidationError(`Invalid progress on line ${index + 1}.`);
     return {
       provider: "local", sourceId: animeId ? `anime:${animeId}` : `title:${normalizeTitle(token)}`,
       title: token, animeId, status: normalizeHistoryStatus(sourceStatus), sourceStatus,
@@ -179,31 +184,31 @@ export function parseTextHistory(text: string): ParsedHistory {
 
 /** A deliberately limited MAL-style XML subset. DTDs/entities are rejected before DOM parsing. */
 export function parseMalXmlHistory(text: string): ParsedHistory {
-  if (byteLength(text) > MAX_MAL_XML_IMPORT_BYTES) throw new Error("MAL XML import exceeds 2 MiB.");
-  if (/<!\s*(?:DOCTYPE|ENTITY)/i.test(text)) throw new Error("XML declarations with DTDs or entities are not supported.");
+  if (byteLength(text) > MAX_MAL_XML_IMPORT_BYTES) throw new HistoryImportValidationError("MAL XML import exceeds 2 MiB.");
+  if (/<!\s*(?:DOCTYPE|ENTITY)/i.test(text)) throw new HistoryImportValidationError("XML declarations with DTDs or entities are not supported.");
   const document = new DOMParser().parseFromString(text, "application/xml");
   if (document.querySelector("parsererror") || document.documentElement.tagName !== "myanimelist") {
-    throw new Error("Invalid MAL XML document.");
+    throw new HistoryImportValidationError("Invalid MAL XML document.");
   }
   const animeNodes = [...document.documentElement.children].filter((child) => child.tagName === "anime");
-  if (animeNodes.length > MAX_HISTORY_ENTRIES) throw new Error("MAL XML import has too many entries.");
+  if (animeNodes.length > MAX_HISTORY_ENTRIES) throw new HistoryImportValidationError("MAL XML import has too many entries.");
   const directText = (node: Element, tag: string): string => {
     const children = [...node.children].filter((child) => child.tagName === tag);
-    if (children.length > 1 || children[0]?.children.length) throw new Error(`Invalid MAL XML ${tag} field.`);
+    if (children.length > 1 || children[0]?.children.length) throw new HistoryImportValidationError(`Invalid MAL XML ${tag} field.`);
     return children[0]?.textContent?.trim() ?? "";
   };
   const entries: HistoryEntry[] = animeNodes.map((node, index) => {
     const id = integerToken(directText(node, "series_animedb_id"), Number.MAX_SAFE_INTEGER);
     const title = directText(node, "series_title");
-    if (!id || !title || title.length > 500) throw new Error(`Invalid MAL XML anime at entry ${index + 1}.`);
+    if (!id || !title || title.length > 500) throw new HistoryImportValidationError(`Invalid MAL XML anime at entry ${index + 1}.`);
     const rawScore = directText(node, "my_score");
     const scoreValue = rawScore ? scoreToken(rawScore, true) : 0;
-    if (scoreValue === null) throw new Error(`Invalid MAL XML score at entry ${index + 1}.`);
+    if (scoreValue === null) throw new HistoryImportValidationError(`Invalid MAL XML score at entry ${index + 1}.`);
     const rawProgress = directText(node, "my_watched_episodes");
     const progress = rawProgress ? integerToken(rawProgress, 1_000_000) : null;
-    if (rawProgress && progress === null) throw new Error(`Invalid MAL XML progress at entry ${index + 1}.`);
+    if (rawProgress && progress === null) throw new HistoryImportValidationError(`Invalid MAL XML progress at entry ${index + 1}.`);
     const sourceStatus = directText(node, "my_status");
-    if (sourceStatus.length > 80) throw new Error(`Invalid MAL XML status at entry ${index + 1}.`);
+    if (sourceStatus.length > 80) throw new HistoryImportValidationError(`Invalid MAL XML status at entry ${index + 1}.`);
     return {
       provider: "mal", sourceId: String(id), title, animeId: id,
       status: normalizeHistoryStatus(sourceStatus), sourceStatus,

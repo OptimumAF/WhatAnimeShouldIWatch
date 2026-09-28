@@ -39,6 +39,21 @@ async function applyText(page: Page, content: string): Promise<void> {
   await page.locator("#history-import-apply").click();
 }
 
+test("local file read errors keep invented private text and filename out of diagnostics", async ({ page }) => {
+  const privateText = "invented-private-raw-history";
+  await page.addInitScript((message) => {
+    File.prototype.text = () => Promise.reject(new Error(message));
+  }, privateText);
+  await openDemo(page);
+  await setXmlFile(page, malXml, "invented-private-name.xml");
+  await expect(page.locator("#bulk-import-status")).toHaveAttribute("data-state", "failed");
+  await expect(page.locator("#diagnostic-code")).toContainText("IMPORT-002");
+  const diagnostics = await page.locator("#rec-message, #bulk-import-status, #local-diagnostics")
+    .allTextContents();
+  expect(diagnostics.join(" ")).not.toContain(privateText);
+  expect(diagnostics.join(" ")).not.toContain("invented-private-name.xml");
+});
+
 test("local MAL XML previews and retains unscored, status, progress, scale, unmapped, and reload state", async ({ page }) => {
   const external = await openDemo(page);
   await setXmlFile(page, malXml);

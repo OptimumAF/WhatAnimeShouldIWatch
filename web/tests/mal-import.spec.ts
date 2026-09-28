@@ -157,6 +157,24 @@ test("a browser transport failure gives an actionable error without proxying", a
   expect(requests.filter((url) => new URL(url).hostname === "myanimelist.net")).toHaveLength(4);
 });
 
+test("provider errors never echo an invented username or history into diagnostics", async ({ page }) => {
+  const privateText = "invented-private-user raw-history-1-2-3";
+  const consoleMessages: string[] = [];
+  page.on("console", (message) => consoleMessages.push(message.text()));
+  await openNormalAppWithMockedProviders(page, 403, "{}",
+    JSON.stringify({ errors: [{ message: privateText }] }));
+  await page.locator("#username-import-provider").selectOption("anilist");
+  await page.locator("#username-import-input").fill(privateText);
+  await page.locator("#username-import-submit").click();
+  await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "failed");
+  await expect(page.locator("#diagnostic-code")).toContainText("IMPORT-001");
+  await expect(page.locator("#diagnostic-action")).toContainText("local file or text import");
+  const visibleFailure = await page.locator("#rec-message, #username-import-status, #local-diagnostics")
+    .allTextContents();
+  expect(visibleFailure.join(" ")).not.toContain(privateText);
+  expect(consoleMessages.join(" ")).not.toContain(privateText);
+});
+
 test("local file import waits for review and never sends the entries to a provider", async ({ page }) => {
   const requests = await openNormalAppWithMockedProviders(page, 403, "{}");
   await expect(page.getByRole("heading", { name: "Import From Local File or Text (Recommended)" })).toBeVisible();

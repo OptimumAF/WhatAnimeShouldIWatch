@@ -1,5 +1,5 @@
 import Graph from "graphology";
-import { isCompactGraphData } from "./artifacts";
+import { ArtifactValidationError, isCompactGraphData } from "./artifacts";
 import type {
   AnimeMetadata,
   EdgeType,
@@ -41,10 +41,13 @@ import type { CandidateEligibilityPolicy, EligibilityRankingMode, GenreOverlapRe
 import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { selectFranchiseDiverseRecommendations } from "./franchise-diversity";
 import type { FranchiseSelection } from "./franchise-diversity";
-import { createArtifactLoader } from "./artifact-loader";
+import { ArtifactLoadError, createArtifactLoader } from "./artifact-loader";
+import { appVersionLabel, dataVersionLabel, diagnosticIssue, modelVersionLabel } from "./diagnostics";
+import type { DiagnosticCode } from "./diagnostics";
 import {
   MAX_MAL_XML_IMPORT_BYTES,
   MAX_TEXT_IMPORT_BYTES,
+  HistoryImportValidationError,
   mergeHistory,
   parseMalXmlHistory,
   parseTextHistory,
@@ -507,6 +510,17 @@ app.innerHTML = `
           </section>
         </div>
       </section>
+      <details id="local-diagnostics" class="panel local-diagnostics">
+        <summary>Local diagnostics</summary>
+        <p class="muted">This panel shows only public release identifiers and fixed error codes. It does not include or send usernames or watch history.</p>
+        <dl class="diagnostic-versions">
+          <div><dt>App</dt><dd id="diagnostic-app">Checking build...</dd></div>
+          <div><dt>Data</dt><dd id="diagnostic-data">Checking data...</dd></div>
+          <div><dt>Model</dt><dd id="diagnostic-model">Not checked</dd></div>
+        </dl>
+        <p id="diagnostic-code" role="status" aria-live="polite">No error code recorded.</p>
+        <p id="diagnostic-action" class="muted"></p>
+      </details>
     </main>
   </div>
 `;
@@ -614,6 +628,11 @@ const toggleUsers = mustElement<HTMLInputElement>("#toggle-users");
 const networkSearchForm = mustElement<HTMLFormElement>("#network-search-form");
 const networkSearchInput = mustElement<HTMLInputElement>("#network-search-input");
 const networkNodeOptions = mustElement<HTMLDataListElement>("#network-node-options");
+const diagnosticAppEl = mustElement<HTMLElement>("#diagnostic-app");
+const diagnosticDataEl = mustElement<HTMLElement>("#diagnostic-data");
+const diagnosticModelEl = mustElement<HTMLElement>("#diagnostic-model");
+const diagnosticCodeEl = mustElement<HTMLParagraphElement>("#diagnostic-code");
+const diagnosticActionEl = mustElement<HTMLParagraphElement>("#diagnostic-action");
 const networkSearchMessage = mustElement<HTMLParagraphElement>("#network-search-message");
 const inspectEmptyEl = mustElement<HTMLParagraphElement>("#inspect-empty");
 const inspectContentEl = mustElement<HTMLDivElement>("#inspect-content");
@@ -622,6 +641,9 @@ const inspectCountEl = mustElement<HTMLDivElement>("#inspect-count");
 const inspectValuesEl = mustElement<HTMLDivElement>("#inspect-values");
 const inspectListEl = mustElement<HTMLUListElement>("#inspect-list");
 const clearSelectionBtn = mustElement<HTMLButtonElement>("#clear-selection");
+
+diagnosticAppEl.textContent = appVersionLabel(__WASIW_APP_VERSION__, __WASIW_SOURCE_REVISION__);
+diagnosticModelEl.textContent = modelVersionLabel(null, null, "unchecked", demoMode);
 
 let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
@@ -684,6 +706,10 @@ applyTheme(activeTheme);
 applyContrast(activeContrast);
 
 const graphData = await loadRequiredArtifact(artifactLoader.fetchGraph());
+const activeReleaseManifest = await artifactLoader.getActiveReleaseManifest();
+diagnosticDataEl.textContent = dataVersionLabel(activeReleaseManifest,
+  isCompactGraphData(graphData) ? graphData.format : "legacy-graph", demoMode);
+diagnosticModelEl.textContent = modelVersionLabel(activeReleaseManifest, null, "unchecked", demoMode);
 const samplePopularityAvailable = !isCompactGraphData(graphData) ||
   graphData.format !== "graph-compact-v3";
 const graphNodes = getGraphNodes(graphData);
@@ -1326,12 +1352,14 @@ function setActiveView(view: AppView, fromHash: boolean): void {
         });
       })
       .catch((error) => {
-        const errorMessage = error instanceof Error ? error.message : "unknown error";
+        const errorMessage = error instanceof ArtifactValidationError || error instanceof ArtifactLoadError
+          ? error.message : "unable to load or verify the optional asset";
         setGraphLoadingState(
           false,
           `Render status: failed to load explorer data (${errorMessage}).`,
         );
-        console.error("Explorer graph load failed.", error);
+        recordDiagnosticIssue("EXPLORER-001");
+        console.error("Explorer graph load failed [EXPLORER-001].");
       });
   } else {
     graphRenderRunId += 1;
@@ -2119,7 +2147,7 @@ async function loadBulkImportFile(): Promise<void> {
       if (parsed.entries.length > 0) {
         setPendingHistoryImport(parsed, "local");
         setAsyncStatus(bulkImportStatusEl, "ready", "Local XML parsed. Review the import preview before applying.");
-        recMessageEl.textContent = `Loaded local XML file "${file.name}". Review the import preview.`;
+        recMessageEl.textContent = "Loaded local XML file. Review the import preview.";
       } else {
         setAsyncStatus(bulkImportStatusEl, "empty", "The local XML has no anime entries; current history is intact.");
       }
@@ -2127,10 +2155,10 @@ async function loadBulkImportFile(): Promise<void> {
       bulkImportInput.value = content;
       if (content.trim()) {
         setAsyncStatus(bulkImportStatusEl, "ready", "Local text loaded. Preview the entries before applying.");
-        recMessageEl.textContent = `Loaded local file "${file.name}". Select Preview Text Import.`;
+        recMessageEl.textContent = "Loaded local text file. Select Preview Text Import.";
       } else {
         setAsyncStatus(bulkImportStatusEl, "empty", "The local file has no entries to import.");
-        recMessageEl.textContent = `Local file "${file.name}" is empty.`;
+        recMessageEl.textContent = "Local file is empty.";
       }
     }
     activeBulkFileLoadId = null;
@@ -2139,7 +2167,9 @@ async function loadBulkImportFile(): Promise<void> {
     activeBulkFileLoadId = null;
     clearPendingHistoryImport();
     setAsyncStatus(bulkImportStatusEl, "failed", "Unable to parse that local file; current history is intact.");
-    recMessageEl.textContent = error instanceof Error ? error.message : "Unable to read that local file.";
+    recMessageEl.textContent = error instanceof HistoryImportValidationError ? error.message
+      : "Unable to read or parse that local file. Check its .txt or .xml format.";
+    recordDiagnosticIssue("IMPORT-002");
   }
 }
 
@@ -2167,7 +2197,9 @@ function importWatchedFromBulkInput(): void {
   } catch (error) {
     clearPendingHistoryImport();
     setAsyncStatus(bulkImportStatusEl, "failed", "Text import is invalid; current history is intact.");
-    recMessageEl.textContent = error instanceof Error ? error.message : "Unable to parse text import.";
+    recMessageEl.textContent = error instanceof HistoryImportValidationError ? error.message
+      : "Text import is invalid. Check the documented line format and preview again.";
+    recordDiagnosticIssue("IMPORT-002");
   }
 }
 
@@ -2222,9 +2254,10 @@ async function importWatchedFromUsername(): Promise<void> {
       error instanceof ProviderUnavailableError ? "unavailable" : "failed",
       error instanceof ProviderUnavailableError ? `${providerLabel(provider)} import is unavailable.` : `${providerLabel(provider)} import failed.`,
     );
-    const message =
-      error instanceof Error ? error.message : "Unable to import this username.";
-    recMessageEl.textContent = `Username import failed: ${message}`;
+    recMessageEl.textContent = provider === "mal"
+      ? "Direct MAL import failed. Browser access may be blocked, the profile may be private, or MAL may be rate limiting. No proxy was contacted. Try the local file or text import above, or AniList."
+      : "AniList import failed. Check provider availability and try the local file or text import. Current history is intact.";
+    recordDiagnosticIssue("IMPORT-001");
   } finally {
     if (activeUsernameImport?.controller === controller) {
       activeUsernameImport = null;
@@ -2317,7 +2350,7 @@ function applyPendingHistoryImport(): void {
       `Import applied: ${pending.parsed.entries.length} history entries; ` +
       `preferences added: ${selectionSummary.added}, updated: ${selectionSummary.updated}, ` +
       `unchanged: ${selectionSummary.skipped}.`;
-  } catch (error) {
+  } catch {
     historyEntries.splice(0, historyEntries.length, ...previousHistory);
     selectedAnimeNodeIds.splice(0, selectedAnimeNodeIds.length, ...previousSelected);
     selectedAnimePreferences.clear();
@@ -2326,7 +2359,8 @@ function applyPendingHistoryImport(): void {
     renderImportedHistory();
     setAsyncStatus(pending.origin === "local" ? bulkImportStatusEl : usernameImportStatusEl,
       "failed", "Import was not applied; prior history is intact.");
-    recMessageEl.textContent = error instanceof Error ? error.message : "Import was not applied.";
+    recMessageEl.textContent = "Import was not applied. Check browser storage and try the preview again.";
+    recordDiagnosticIssue("STORAGE-001");
   }
 }
 
@@ -2363,6 +2397,12 @@ function renderImportedHistory(): void {
 function setAsyncStatus(element: HTMLElement, state: AsyncUiState, message: string): void {
   element.dataset.state = state;
   element.textContent = message;
+}
+
+function recordDiagnosticIssue(code: DiagnosticCode): void {
+  const issue = diagnosticIssue(code);
+  diagnosticCodeEl.textContent = `${issue.code} · ${issue.title}`;
+  diagnosticActionEl.textContent = issue.action;
 }
 
 function cancelActiveUsernameImport(): void {
@@ -3297,9 +3337,9 @@ async function loadSeasonalTrending(force: boolean): Promise<void> {
         setAsyncStatus(seasonalStatusEl, "stale", "Seasonal request was canceled.");
         return;
       }
-      const message = error instanceof Error ? error.message : "Request failed.";
       setAsyncStatus(seasonalStatusEl, error instanceof ProviderUnavailableError ? "unavailable" : "failed",
-        `Unable to load seasonal anime: ${message}`);
+        "Unable to load seasonal anime. Retry later; existing recommendations are unchanged.");
+      recordDiagnosticIssue("SEASONAL-001");
       seasonalItems = [];
       renderSeasonalList();
     } finally {
@@ -3537,10 +3577,10 @@ function rerenderGraph(): void {
         false,
         `Render status: ${visibleNodes.toLocaleString()} nodes, ${visibleEdges.toLocaleString()} edges (${elapsedMs} ms${limitSuffix}).`,
       );
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "unknown error";
-      setGraphLoadingState(false, `Render status: failed (${errorMessage}).`);
-      console.error("Graph render failed.", error);
+    } catch {
+      setGraphLoadingState(false, "Render status: failed. Reload and reduce visible edges.");
+      recordDiagnosticIssue("RENDER-001");
+      console.error("Graph render failed [RENDER-001].");
     }
   }, 0);
 }
@@ -3760,11 +3800,24 @@ async function ensureExplorerGraphData(): Promise<LoadedGraphData> {
 
 async function ensureModelRecommendationIndex(): Promise<ModelRecommendationIndex | null> {
   if (!modelRecommendationIndexPromise) {
-    modelRecommendationIndexPromise = artifactLoader.fetchModelRecommendationIndex().catch((error: unknown) => {
-      modelLoadError = error instanceof Error ? error.message : "unknown validation error";
-      console.error("Model artifact load failed.", error);
-      return null;
-    });
+    modelRecommendationIndexPromise = artifactLoader.fetchModelRecommendationIndex()
+      .then((model) => {
+        diagnosticModelEl.textContent = modelVersionLabel(activeReleaseManifest,
+          artifactLoader.getLoadedModelFormat(), model ? "loaded" : "absent", demoMode);
+        if (!model && (!activeReleaseManifest || activeReleaseManifest.model)) {
+          recordDiagnosticIssue("MODEL-001");
+        }
+        return model;
+      })
+      .catch((error: unknown) => {
+        modelLoadError = error instanceof ArtifactValidationError || error instanceof ArtifactLoadError
+          ? error.message
+          : "model-mf-web.compact.json: unable to load or verify the optional asset.";
+        diagnosticModelEl.textContent = modelVersionLabel(activeReleaseManifest, null, "failed", demoMode);
+        recordDiagnosticIssue("MODEL-001");
+        console.error("Model artifact load failed [MODEL-001].");
+        return null;
+      });
   }
   return modelRecommendationIndexPromise;
 }
@@ -3773,11 +3826,15 @@ async function loadRequiredArtifact<T>(operation: Promise<T>): Promise<T> {
   try {
     return await operation;
   } catch (error) {
-    const detail = error instanceof Error ? error.message : "unknown artifact error";
+    const authoredError = error instanceof ArtifactValidationError || error instanceof ArtifactLoadError;
+    const detail = authoredError ? error.message : "unable to load or verify the required asset";
     recMessageEl.textContent = `Data unavailable: ${detail}`;
     recMessageEl.setAttribute("role", "alert");
     recEngineStatusEl.textContent = "Recommendations unavailable until the data artifact is repaired.";
-    throw error;
+    diagnosticDataEl.textContent = "Unavailable; no verified data identity";
+    recordDiagnosticIssue(error instanceof ArtifactValidationError || /SHA-256|byte length/.test(detail)
+      ? "DATA-002" : "DATA-001");
+    throw authoredError ? error : new Error("Required data artifact unavailable.");
   }
 }
 
@@ -3825,8 +3882,8 @@ function applyLayout(graph: Graph): void {
 
   try {
     assignRingLayout(graph);
-  } catch (error) {
-    console.warn("Graph layout failed; using fallback ring layout.", error);
+  } catch {
+    console.warn("Graph layout failed; using fallback ring layout.");
     assignRingLayout(graph);
   }
 
@@ -4276,7 +4333,9 @@ function onMediaQueryChange(
 }
 
 function renderStorageWarnings(): void {
-  storageStatusEl.textContent = persistence.getStorageWarnings().join(" ");
+  const warnings = persistence.getStorageWarnings();
+  storageStatusEl.textContent = warnings.join(" ");
+  if (warnings.length > 0) recordDiagnosticIssue("STORAGE-001");
 }
 
 function persistRecommendationState(): boolean {

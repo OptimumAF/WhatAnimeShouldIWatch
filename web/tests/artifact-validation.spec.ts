@@ -80,6 +80,8 @@ test("a model with the wrong embedding width is named while eligible graph resul
     "synthetic demo model: embeddings[0] dimension must equal factors (2)",
   );
   await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
+  await expect(page.locator("#diagnostic-code")).toContainText("MODEL-001");
+  await expect(page.locator("#diagnostic-model")).toContainText("graph fallback active");
   await expect(page.locator("#rec-method")).toHaveValue("model");
   await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop", "星の航路"]);
 });
@@ -165,11 +167,13 @@ test("normal mode still loads valid unversioned legacy graph and model artifacts
   });
 
   await page.goto(normalAppUrl);
+  await expect(page.locator("#diagnostic-data")).toContainText("Legacy unversioned data");
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations (2 factors)");
+  await expect(page.locator("#diagnostic-model")).toContainText("legacy unpinned asset");
   await expect(page.locator("#rec-results li").first()).toBeVisible();
   expect(pageErrors).toEqual([]);
 });

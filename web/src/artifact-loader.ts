@@ -16,13 +16,19 @@ import type {
 import type { ModelRecommendationIndex } from "./domain";
 import type { RuntimePorts } from "./runtime";
 
+/** Loader-authored field/path message; never a network or provider exception body. */
+export class ArtifactLoadError extends Error {
+  readonly name = "ArtifactLoadError";
+}
+
 export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
   publicBasePath = "./") {
   if (!/^(?:\.\/|\/|\/[A-Za-z0-9._-]+\/)$/.test(publicBasePath)) {
-    throw new Error("Artifact base path must be ./, /, or one absolute project path.");
+    throw new ArtifactLoadError("Artifact base path must be ./, /, or one absolute project path.");
   }
   const publicPath = (relative: string) => `${publicBasePath}${relative.replace(/^\.\//, "")}`;
   let activeBundlePromise: Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> | null = null;
+  let loadedModelFormat: string | null = null;
 
   async function getActiveBundle(): Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> {
     if (demoMode) return null;
@@ -35,7 +41,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       headers: { Accept: "application/json" }, cache: "no-store",
     });
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`active.json: unable to load (${response.status}).`);
+    if (!response.ok) throw new ArtifactLoadError(`active.json: unable to load (${response.status}).`);
     const pointer = parseActiveReleaseBundle(parseBoundedJson(await readBoundedResponse(response,
       RELEASE_BUNDLE_LIMITS.activePointerBytes, "active.json"), "active.json"), "active.json");
     const basePath = publicPath(`./data/bundles/${pointer.bundleId}/`);
@@ -43,23 +49,23 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       headers: { Accept: "application/json" },
     });
     if (!manifestResponse.ok) {
-      throw new Error(`release-manifest.json: unable to load (${manifestResponse.status}).`);
+      throw new ArtifactLoadError(`release-manifest.json: unable to load (${manifestResponse.status}).`);
     }
     const bytes = await readBoundedResponse(manifestResponse,
       RELEASE_BUNDLE_LIMITS.manifestBytes, "release-manifest.json");
     if (await sha256Hex(bytes) !== pointer.manifestSha256) {
-      throw new Error("release-manifest.json: SHA-256 differs from active.json.manifestSha256.");
+      throw new ArtifactLoadError("release-manifest.json: SHA-256 differs from active.json.manifestSha256.");
     }
     const manifest = parseReleaseManifest(parseBoundedJson(bytes, "release-manifest.json"),
       "release-manifest.json");
     if (manifest.tag !== pointer.tag || manifest.bundleId !== pointer.bundleId) {
-      throw new Error("release-manifest.json: tag or bundleId differs from active.json.");
+      throw new ArtifactLoadError("release-manifest.json: tag or bundleId differs from active.json.");
     }
     const entries = [manifest.neighborhood, manifest.explorer, manifest.catalog,
       ...(manifest.model ? [manifest.model] : [])];
     if (entries.some((entry) => entry.bytes > RELEASE_BUNDLE_LIMITS.plainAssetBytes) ||
         entries.reduce((sum, entry) => sum + entry.bytes, 0) > RELEASE_BUNDLE_LIMITS.totalPlainBytes) {
-      throw new Error("release-manifest.json: declared asset bytes exceed bundle limits.");
+      throw new ArtifactLoadError("release-manifest.json: declared asset bytes exceed bundle limits.");
     }
     return { manifest, basePath };
   }
@@ -69,10 +75,10 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     const response = await runtime.fetch(`${bundle.basePath}${entry.path}`, {
       headers: { Accept: "application/json" },
     });
-    if (!response.ok) throw new Error(`${entry.path}: unable to load (${response.status}).`);
+    if (!response.ok) throw new ArtifactLoadError(`${entry.path}: unable to load (${response.status}).`);
     const bytes = await readBoundedResponse(response, entry.bytes, entry.path);
     if (bytes.byteLength !== entry.bytes || await sha256Hex(bytes) !== entry.sha256) {
-      throw new Error(`${entry.path}: byte length or SHA-256 differs from release-manifest.json.`);
+      throw new ArtifactLoadError(`${entry.path}: byte length or SHA-256 differs from release-manifest.json.`);
     }
     return parseBoundedJson(bytes, entry.path);
   }
@@ -89,7 +95,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       const graph = parseCompactGraph(await fetchBundleAsset(bundle, bundle.manifest.neighborhood),
         bundle.manifest.neighborhood.path, "recommendation");
       if (graph.format !== bundle.manifest.neighborhood.format) {
-        throw new Error(`${bundle.manifest.neighborhood.path}: format differs from release-manifest.json.neighborhood.format.`);
+        throw new ArtifactLoadError(`${bundle.manifest.neighborhood.path}: format differs from release-manifest.json.neighborhood.format.`);
       }
       return graph;
     }
@@ -107,7 +113,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       label: "graph.json",
     });
     if (!legacyData) {
-      throw new Error("Unable to load required graph data.");
+      throw new ArtifactLoadError("Unable to load required graph data.");
     }
     return parseLegacyGraph(legacyData.value, "graph.json");
   }
@@ -124,7 +130,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       const explorer = parseCompactGraph(await fetchBundleAsset(bundle, bundle.manifest.explorer),
         bundle.manifest.explorer.path, "visualization");
       if (explorer.format !== bundle.manifest.explorer.format) {
-        throw new Error(`${bundle.manifest.explorer.path}: format differs from release-manifest.json.explorer.format.`);
+        throw new ArtifactLoadError(`${bundle.manifest.explorer.path}: format differs from release-manifest.json.explorer.format.`);
       }
       assertExplorerMatches(graphData, explorer);
       return explorer;
@@ -172,6 +178,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       const model = parseCompactModel(
         rawCompact.value, demoMode ? "synthetic demo model" : "model-mf-web.compact.json",
       );
+      loadedModelFormat = model.format;
       generatedAt = model.generatedAt;
       factors = model.factors;
       globalMean = model.globalMean;
@@ -186,6 +193,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       }
     } else if (rawLegacy !== null) {
       const model = parseLegacyModel(rawLegacy.value, "model-mf-web.json");
+      loadedModelFormat = "legacy-model";
       generatedAt = model.generatedAt;
       factors = model.factors;
       globalMean = model.globalMean;
@@ -215,22 +223,22 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
 
   async function fetchPlainJson(url: string, label: string): Promise<unknown> {
     const response = await runtime.fetch(publicPath(url));
-    if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
+    if (!response.ok) throw new ArtifactLoadError(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
     try {
       return await response.json();
     } catch {
-      throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
+      throw new ArtifactLoadError(`${label}: invalid JSON. Rebuild or replace this artifact.`);
     }
   }
 
   async function fetchOptionalPlainJson(url: string, label: string): Promise<{ value: unknown } | null> {
     const response = await runtime.fetch(publicPath(url));
     if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}).`);
+    if (!response.ok) throw new ArtifactLoadError(`Unable to load ${label} (${response.status}).`);
     try {
       return { value: await response.json() as unknown };
     } catch {
-      throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
+      throw new ArtifactLoadError(`${label}: invalid JSON. Rebuild or replace this artifact.`);
     }
   }
 
@@ -258,8 +266,8 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       } else if (gzResponse.status !== 404) {
         console.warn(`Unable to load ${label}.gz (${gzResponse.status})`);
       }
-    } catch (error) {
-      console.warn(`Fetch failed for ${label}.gz`, error);
+    } catch {
+      console.warn(`Fetch failed for ${label}.gz`);
     }
 
     const response = await runtime.fetch(publicPath(path));
@@ -267,12 +275,12 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       if (!required && response.status === 404 && (gzStatus === 404 || gzStatus === null)) {
         return null;
       }
-      throw new Error(`Unable to load ${label} (${response.status})`);
+      throw new ArtifactLoadError(`Unable to load ${label} (${response.status})`);
     }
     try {
       return { value: await response.json() };
     } catch {
-      throw new Error(`${label}: invalid JSON. Rebuild or replace this artifact.`);
+      throw new ArtifactLoadError(`${label}: invalid JSON. Rebuild or replace this artifact.`);
     }
   }
 
@@ -281,19 +289,21 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     label: string,
   ): Promise<unknown> {
     if (typeof DecompressionStream === "undefined") {
-      throw new Error(
+      throw new ArtifactLoadError(
         `This browser does not support DecompressionStream for ${label}.gz`,
       );
     }
     if (!response.body) {
-      throw new Error(`Missing response body for ${label}.gz`);
+      throw new ArtifactLoadError(`Missing response body for ${label}.gz`);
     }
     const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
     const text = await new Response(stream).text();
     return JSON.parse(text) as unknown;
   }
 
-  return { fetchGraph, fetchExplorerGraph, fetchModelRecommendationIndex, fetchDemoCatalog };
+  return { fetchGraph, fetchExplorerGraph, fetchModelRecommendationIndex, fetchDemoCatalog,
+    getActiveReleaseManifest: async () => (await getActiveBundle())?.manifest ?? null,
+    getLoadedModelFormat: () => loadedModelFormat };
 }
 
 function isVersionedGraph(graph: LoadedGraphData):
@@ -307,7 +317,7 @@ function assertExplorerMatches(main: LoadedGraphData, explorer: LoadedGraphData)
   if (!isVersionedGraph(main)) {
     if (isVersionedGraph(explorer)) {
       const version = explorer.format === "graph-compact-v3" ? "v3" : "v2";
-      throw new Error(`graph-explorer.compact.json: ${version} explorer requires a ${version} recommendation graph.`);
+      throw new ArtifactLoadError(`graph-explorer.compact.json: ${version} explorer requires a ${version} recommendation graph.`);
     }
     return;
   }
@@ -322,11 +332,11 @@ function assertExplorerMatches(main: LoadedGraphData, explorer: LoadedGraphData)
       !sameFields(explorer.config, main.config,
         ["ratingSelectionPolicy", "seed", "maxRatingsPerUser", "maxAnimeAnimeEdges",
           "maxPairVisits", "maxPairCandidates", "minPairSupport", "maxNeighborsPerAnime"])) {
-    throw new Error("graph-explorer.compact.json: sourceGraphId or graph provenance does not match the recommendation graph. Rebuild both artifacts.");
+    throw new ArtifactLoadError("graph-explorer.compact.json: sourceGraphId or graph provenance does not match the recommendation graph. Rebuild both artifacts.");
   }
   if (main.format === "graph-compact-v3" && explorer.format === "graph-compact-v3" &&
       explorer.projection.policy !== main.projection.policy) {
-    throw new Error("graph-explorer.compact.json: projection does not match the recommendation graph.");
+    throw new ArtifactLoadError("graph-explorer.compact.json: projection does not match the recommendation graph.");
   }
 }
 
@@ -337,9 +347,9 @@ function sameFields<T extends object>(left: T, right: T, fields: (keyof T)[]): b
 async function readBoundedResponse(response: Response, maximum: number, label: string): Promise<Uint8Array> {
   const advertised = response.headers.get("content-length");
   if (advertised !== null && /^\d+$/.test(advertised) && Number(advertised) > maximum) {
-    throw new Error(`${label}: advertised byte length exceeds bundle limit.`);
+    throw new ArtifactLoadError(`${label}: advertised byte length exceeds bundle limit.`);
   }
-  if (!response.body) throw new Error(`${label}: response body is missing.`);
+  if (!response.body) throw new ArtifactLoadError(`${label}: response body is missing.`);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
@@ -349,7 +359,7 @@ async function readBoundedResponse(response: Response, maximum: number, label: s
       const next = await reader.read();
       if (next.done) { completed = true; break; }
       length += next.value.byteLength;
-      if (length > maximum) throw new Error(`${label}: byte length exceeds bundle limit.`);
+      if (length > maximum) throw new ArtifactLoadError(`${label}: byte length exceeds bundle limit.`);
       chunks.push(next.value);
     }
   } finally {
@@ -369,7 +379,7 @@ function parseBoundedJson(bytes: Uint8Array, label: string): unknown {
   try {
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
   } catch {
-    throw new Error(`${label}: invalid JSON or UTF-8. Rebuild or replace this artifact.`);
+    throw new ArtifactLoadError(`${label}: invalid JSON or UTF-8. Rebuild or replace this artifact.`);
   }
 }
 
