@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseCompactModel, parseReleaseManifest, RELEASE_BUNDLE_LIMITS } from
   "../../web/src/artifacts.js";
 import { RELEASE_FILES, releaseSha256, verifyReleaseBundle } from "./release-manifest.js";
@@ -9,7 +11,7 @@ export const MODEL_SOURCE_FILES = [RELEASE_FILES.manifest, RELEASE_FILES.neighbo
 export const MODEL_PRIVATE_FILES = ["model-promotion-review.json", "selection.json",
   "final-report.json", "final-report.sha256.json", "selection.test-used.json",
   "refit-record.json", "model.npz", "dataset-bridge.json", "quality-policy.json",
-  "serving-report.json"] as const;
+  "serving-cohort.json", "serving-report.json"] as const;
 export const MODEL_OUTPUT_FILES = [...MODEL_SOURCE_FILES, "model-promotion-audit.json"] as const;
 
 const DIGEST = /^[a-f0-9]{64}$/;
@@ -44,7 +46,8 @@ export interface ModelPromotionAuditV1 {
   modelCoverage: number;
   evidence: { reviewSha256: string; selectionFileSha256: string;
     finalReportSha256: string; refitRecordSha256: string;
-    datasetBridgeSha256: string; qualityPolicySha256: string; servingReportSha256: string };
+    datasetBridgeSha256: string; qualityPolicySha256: string; servingCohortSha256: string;
+    servingReportSha256: string };
   approvals: { owner: string; ownerApprovalRef: string; trainingApprovalRef: string;
     publicationApprovalRef: string; deploymentApprovalRef: string };
   assets: { path: string; bytes: number; sha256: string }[];
@@ -182,7 +185,7 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
     "baseBundleId", "baseManifestSha256", "sourceName", "sourceDecisionRef", "datasetBridgeDecisionRef",
     "graphDatasetSha256", "rawContentSha256", "modelSha256", "numericArchiveSha256",
     "selectionFileSha256", "selectionSha256", "finalReportSha256", "refitRecordSha256",
-    "datasetBridgeSha256", "qualityPolicySha256", "servingReportSha256",
+    "datasetBridgeSha256", "qualityPolicySha256", "servingCohortSha256", "servingReportSha256",
     "minimumModelCoverage", "owner", "ownerApprovalRef",
     "trainingApprovalRef", "publicationApprovalRef", "deploymentApprovalRef"];
   fields(review, required, "review");
@@ -194,7 +197,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   for (const key of ["bundleId", "manifestSha256", "baseBundleId", "baseManifestSha256",
     "graphDatasetSha256", "rawContentSha256", "modelSha256", "numericArchiveSha256",
     "selectionFileSha256", "selectionSha256", "finalReportSha256", "refitRecordSha256",
-    "datasetBridgeSha256", "qualityPolicySha256", "servingReportSha256"] as const) {
+    "datasetBridgeSha256", "qualityPolicySha256", "servingCohortSha256",
+    "servingReportSha256"] as const) {
     digest(review[key], `review.${key}`);
   }
   for (const key of ["sourceDecisionRef", "datasetBridgeDecisionRef"] as const) {
@@ -238,13 +242,16 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
     ["format", "sourceName", "rawContentSha256", "graphDatasetSha256", "decisionRef", "reviewRef"],
     "dataset-bridge.json");
   const policy = fields(readEvidence(privateBytes, "quality-policy.json"),
-    ["format", "decisionRef", "baselineName", "topK", "minimumEligibleUsers",
-      "minimumPositiveLabels", "minimumModelCoverage", "minimumNdcgLift",
-      "maximumP95LatencyMs"], "quality-policy.json");
+    ["format", "decisionRef", "candidateBundleId", "cohortSha256", "baselineName",
+      "seed", "suppliedCount", "positiveRawScoreMin", "topK", "minimumEligibleUsers",
+      "minimumPositiveLabels", "minimumServingCoverage", "minimumNdcgLift",
+      "maximumP95LatencyMs", "latencyWarmups", "latencySamples"], "quality-policy.json");
   const serving = fields(readEvidence(privateBytes, "serving-report.json"),
-    ["format", "policySha256", "tag", "bundleId", "rawContentSha256", "graphDatasetSha256",
-      "selectionSha256", "finalReportSha256", "topK", "eligibleUsers", "positiveLabels",
-      "baselineName", "baseline", "model"], "serving-report.json");
+    ["format", "evaluator", "policySha256", "cohortSha256", "graphSha256",
+      "modelSha256", "tag", "bundleId", "rawContentSha256", "graphDatasetSha256",
+      "selectionSha256", "finalReportSha256", "topK", "suppliedCount",
+      "baselineValidation", "validationUsers", "finalUsers", "eligibleUsers",
+      "positiveLabels", "baselineName", "baseline", "model"], "serving-report.json");
 
   same(review.selectionFileSha256, releaseSha256(privateBytes.get("selection.json")!),
     "review.selectionFileSha256");
@@ -302,27 +309,39 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
 
   same(review.qualityPolicySha256, releaseSha256(privateBytes.get("quality-policy.json")!),
     "review.qualityPolicySha256");
+  same(review.servingCohortSha256, releaseSha256(privateBytes.get("serving-cohort.json")!),
+    "review.servingCohortSha256");
   same(policy.format, "model-promotion-quality-policy-v1", "quality-policy.format");
   decisionRef(policy.decisionRef, "quality-policy.decisionRef");
   text(policy.baselineName, "quality-policy.baselineName");
+  same(policy.candidateBundleId, manifest.bundleId, "quality-policy.candidateBundleId");
+  same(policy.cohortSha256, review.servingCohortSha256, "quality-policy.cohortSha256");
+  positiveInt(policy.suppliedCount, "quality-policy.suppliedCount");
+  positiveInt(policy.positiveRawScoreMin, "quality-policy.positiveRawScoreMin");
   positiveInt(policy.topK, "quality-policy.topK");
   positiveInt(policy.minimumEligibleUsers, "quality-policy.minimumEligibleUsers");
   positiveInt(policy.minimumPositiveLabels, "quality-policy.minimumPositiveLabels");
   const minimumNdcgLift = positive(policy.minimumNdcgLift, "quality-policy.minimumNdcgLift");
   const maximumP95LatencyMs = positive(policy.maximumP95LatencyMs,
     "quality-policy.maximumP95LatencyMs");
-  if (fraction(policy.minimumModelCoverage, "quality-policy.minimumModelCoverage") >
-      minimumModelCoverage) fail("review.minimumModelCoverage", "is weaker than the bound quality policy");
+  positiveInt(policy.latencySamples, "quality-policy.latencySamples");
+  fraction(policy.minimumServingCoverage, "quality-policy.minimumServingCoverage");
 
   same(review.servingReportSha256, releaseSha256(privateBytes.get("serving-report.json")!),
     "review.servingReportSha256");
   same(serving.format, "model-serving-evaluation-v1", "serving-report.format");
+  same(serving.evaluator, "browser-preference-eligibility-selector-v1",
+    "serving-report.evaluator");
   same(serving.policySha256, review.qualityPolicySha256, "serving-report.policySha256");
+  same(serving.cohortSha256, review.servingCohortSha256, "serving-report.cohortSha256");
+  same(serving.graphSha256, manifest.neighborhood.sha256, "serving-report.graphSha256");
+  same(serving.modelSha256, review.modelSha256, "serving-report.modelSha256");
   for (const key of ["tag", "bundleId", "rawContentSha256", "graphDatasetSha256",
     "selectionSha256", "finalReportSha256"] as const) {
     same(serving[key], review[key], `serving-report.${key}`);
   }
   same(serving.topK, policy.topK, "serving-report.topK");
+  same(serving.suppliedCount, policy.suppliedCount, "serving-report.suppliedCount");
   if (positiveInt(serving.eligibleUsers, "serving-report.eligibleUsers") <
       (policy.minimumEligibleUsers as number) ||
       positiveInt(serving.positiveLabels, "serving-report.positiveLabels") <
@@ -333,7 +352,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   const baseline = modelMetrics(serving.baseline, "serving-report.baseline");
   const measured = modelMetrics(serving.model, "serving-report.model");
   if (measured.ndcgAtK < baseline.ndcgAtK + minimumNdcgLift ||
-      measured.coverage < minimumModelCoverage || measured.p95LatencyMs > maximumP95LatencyMs) {
+      measured.coverage < (policy.minimumServingCoverage as number) ||
+      measured.p95LatencyMs > maximumP95LatencyMs) {
     fail("serving-report", "does not meet the reviewed quality, coverage, and latency floors");
   }
 
@@ -345,6 +365,7 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
       refitRecordSha256: review.refitRecordSha256 as string,
       datasetBridgeSha256: review.datasetBridgeSha256 as string,
       qualityPolicySha256: review.qualityPolicySha256 as string,
+      servingCohortSha256: review.servingCohortSha256 as string,
       servingReportSha256: review.servingReportSha256 as string },
     approvals: { owner, ownerApprovalRef: review.ownerApprovalRef as string,
       trainingApprovalRef: review.trainingApprovalRef as string,
@@ -411,6 +432,27 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
   const evidence = evidenceAudit(privateBytes, review, manifest,
     candidateBytes.get(RELEASE_FILES.model)!, options.syntheticFixture === true);
   same(evidence.sourceName, manifest.dataset.source, "review.sourceName");
+  try {
+    execFileSync(process.execPath, ["--import", "tsx",
+      fileURLToPath(new URL("../../web/bench/model-promotion-serving-evaluation.ts", import.meta.url)),
+      path.resolve(options.candidateDir), path.resolve(options.evidenceDir)],
+    { cwd: path.resolve(import.meta.dirname, "../.."), encoding: "utf8",
+      maxBuffer: 1024 * 1024, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    fail("serving-report.json", "browser scorer recomputation or frozen quality gate failed");
+  }
+  const unchanged = (directory: string, names: readonly string[], captured: Map<string, Buffer>,
+    field: string) => {
+    const current = inventory(directory, names, field);
+    for (const name of names) {
+      if (!current.get(name)!.equals(captured.get(name)!)) {
+        fail(`${field}.${name}`, "changed during serving evaluation");
+      }
+    }
+  };
+  unchanged(options.candidateDir, MODEL_SOURCE_FILES, candidateBytes, "candidate");
+  unchanged(options.baseDir, baseNames, baseBytes, "base");
+  unchanged(options.evidenceDir, MODEL_PRIVATE_FILES, privateBytes, "evidence");
   const synthetic = options.syntheticFixture === true;
   if (synthetic !== (evidence.sourceName === "synthetic-fixture")) {
     fail("syntheticFixture", "must match the invented source and cannot mark it publishable");
