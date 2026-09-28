@@ -311,8 +311,9 @@ def report_frozen_test(snapshot: RawSnapshot, manifest: object, metadata: Metada
     record = _load_json(selection_path)
     report_path = _private_output(Path(record["testReportPath"]))
     marker_path = _private_output(Path(str(selection_path) + ".test-used"))
-    if report_path.exists() or marker_path.exists():
-        raise ValueError("This frozen selection already has a test report or one-use marker.")
+    digest_path = _private_output(Path(str(report_path) + ".sha256.json"))
+    if report_path.exists() or marker_path.exists() or digest_path.exists():
+        raise ValueError("This frozen selection already has a test report, digest, or one-use marker.")
     spec, candidate = _checked_selection(record, selection_path, report_path, manifest, metadata)
     partitions = partition_snapshot(snapshot, manifest)
     trained = candidate.train(snapshot, manifest, metadata, spec.model_seed)
@@ -336,6 +337,10 @@ def report_frozen_test(snapshot: RawSnapshot, manifest: object, metadata: Metada
               "test": metric,
               "status": "single synthetic warm-user report; no release claim"}
     _write_new(report_path, report)
+    # Bind the exact write-once report bytes for later refit provenance checks.
+    _write_new(digest_path, {"format": "split-first-final-test-digest-v1",
+                             "selectionSha256": record["selectionSha256"],
+                             "reportSha256": hashlib.sha256(report_path.read_bytes()).hexdigest()})
     return report
 
 

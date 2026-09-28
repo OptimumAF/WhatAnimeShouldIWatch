@@ -132,7 +132,10 @@ class SplitFirstSelectionTests(unittest.TestCase):
             self.assertFalse(any(user_id in json.dumps(report) for user_id in (
                 "invented-a", "invented-b", "invented-c", "invented-sparse")))
             self.assertEqual(json.loads(report_path.read_text(encoding="utf-8")), report)
-            with self.assertRaisesRegex(ValueError, "already has a test report or one-use marker"):
+            digest_path = Path(str(report_path) + ".sha256.json")
+            self.assertEqual(json.loads(digest_path.read_text(encoding="utf-8"))["selectionSha256"],
+                             record["selectionSha256"])
+            with self.assertRaisesRegex(ValueError, "already has a test report"):
                 selection.report_frozen_test(snapshot, manifest, self.metadata, selection_path)
 
     def test_stale_snapshot_tampering_copy_and_public_output_fail_before_test(self):
@@ -172,7 +175,7 @@ class SplitFirstSelectionTests(unittest.TestCase):
                         selection.report_frozen_test(snapshot, manifest, self.metadata, selection_path)
             self.assertTrue(Path(str(selection_path) + ".test-used").exists())
             self.assertFalse(report_path.exists())
-            with self.assertRaisesRegex(ValueError, "already has a test report or one-use marker"):
+            with self.assertRaisesRegex(ValueError, "already has a test report"):
                 selection.report_frozen_test(snapshot, manifest, self.metadata, selection_path)
 
     def test_model_drift_refuses_test_before_marker(self):
