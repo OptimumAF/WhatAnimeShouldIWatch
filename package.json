@@ -18,6 +18,7 @@
     "model:promotion:check": "npm run check:model-promotion --workspace pipeline --",
     "model:release:package:check": "npm run check:model-release-package --workspace pipeline --",
     "model:dataset-bridge:check": "npm run check:model-dataset-bridge --workspace pipeline --",
+    "model:refit:reproduce:check": "python ml/verify_split_first_refit.py",
     "sync:web": "npm run sync:web --workspace pipeline",
     "data:fixture": "npm run generate:fixture --workspace pipeline",
     "data:fixture:check": "npm run verify:fixture --workspace pipeline",
