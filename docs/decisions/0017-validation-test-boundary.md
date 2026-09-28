@@ -1,6 +1,6 @@
 # 0017 — Validation selection and final-test boundary
 
-**Status:** M5.4 protocol, 2026-09-25. The initial split-first MF implementation is a partial step; M5.4 remains unchecked until every M5 tuner that can affect the selected engine uses validation and the final-report boundary.
+**Status:** Initial split-first MF protocol implemented and synthetic checks passed on 2026-09-27. M5.4 remains unchecked until every M5 tuner that can affect the selected engine uses validation and the final-report boundary.
 
 ## Fixed synthetic experiment
 
@@ -12,7 +12,7 @@ Predeclare a small candidate JSON list. A candidate can vary MF factor count, ep
 
 Selection validates the full split manifest but passes only `.train` to fitting and only `.validation` to scoring. It never reads `.test` labels, scores, or interaction IDs to decide a candidate. A synthetic test-score mutation with a refreshed manifest must leave trial scores and chosen candidate unchanged. The selection artifact binds the full raw-content digest only so a final report can verify the exact snapshot; this binding is not a selection input. It records training/metadata/candidate hashes, frozen configuration, validation-only trial metrics, and an integrity digest. Do not print a test metric during selection.
 
-The final-test command requires that frozen artifact at its original resolved path, verifies its integrity and the exact raw/metadata snapshot, and creates a one-use marker exclusively *before* reading `.test`. It refuses an existing marker or report. A failure after the marker is created needs explicit investigation; the command does not silently retry on test labels. It trains only the frozen candidate from train and writes one final test report to an ignored local path. Copying a selection file to a new path cannot bypass the original-path check. This is a workflow guard, not tamper-proof access control.
+The final-test command requires that frozen artifact at its original resolved path, verifies its integrity and the exact raw/metadata snapshot, and creates a one-use marker exclusively *before scoring or inspecting `.test`*. Parsing and manifest validation necessarily load the full raw snapshot earlier; they do not choose a candidate or compute a test metric. The command refuses an existing marker or report. A failure after the marker is created needs explicit investigation; the command does not silently retry on test labels. It trains only the frozen candidate from train and writes one final test report to an ignored local path. Copying a selection file to a new path cannot bypass the original-path check. This is a workflow guard, not tamper-proof access control.
 
 ## Acceptance for the initial slice
 
