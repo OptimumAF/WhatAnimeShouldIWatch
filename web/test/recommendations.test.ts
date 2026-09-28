@@ -24,6 +24,7 @@ import {
   formatWeight,
   hasActiveRecommendationFilters,
   rankEligibleCandidates,
+  summarizeCandidateMetadataCoverage,
 } from "../src/recommendations.ts";
 import type { RecommendationFilters } from "../src/recommendations.ts";
 import { manualPreference } from "../src/preferences.ts";
@@ -46,6 +47,21 @@ const modelIndex: ModelRecommendationIndex = {
 };
 const watched = ["anime:101"];
 const weights = new Map([["anime:101", 1]]);
+
+test("metadata coverage counts the whole candidate pool and separates unknown, failed, and unavailable", () => {
+  const ids = Array.from({ length: 105 }, (_, index) => 1000 + index);
+  const metadata = new Map<number, AnimeMetadata>([[1104,
+    parseDemoCatalog(fixture("catalog.json"), "synthetic catalog")[0]]]);
+  const coverage = summarizeCandidateMetadataCoverage(
+    [...ids, ids[0]], metadata, new Set([1010]), new Set([1020]),
+  );
+  assert.equal(coverage.total, 105);
+  assert.deepEqual([coverage.ready, coverage.unavailable, coverage.failed,
+    coverage.uncheckedAnimeIds.length], [1, 1, 1, 102]);
+  assert.deepEqual(coverage.failedAnimeIds, [1020]);
+  assert.equal(coverage.uncheckedAnimeIds.includes(1103), true);
+  assert.equal(coverage.uncheckedAnimeIds.includes(1104), false);
+});
 
 test("compact index and graph scoring keep the synthetic rank, weight, and watched exclusion", () => {
   const results = buildGraphRecommendations(watched, weights, index);

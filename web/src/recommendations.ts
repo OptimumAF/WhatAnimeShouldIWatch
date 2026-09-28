@@ -644,6 +644,38 @@ export interface CandidateEligibilityPolicy {
   ): CandidateEligibilityResult;
 }
 
+export interface CandidateMetadataCoverage {
+  total: number;
+  ready: number;
+  unavailable: number;
+  failed: number;
+  uncheckedAnimeIds: number[];
+  failedAnimeIds: number[];
+}
+
+/** Count every structurally eligible ID; a preview or prefetch limit is not the filter universe. */
+export function summarizeCandidateMetadataCoverage(
+  candidateAnimeIds: readonly number[],
+  metadataByAnimeId: ReadonlyMap<number, AnimeMetadata>,
+  unavailableAnimeIds: ReadonlySet<number>,
+  failedAnimeIds: ReadonlySet<number>,
+): CandidateMetadataCoverage {
+  const ids = [...new Set(candidateAnimeIds)];
+  const coverage: CandidateMetadataCoverage = {
+    total: ids.length, ready: 0, unavailable: 0, failed: 0,
+    uncheckedAnimeIds: [], failedAnimeIds: [],
+  };
+  for (const id of ids) {
+    if (metadataByAnimeId.has(id)) coverage.ready += 1;
+    else if (unavailableAnimeIds.has(id)) coverage.unavailable += 1;
+    else if (failedAnimeIds.has(id)) {
+      coverage.failed += 1;
+      coverage.failedAnimeIds.push(id);
+    } else coverage.uncheckedAnimeIds.push(id);
+  }
+  return coverage;
+}
+
 /** One policy for every ranking source. Exclusion and watch status always beat inclusion. */
 export function createCandidateEligibilityPolicy(options: CandidateEligibilityOptions): CandidateEligibilityPolicy {
   const { index, filters } = options;

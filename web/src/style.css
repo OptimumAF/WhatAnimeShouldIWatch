@@ -1448,7 +1448,8 @@ button:hover,
 
 .rec-action-status:empty { display: none; }
 
-.discovery-metadata-controls {
+.discovery-metadata-controls,
+.metadata-coverage-controls {
   margin-top: 0.55rem;
   display: flex;
   flex-wrap: wrap;
@@ -1456,11 +1457,14 @@ button:hover,
   gap: 0.5rem;
 }
 
-.discovery-metadata-controls[hidden] {
+.discovery-metadata-controls[hidden],
+.metadata-coverage-controls[hidden],
+.metadata-coverage-controls button[hidden] {
   display: none;
 }
 
-.discovery-metadata-controls p {
+.discovery-metadata-controls p,
+.metadata-coverage-controls p {
   margin: 0;
   flex: 1 1 18rem;
   font-size: 0.76rem;
