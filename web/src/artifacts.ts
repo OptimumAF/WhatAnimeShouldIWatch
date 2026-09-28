@@ -154,12 +154,43 @@ export interface CompactModelRecommendationData {
   format: "model-mf-compact-v1";
   generatedAt: string;
   sourceModelSha256?: string;
+  /** Declared graph-compatible input identity; required only by release-manifest-v1. */
+  datasetSha256?: string;
   globalMean: number;
   factors: number;
   animeIds: number[];
   titles: string[];
   biases: number[];
   embeddings: number[][];
+}
+
+export interface ReleaseIdentityCatalog {
+  format: "anime-catalog-v1";
+  datasetSha256: string;
+  anime: CompactAnimeEntry[];
+}
+
+export interface ReleaseManifestAsset {
+  path: string;
+  format: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface ReleaseManifestV1 {
+  format: "release-manifest-v1";
+  tag: string;
+  bundleId: string;
+  dataset: GraphV2Metadata["dataset"];
+  catalog: ReleaseManifestAsset & { animeCount: number; itemMapSha256: string };
+  neighborhood: ReleaseManifestAsset & { graphId: string };
+  explorer: ReleaseManifestAsset & { graphId: string; sourceGraphId: string };
+  model: (ReleaseManifestAsset & {
+    datasetSha256: string;
+    itemMapSha256: string;
+    coverage: { mappedAnimeCount: number; totalCatalogAnimeCount: number };
+  }) | null;
+  lastKnownGood: { tag: string; bundleId: string; manifestSha256: string } | null;
 }
 
 export class ArtifactValidationError extends Error {
@@ -281,6 +312,21 @@ function relationshipKey(left: number, right: number, width: number, label: stri
 function sha256(value: unknown, label: string, location: string): void {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
     invalid(label, location, "must be a lowercase SHA-256 digest");
+  }
+}
+
+function exactFields(value: Record<string, unknown>, fields: string[], label: string, location: string): void {
+  for (const field of fields) {
+    if (!Object.hasOwn(value, field)) invalid(label, `${location}.${field}`, "is required");
+  }
+  for (const field of Object.keys(value)) {
+    if (!fields.includes(field)) invalid(label, `${location}.${field}`, "is unsupported");
+  }
+}
+
+function versionTag(value: unknown, label: string, location: string): void {
+  if (typeof value !== "string" || !/^data-v[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    invalid(label, location, "must be a versioned data-v tag");
   }
 }
 
@@ -552,6 +598,88 @@ export function parseDemoCatalog(value: unknown, label: string): DemoCatalogItem
   return anime as DemoCatalogItem[];
 }
 
+export function parseReleaseIdentityCatalog(value: unknown, label: string): ReleaseIdentityCatalog {
+  const catalog = record(value, label, "root");
+  exactFields(catalog, ["format", "datasetSha256", "anime"], label, "root");
+  expectFormat(catalog, "anime-catalog-v1", label);
+  sha256(catalog.datasetSha256, label, "datasetSha256");
+  const anime = list(catalog.anime, label, "anime");
+  if (anime.length === 0) invalid(label, "anime", "must contain at least one anime");
+  let previousId = 0;
+  anime.forEach((value, i) => {
+    const entry = list(value, label, `anime[${i}]`);
+    if (entry.length !== 2) invalid(label, `anime[${i}]`, "must have exactly 2 values");
+    const id = safeInteger(entry[0], label, `anime[${i}][0]`, 1);
+    if (id <= previousId) invalid(label, `anime[${i}][0]`, "must be sorted by unique ascending ID");
+    nonemptyText(entry[1], label, `anime[${i}][1]`);
+    previousId = id;
+  });
+  return value as ReleaseIdentityCatalog;
+}
+
+export function parseReleaseManifest(value: unknown, label: string): ReleaseManifestV1 {
+  const manifest = record(value, label, "root");
+  exactFields(manifest, ["format", "tag", "bundleId", "dataset", "catalog", "neighborhood",
+    "explorer", "model", "lastKnownGood"], label, "root");
+  expectFormat(manifest, "release-manifest-v1", label);
+  versionTag(manifest.tag, label, "tag");
+  sha256(manifest.bundleId, label, "bundleId");
+  const dataset = record(manifest.dataset, label, "dataset");
+  exactFields(dataset, ["sha256", "scope", "source"], label, "dataset");
+  sha256(dataset.sha256, label, "dataset.sha256");
+  if (dataset.scope !== "anonymized-ratings-content-v1") invalid(label, "dataset.scope", "is unsupported");
+  nonemptyText(dataset.source, label, "dataset.source");
+
+  const asset = (field: string, expectedPath: string, expectedFormat: string, extra: string[]) => {
+    const entry = record(manifest[field], label, field);
+    exactFields(entry, ["path", "format", "sha256", "bytes", ...extra], label, field);
+    if (entry.path !== expectedPath) invalid(label, `${field}.path`, `must be ${expectedPath}`);
+    if (entry.format !== expectedFormat) invalid(label, `${field}.format`, `must be ${expectedFormat}`);
+    sha256(entry.sha256, label, `${field}.sha256`);
+    safeInteger(entry.bytes, label, `${field}.bytes`, 1);
+    return entry;
+  };
+  const catalog = asset("catalog", "catalog.identity.json", "anime-catalog-v1",
+    ["animeCount", "itemMapSha256"]);
+  safeInteger(catalog.animeCount, label, "catalog.animeCount", 1);
+  sha256(catalog.itemMapSha256, label, "catalog.itemMapSha256");
+  const neighborhood = asset("neighborhood", "graph.compact.json", "graph-compact-v2", ["graphId"]);
+  sha256(neighborhood.graphId, label, "neighborhood.graphId");
+  const explorer = asset("explorer", "graph-explorer.compact.json", "graph-compact-v2",
+    ["graphId", "sourceGraphId"]);
+  sha256(explorer.graphId, label, "explorer.graphId");
+  sha256(explorer.sourceGraphId, label, "explorer.sourceGraphId");
+  if (explorer.sourceGraphId !== neighborhood.graphId) {
+    invalid(label, "explorer.sourceGraphId", "must match neighborhood.graphId");
+  }
+  if (manifest.model !== null) {
+    const model = asset("model", "model-mf-web.compact.json", "model-mf-compact-v1",
+      ["datasetSha256", "itemMapSha256", "coverage"]);
+    sha256(model.datasetSha256, label, "model.datasetSha256");
+    if (model.datasetSha256 !== dataset.sha256) {
+      invalid(label, "model.datasetSha256", "must match dataset.sha256");
+    }
+    sha256(model.itemMapSha256, label, "model.itemMapSha256");
+    const coverage = record(model.coverage, label, "model.coverage");
+    exactFields(coverage, ["mappedAnimeCount", "totalCatalogAnimeCount"], label, "model.coverage");
+    const mapped = safeInteger(coverage.mappedAnimeCount, label, "model.coverage.mappedAnimeCount", 1);
+    const total = safeInteger(coverage.totalCatalogAnimeCount, label,
+      "model.coverage.totalCatalogAnimeCount", 1);
+    if (total !== catalog.animeCount || mapped > total) {
+      invalid(label, "model.coverage", "must fit the catalog anime count");
+    }
+  }
+  if (manifest.lastKnownGood !== null) {
+    const previous = record(manifest.lastKnownGood, label, "lastKnownGood");
+    exactFields(previous, ["tag", "bundleId", "manifestSha256"], label, "lastKnownGood");
+    versionTag(previous.tag, label, "lastKnownGood.tag");
+    if (previous.tag === manifest.tag) invalid(label, "lastKnownGood.tag", "must differ from current tag");
+    sha256(previous.bundleId, label, "lastKnownGood.bundleId");
+    sha256(previous.manifestSha256, label, "lastKnownGood.manifestSha256");
+  }
+  return value as ReleaseManifestV1;
+}
+
 function checkModelBase(model: Record<string, unknown>, label: string): number {
   generatedAt(model.generatedAt, label);
   finite(model.globalMean, label, "globalMean");
@@ -562,6 +690,7 @@ function checkModelBase(model: Record<string, unknown>, label: string): number {
        !/^[a-f0-9]{64}$/.test(model.sourceModelSha256))) {
     invalid(label, "sourceModelSha256", "must be a lowercase SHA-256 digest");
   }
+  if (Object.hasOwn(model, "datasetSha256")) sha256(model.datasetSha256, label, "datasetSha256");
   return factors;
 }
 
