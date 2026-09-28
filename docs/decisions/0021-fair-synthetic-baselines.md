@@ -1,6 +1,6 @@
 # 0021 — Fair split-first synthetic baselines and graph ablations
 
-**Status:** Protocol fixed on 2026-09-27 before running M5.6 baseline or ablation metrics. This is an engineering comparison on invented data, not a model-selection or release decision.
+**Status:** Protocol fixed on 2026-09-27 before running M5.6 baseline or ablation metrics. Five focused TypeScript and five Python tests, the full local synthetic/mock gate, and [fresh PR #35 CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36390572870) passed on `c9ca431`. M5.6 is checked for this invented comparison; it is not a model-selection or release decision.
 
 ## Cohort and common candidate set
 
