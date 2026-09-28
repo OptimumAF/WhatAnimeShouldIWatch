@@ -28,6 +28,15 @@ npm run ml:train:split:fixture
 
 The metadata file allows only anime IDs and titles, a source label, and snapshot time; it cannot carry rating-derived fields. The pinned synthetic file is `fixtures/synthetic-anime-metadata.json`. [Decision 0015](../docs/decisions/0015-train-only-preprocessing.md) defines the isolation boundary. [Decision 0016](../docs/decisions/0016-fixed-split-leakage-regression.md) and `ml/tests/test_split_first_leakage.py` verify exact train graph, hash, and MF parameter invariance after held-out score and interaction-ID edits under fixed train membership. An added interaction changes the derived train split and requires a new experiment. The route still reports no quality metric; M5.4 must separate validation choices from final test reporting. The older commands below remain research compatibility paths and cannot supply M5 release metrics.
 
+The initial M5.4 selection path uses the fixed three-candidate invented grid in `fixtures/synthetic-mf-candidates.json`. Selection scores **validation only**, freezes one configuration in an ignored local file, then a separate command produces one final synthetic test report:
+
+```bash
+python ml/split_first_selection.py select --raw-ratings fixtures/synthetic-split-input.json --split-manifest fixtures/synthetic-split-manifest.json --metadata fixtures/synthetic-anime-metadata.json --candidates fixtures/synthetic-mf-candidates.json --out-selection data/synthetic-selection-local.json --out-test-report data/synthetic-final-test-local.json
+python ml/split_first_selection.py report-test --raw-ratings fixtures/synthetic-split-input.json --split-manifest fixtures/synthetic-split-manifest.json --metadata fixtures/synthetic-anime-metadata.json --selection data/synthetic-selection-local.json
+```
+
+The second command refuses a repeat using a one-use marker beside the selection file. These ignored local reports are restricted evaluation records, and their tiny warm-user metrics do not establish ranking quality. [Decision 0017](../docs/decisions/0017-validation-test-boundary.md) defines the read boundary. M5.4 remains open while Optuna, hybrid blend, and other tuners are not yet connected to it.
+
 ## Install
 
 ```bash

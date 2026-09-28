@@ -1,0 +1,45 @@
+{
+  "format": "split-first-selection-candidates-v1",
+  "objective": "ndcg-at-k",
+  "topK": 3,
+  "positiveRawScoreMin": 7,
+  "modelSeed": 42,
+  "candidates": [
+    {
+      "id": "plain-one-epoch",
+      "factors": 4,
+      "epochs": 1,
+      "lr": 0.02,
+      "reg": 0.01,
+      "regBias": 0.005,
+      "graphLambda": 0,
+      "graphMinWeight": 0,
+      "graphSampleRate": 1,
+      "modelScoreFloor": null
+    },
+    {
+      "id": "graph-two-epochs",
+      "factors": 4,
+      "epochs": 2,
+      "lr": 0.02,
+      "reg": 0.01,
+      "regBias": 0.005,
+      "graphLambda": 0.01,
+      "graphMinWeight": 0,
+      "graphSampleRate": 1,
+      "modelScoreFloor": null
+    },
+    {
+      "id": "thresholded-two-epochs",
+      "factors": 4,
+      "epochs": 2,
+      "lr": 0.02,
+      "reg": 0.02,
+      "regBias": 0.005,
+      "graphLambda": 0.01,
+      "graphMinWeight": 2.5,
+      "graphSampleRate": 1,
+      "modelScoreFloor": 0
+    }
+  ]
+}
