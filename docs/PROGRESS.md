@@ -844,3 +844,13 @@
 **Plan revisions and reasons:** The demo tag is derived from exact synthetic asset hashes to prevent one fixture tag naming changed bytes. The manifest payload normalizes dataset and previous-pointer field order so equivalent prior pointers yield the same bundle ID. Decision 0026 records both refinements; no task ID or acceptance criterion changed.
 
 **Single next task:** M8.2 — validate bounded downloads into a temporary complete bundle and atomically activate it only after manifest, byte, schema, and last-known-good checks pass, using invented assets and mocked transport.
+
+## Session 2026-09-28 — M8.2 installation protocol
+
+**Branch / starting commit:** `codex/m8-atomic-installer` from clean `2c1839743cfef8ac9cdf2be627c926c105db3f34`, final-head CI-passing PR #41. Read root `AGENTS.md`, the M8 plan and latest handoff, decisions 0001/0002/0026, the current file-by-file release fetch/sync scripts, runtime browser loader, and held Pages workflow. No private watchlist, production asset, or provider endpoint was read.
+
+**Finding and scope:** The current mutable fetch writes each release artifact to `data/` as it arrives; `sync:web` likewise copies a graph and model separately. [Decision 0027](decisions/0027-atomic-release-installation.md) predeclares a versioned `web/public/data/bundles/<bundleId>/` store and one atomic `active.json` pointer, bounded staged downloads, verified prior-bundle linkage, and browser reads pinned to one directory. A missing pointer retains deliberate legacy fallback; a present bad pointer fails closed. The live `data-latest` and gated provider workflows remain untouched.
+
+**Files and checks at protocol stage:** Added decision 0027 and merged its guidance into the existing `AGENTS.md`; updated the living plan and this record. No downloader or browser code has changed yet. M8.2 remains unchecked until implementation, mocked failure/recovery and browser verification, full synthetic gates, and clean-checkout review.
+
+**Single next task:** Implement the staged installer and active-pointer browser route with invented fixture assets and injected transport.
