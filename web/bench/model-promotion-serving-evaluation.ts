@@ -1,10 +1,12 @@
 /** Private M8.4 serving-path comparison. No user rows or labels leave the evidence directory. */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+import { markServingFinalUsed, servingSha256, verifyServingFreeze } from
+  "../../pipeline/src/core/model-serving-freeze.ts";
 import {
   parseCompactGraph, parseCompactModel, parseDemoCatalog, parseReleaseIdentityCatalog,
   parseReleaseManifest,
@@ -39,6 +41,8 @@ export interface ServingReportInputs {
   model: unknown;
   catalog: unknown;
   cohort: unknown;
+  /** Reserved bytes are hashed before, and parsed only after, baseline selection. */
+  finalBytes: Buffer;
   policy: unknown;
   tag: string;
   bundleId: string;
@@ -48,8 +52,10 @@ export interface ServingReportInputs {
   graphSha256: string;
   modelSha256: string;
   cohortSha256: string;
+  freezeSha256: string;
   policySha256: string;
   now?: () => number;
+  beforeFinal?: () => void;
 }
 
 export interface ServingReportV1 {
@@ -57,6 +63,7 @@ export interface ServingReportV1 {
   evaluator: "browser-preference-eligibility-selector-v1";
   policySha256: string;
   cohortSha256: string;
+  freezeSha256: string;
   graphSha256: string;
   modelSha256: string;
   tag: string;
@@ -266,14 +273,15 @@ export function generateServingReport(inputs: ServingReportInputs): ServingRepor
     if (titleById.get(id) !== model.titles[index]) fail(`model.titles[${index}]`, "differs from catalog");
   });
   for (const key of ["bundleId", "rawContentSha256", "selectionSha256",
-    "finalReportSha256", "graphSha256", "modelSha256", "cohortSha256",
+    "finalReportSha256", "graphSha256", "modelSha256", "cohortSha256", "freezeSha256",
     "policySha256"] as const) digest(inputs[key], key);
   const policy = parsePolicy(inputs.policy, inputs.bundleId, inputs.cohortSha256);
   const cohortValue = exact(inputs.cohort, ["format", "seed", "sourceName",
-    "datasetSha256", "trainingUsers", "metadata", "baselineValidation", "finalTest"], "cohort");
-  if (cohortValue.format !== "model-promotion-cohort-v1" ||
+    "datasetSha256", "trainingUsers", "metadata", "baselineValidation", "finalSha256"], "cohort");
+  if (cohortValue.format !== "model-promotion-cohort-v2" ||
       cohortValue.datasetSha256 !== graph.dataset.sha256 ||
-      cohortValue.sourceName !== graph.dataset.source || cohortValue.seed !== policy.seed) {
+      cohortValue.sourceName !== graph.dataset.source || cohortValue.seed !== policy.seed ||
+      cohortValue.finalSha256 !== servingSha256(inputs.finalBytes)) {
     fail("cohort", "format, source, dataset, or seed differs from pinned artifacts");
   }
   const catalogIds = new Set(catalog.anime.map(([id]) => id));
@@ -291,8 +299,6 @@ export function generateServingReport(inputs: ServingReportInputs): ServingRepor
   }
   trainingUsers.forEach((id) => used.add(id));
   const validation = users(cohortValue.baselineValidation, "cohort.baselineValidation",
-    catalogIds, used, policy.suppliedCount);
-  const final = users(cohortValue.finalTest, "cohort.finalTest",
     catalogIds, used, policy.suppliedCount);
   const index = buildRecommendationIndexFromCompact(graph as CompactGraphDataV3);
   const modelIndex: ModelRecommendationIndex = { generatedAt: model.generatedAt,
@@ -365,6 +371,13 @@ export function generateServingReport(inputs: ServingReportInputs): ServingRepor
   if (policy.baselineName !== best) {
     fail("policy.baselineName", `must be the validation-selected simple baseline (${best})`);
   }
+  inputs.beforeFinal?.();
+  let finalPayload: unknown;
+  try { finalPayload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(inputs.finalBytes)); }
+  catch { fail("serving-final.json", "must be valid JSON and UTF-8"); }
+  const reserved = exact(finalPayload, ["format", "users"], "serving-final.json");
+  if (reserved.format !== "model-promotion-final-v1") fail("serving-final.json.format", "is unsupported");
+  const final = users(reserved.users, "cohort.finalTest", catalogIds, used, policy.suppliedCount);
   const baseline = summary(final, best);
   const measured = summary(final, "model");
   if (baseline.eligibleUsers !== measured.eligibleUsers ||
@@ -379,6 +392,7 @@ export function generateServingReport(inputs: ServingReportInputs): ServingRepor
   return { format: "model-serving-evaluation-v1",
     evaluator: "browser-preference-eligibility-selector-v1",
     policySha256: inputs.policySha256, cohortSha256: inputs.cohortSha256,
+    freezeSha256: inputs.freezeSha256,
     graphSha256: inputs.graphSha256, modelSha256: inputs.modelSha256,
     tag: inputs.tag, bundleId: inputs.bundleId,
     rawContentSha256: inputs.rawContentSha256, graphDatasetSha256: graph.dataset.sha256,
@@ -396,6 +410,7 @@ export function generateServingReport(inputs: ServingReportInputs): ServingRepor
 /** Recompute ranks and coverage; latency is measured again against the same declared ceiling. */
 export function verifyServingReport(inputs: ServingReportInputs, value: unknown): ServingReportV1 {
   const report = exact(value, ["format", "evaluator", "policySha256", "cohortSha256",
+    "freezeSha256",
     "graphSha256", "modelSha256", "tag", "bundleId", "rawContentSha256",
     "graphDatasetSha256", "selectionSha256", "finalReportSha256", "topK",
     "suppliedCount", "baselineValidation", "validationUsers", "finalUsers",
@@ -434,33 +449,57 @@ function fileSha(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-/** Read-only CLI boundary used by the private package verifier. */
+/** Write once for an initial final report, then verify read-only during packaging. */
 function main(): void {
-  if (process.argv.length !== 4) {
+  const writing = process.argv[2] === "--write-frozen";
+  if (process.argv.length !== (writing ? 5 : 4)) {
     fail("arguments", "expected candidate and private evidence directories");
   }
-  const candidate = resolve(process.argv[2]);
-  const evidence = resolve(process.argv[3]);
+  const candidate = resolve(process.argv[writing ? 3 : 2]);
+  const evidence = resolve(process.argv[writing ? 4 : 3]);
   const read = (directory: string, name: string) => JSON.parse(readFileSync(join(directory, name), "utf8"));
   const manifest = parseReleaseManifest(read(candidate, "release-manifest.json"),
     "release-manifest.json");
-  const review = record(read(evidence, "model-promotion-review.json"), "review");
+  const review = writing ? null : record(read(evidence, "model-promotion-review.json"), "review");
+  const selection = writing ? record(read(evidence, "selection.json"), "selection") : null;
   const graphPath = join(candidate, "graph.compact.json");
   const modelPath = join(candidate, "model-mf-web.compact.json");
   const cohortPath = join(evidence, "serving-cohort.json");
+  const finalPath = join(evidence, "serving-final.json");
+  const freezePath = join(evidence, "serving-freeze.json");
   const policyPath = join(evidence, "quality-policy.json");
-  verifyServingReport({ graph: read(candidate, "graph.compact.json"),
+  const cohortSha256 = fileSha(cohortPath);
+  const freezeSha256 = fileSha(freezePath);
+  const finalBytes = readFileSync(finalPath);
+  const qualityPlan = record(read(evidence, "quality-plan.json"), "quality-plan.json");
+  const policy = read(evidence, "quality-policy.json");
+  const rawContentSha256 = (review?.rawContentSha256 ?? selection?.rawContentSha256) as string;
+  verifyServingFreeze(evidence, { sourceName: manifest.dataset.source,
+    rawContentSha256, graphDatasetSha256: manifest.dataset.sha256,
+    cohortSha256, finalSha256: qualityPlan.finalSha256 as string,
+    freezeSha256 }, policy, !writing);
+  const inputs: ServingReportInputs = { graph: read(candidate, "graph.compact.json"),
     model: read(candidate, "model-mf-web.compact.json"),
     catalog: read(candidate, "catalog.identity.json"),
-    cohort: read(evidence, "serving-cohort.json"), policy: read(evidence, "quality-policy.json"),
+    cohort: read(evidence, "serving-cohort.json"), finalBytes, policy,
     tag: manifest.tag, bundleId: manifest.bundleId,
-    rawContentSha256: review.rawContentSha256 as string,
-    selectionSha256: review.selectionSha256 as string,
-    finalReportSha256: review.finalReportSha256 as string,
+    rawContentSha256,
+    selectionSha256: (review?.selectionSha256 ?? selection?.selectionSha256) as string,
+    finalReportSha256: (review?.finalReportSha256 ?? fileSha(join(evidence,
+      "final-report.json"))) as string,
     graphSha256: fileSha(graphPath), modelSha256: fileSha(modelPath),
-    cohortSha256: fileSha(cohortPath), policySha256: fileSha(policyPath) },
-  read(evidence, "serving-report.json"));
-  process.stdout.write(`Verified generated serving report for ${manifest.tag}.\n`);
+    cohortSha256, freezeSha256, policySha256: fileSha(policyPath) };
+  if (writing) {
+    const report = generateServingReport({ ...inputs,
+      beforeFinal: () => markServingFinalUsed(evidence, freezeSha256,
+        qualityPlan.finalSha256 as string) });
+    writeFileSync(join(evidence, "serving-report.json"), JSON.stringify(report) + "\n",
+      { flag: "wx" });
+    process.stdout.write(`Wrote one frozen serving report for ${manifest.tag}.\n`);
+  } else {
+    verifyServingReport(inputs, read(evidence, "serving-report.json"));
+    process.stdout.write(`Verified generated serving report for ${manifest.tag}.\n`);
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

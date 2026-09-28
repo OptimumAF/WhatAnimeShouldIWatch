@@ -9,6 +9,7 @@ import { projectAggregateGraph } from "../src/core/aggregate-projection.js";
 import { buildExplorerGraph } from "../src/core/explorer-graph.js";
 import { graphFromPrepared, prepareGraphBridge, verifyGraphDatasetBridge } from
   "../src/core/split-graph-bridge.js";
+import { freezeServingEvidence } from "../src/core/model-serving-freeze.js";
 import { MODEL_OUTPUT_FILES, packageModelRelease } from "../src/package-model-release.js";
 import { OUTPUT_FILES, packageDataRelease, PUBLIC_FIELDS,
   type PublicationReviewV1 } from "../src/package-data-release.js";
@@ -29,6 +30,7 @@ const refs = {
   training: "https://example.test/invented-training-approval",
   deployment: "https://example.test/invented-deployment-approval",
   owner: "https://example.test/invented-model-approval",
+  freeze: "https://example.test/invented-prefit-freeze-approval",
   bootstrap: "https://example.test/invented-bootstrap-approval",
   bridge: "https://example.test/invented-bridge-review",
 };
@@ -51,7 +53,7 @@ function write(directory: string, name: string, value: unknown) {
   return releaseSha256(bytes);
 }
 
-function setup(t: TestContext, synthetic = true) {
+function setup(t: TestContext, synthetic = true, precommitPlan = false) {
   const root = tempRoot(t);
   const baseDir = path.join(root, "base");
   const candidateDir = path.join(root, "candidate");
@@ -96,11 +98,78 @@ function setup(t: TestContext, synthetic = true) {
   for (const name of [RELEASE_FILES.neighborhood, RELEASE_FILES.explorer, RELEASE_FILES.catalog]) {
     fs.copyFileSync(path.join(baseDir, name), path.join(candidateDir, name));
   }
+  const rawContentSha256 = prepared?.rawContentSha256 ?? H("a");
+  const caseFor = (userId: string, labelId: number) => ({
+    userId, observed: [{ animeId: 101, rawScore: 10 }],
+    labels: [{ animeId: labelId, rawScore: 9 },
+      ...(labelId === 103 ? [] : [{ animeId: 103, rawScore: 3 }])],
+    historySeen: [], exclude: [], includeOnly: [],
+    filters: { genre: "", minYear: null, maxYear: null, minScore: null },
+  });
+  const cohortMetadata = JSON.parse(fs.readFileSync(path.join(demo, "catalog.json"), "utf8"));
+  if (!synthetic) {
+    const titles = new Map((JSON.parse(fs.readFileSync(path.join(sourceDir,
+      "anime-metadata.json"), "utf8"))).anime.map(
+        ({ animeId, title }: { animeId: number; title: string }) => [animeId, title]));
+    for (const item of cohortMetadata.anime) item.title = titles.get(item.animeId) ?? item.title;
+    cohortMetadata.anime.push({ animeId: 109, title: titles.get(109), year: 2022,
+      score: 7.1, genres: ["Fantasy"], studios: [], synopsis: "Invented title.",
+      imageUrl: "", season: null });
+  }
+  const finalPayload = { format: "model-promotion-final-v1", users:
+    Array.from({ length: 4 }, (_, index) =>
+      caseFor(`invented-promo-final-${index + 1}`, synthetic ? 106 : 105)) };
+  const servingFinalSha256 = write(evidenceDir, "serving-final.json", finalPayload);
+  const trainingUsers = synthetic
+    ? ["fixture-overlap-a", "fixture-overlap-b", "fixture-opposite", "fixture-equal",
+      "fixture-sparse", "fixture-empty", "fixture-duplicate-unknown"]
+    : [...new Set(prepared!.rows.map((row) => row.userId))].sort();
+  const cohort = { format: "model-promotion-cohort-v2", seed: 42, sourceName,
+    datasetSha256: graph.dataset.sha256, trainingUsers, metadata: cohortMetadata,
+    baselineValidation: Array.from({ length: 4 }, (_, index) =>
+      caseFor(`invented-promo-validation-${index + 1}`, 102)),
+    finalSha256: servingFinalSha256 };
+  const servingCohortSha256 = write(evidenceDir, "serving-cohort.json", cohort);
+  const plan = { format: "model-serving-quality-plan-v1", sourceName,
+    rawContentSha256, graphDatasetSha256: graph.dataset.sha256,
+    cohortSha256: servingCohortSha256, finalSha256: servingFinalSha256,
+    baselineCandidates: ["graph", "genre", "coverage"],
+    decisionRef: promotionDecision, seed: 42, suppliedCount: 1,
+    positiveRawScoreMin: 7, topK: 5, minimumEligibleUsers: 4,
+    minimumPositiveLabels: 4, minimumServingCoverage: 0.5,
+    minimumNdcgLift: 0.05, maximumP95LatencyMs: 1000,
+    latencyWarmups: 1, latencySamples: 7 };
+  const { planSha256: qualityPlanSha256, freezeSha256: servingFreezeSha256 } =
+    freezeServingEvidence(evidenceDir, candidateDir, plan);
+  const planApproval = precommitPlan ? (() => {
+    const planApprovals = { schemaVersion: 1, freezes: [{
+      sourceName, graphDatasetSha256: graph.dataset.sha256,
+      qualityPlanSha256, servingCohortSha256, servingFinalSha256,
+      servingFreezeSha256, owner: "Invented Reviewer", approvalRef: refs.freeze,
+      decisionRef: "docs/decisions/0035-serving-evaluation-freeze.md",
+    }] };
+    const approvalRepoDir = path.join(root, "approval-history");
+    const approvalFiles = path.join(approvalRepoDir, "docs", "approvals");
+    fs.mkdirSync(approvalFiles, { recursive: true });
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", args, { cwd: approvalRepoDir, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git("init", "-q");
+    write(approvalFiles, "model-evaluation-plans.json", planApprovals);
+    write(approvalFiles, "model-release-bundles.json", { schemaVersion: 1, promotions: [] });
+    git("add", ".");
+    git("-c", "user.name=Invented Reviewer", "-c", "user.email=invented@example.test",
+      "commit", "-qm", "precommit invented plan before selecting an MF candidate");
+    return { planApprovals, approvalRepoDir, approvalFiles, freezeRevision: git("rev-parse", "HEAD") };
+  })() : undefined;
   const generated = spawnSync("python", [path.join(repoRoot, synthetic
     ? "ml/synthetic_promotion_archive.py" : "ml/synthetic_promotion_refit.py"),
     "--candidate-dir", candidateDir, "--evidence-dir", evidenceDir,
     ...(!synthetic ? ["--source-dir", sourceDir,
-      "--dataset-sha256", graph.dataset.sha256] : [])],
+      "--dataset-sha256", graph.dataset.sha256,
+      "--serving-freeze", path.join(evidenceDir, "serving-freeze.json")] : [])],
   { cwd: repoRoot, encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
   const refitFromFit = synthetic ? null : JSON.parse(fs.readFileSync(path.join(evidenceDir,
@@ -113,7 +182,6 @@ function setup(t: TestContext, synthetic = true) {
     path.join(evidenceDir, RELEASE_FILES.model));
   const modelSha256 = releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.model)));
   const manifest = writeReleaseManifest(candidateDir, "data-vinvented-model", baseDir);
-  const rawContentSha256 = prepared?.rawContentSha256 ?? H("a");
   const selectionSha256 = refitFromFit
     ? JSON.parse(fs.readFileSync(path.join(evidenceDir, "selection.json"), "utf8")).selectionSha256
     : H("b");
@@ -121,6 +189,7 @@ function setup(t: TestContext, synthetic = true) {
     ? releaseSha256(fs.readFileSync(path.join(evidenceDir, "selection.json")))
     : write(evidenceDir, "selection.json", {
     format: "split-first-selection-v1", rawContentSha256, selectionSha256,
+    servingFreezeSha256,
     selectedCandidate: { id: "invented-mf" },
   });
   const finalReportSha256 = refitFromFit
@@ -162,34 +231,6 @@ function setup(t: TestContext, synthetic = true) {
       JSON.parse(fs.readFileSync(path.join(evidenceDir, "refit-record.json"), "utf8"))) } : {}),
   };
   const datasetBridgeSha256 = write(evidenceDir, "dataset-bridge.json", bridgeRecord);
-  const caseFor = (userId: string, labelId: number) => ({
-    userId, observed: [{ animeId: 101, rawScore: 10 }],
-    labels: [{ animeId: labelId, rawScore: 9 },
-      ...(labelId === 103 ? [] : [{ animeId: 103, rawScore: 3 }])],
-    historySeen: [], exclude: [], includeOnly: [],
-    filters: { genre: "", minYear: null, maxYear: null, minScore: null },
-  });
-  const cohortMetadata = JSON.parse(fs.readFileSync(path.join(demo, "catalog.json"), "utf8"));
-  if (!synthetic) {
-    const titles = new Map((JSON.parse(fs.readFileSync(path.join(sourceDir,
-      "anime-metadata.json"), "utf8"))).anime.map(
-        ({ animeId, title }: { animeId: number; title: string }) => [animeId, title]));
-    for (const item of cohortMetadata.anime) item.title = titles.get(item.animeId) ?? item.title;
-    cohortMetadata.anime.push({ animeId: 109, title: titles.get(109), year: 2022,
-      score: 7.1, genres: ["Fantasy"], studios: [], synopsis: "Invented title.",
-      imageUrl: "", season: null });
-  }
-  const cohort = { format: "model-promotion-cohort-v1", seed: 42, sourceName,
-    datasetSha256: graph.dataset.sha256,
-    trainingUsers: JSON.parse(fs.readFileSync(path.join(evidenceDir,
-      "model.metadata.json"), "utf8")).userIds,
-    metadata: cohortMetadata,
-    baselineValidation: Array.from({ length: 4 }, (_, index) =>
-      caseFor(`invented-promo-validation-${index + 1}`, 102)),
-    finalTest: Array.from({ length: 4 }, (_, index) =>
-      caseFor(`invented-promo-final-${index + 1}`, synthetic ? 106 : 105)),
-  };
-  const servingCohortSha256 = write(evidenceDir, "serving-cohort.json", cohort);
   const policy = {
     format: "model-promotion-quality-policy-v1", decisionRef: promotionDecision,
     candidateBundleId: manifest.bundleId, cohortSha256: servingCohortSha256,
@@ -200,15 +241,15 @@ function setup(t: TestContext, synthetic = true) {
     latencyWarmups: 1, latencySamples: 7,
   };
   const qualityPolicySha256 = write(evidenceDir, "quality-policy.json", policy);
-  const serving = generateServingReport({ graph, model,
-    catalog: JSON.parse(fs.readFileSync(path.join(baseDir, RELEASE_FILES.catalog), "utf8")),
-    cohort, policy, tag: manifest.tag, bundleId: manifest.bundleId,
-    rawContentSha256, selectionSha256, finalReportSha256,
-    graphSha256: releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.neighborhood))),
-    modelSha256, cohortSha256: servingCohortSha256, policySha256: qualityPolicySha256 });
-  const servingReportSha256 = write(evidenceDir, "serving-report.json", serving);
+  const generatedServing = spawnSync(process.execPath, ["--import", "tsx",
+    path.join(repoRoot, "web/bench/model-promotion-serving-evaluation.ts"),
+    "--write-frozen", candidateDir, evidenceDir], { cwd: repoRoot, encoding: "utf8" });
+  assert.equal(generatedServing.status, 0, generatedServing.stderr);
+  const serving = JSON.parse(fs.readFileSync(path.join(evidenceDir, "serving-report.json"), "utf8"));
+  const servingReportSha256 = releaseSha256(fs.readFileSync(path.join(evidenceDir,
+    "serving-report.json")));
   const review = {
-    format: "model-promotion-review-v2", promotionId: "invented-promotion-1",
+    format: "model-promotion-review-v3", promotionId: "invented-promotion-1",
     tag: manifest.tag, bundleId: manifest.bundleId,
     manifestSha256: releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.manifest))),
     baseTag: baseManifest.tag, baseBundleId: baseManifest.bundleId,
@@ -217,17 +258,18 @@ function setup(t: TestContext, synthetic = true) {
     graphDatasetSha256: graph.dataset.sha256, rawContentSha256, modelSha256,
     numericArchiveSha256, numericMetadataSha256,
     selectionFileSha256, selectionSha256, finalReportSha256,
-    refitRecordSha256, datasetBridgeSha256, qualityPolicySha256,
-    servingCohortSha256, servingReportSha256,
+    refitRecordSha256, datasetBridgeSha256, qualityPlanSha256, qualityPolicySha256,
+    servingCohortSha256, servingFinalSha256, servingFreezeSha256, servingReportSha256,
     minimumModelCoverage: 0.9,
     owner: "Invented Reviewer", ownerApprovalRef: refs.owner,
+    freezeApprovalRef: refs.freeze,
     trainingApprovalRef: refs.training, publicationApprovalRef: refs.publication,
     deploymentApprovalRef: refs.deployment,
   };
   write(evidenceDir, "model-promotion-review.json", review);
   return { root, baseDir, candidateDir, evidenceDir,
     sourceDir: synthetic ? undefined : sourceDir, outputDir,
-    graph, baseManifest, manifest, review, sourceName, serving };
+    graph, baseManifest, manifest, review, sourceName, serving, planApproval };
 }
 
 function updateReview(fixture: ReturnType<typeof setup>, update: Record<string, unknown>): void {
@@ -241,6 +283,7 @@ function servingInputs(fixture: ReturnType<typeof setup>) {
     model: read(fixture.candidateDir, RELEASE_FILES.model),
     catalog: read(fixture.candidateDir, RELEASE_FILES.catalog),
     cohort: read(fixture.evidenceDir, "serving-cohort.json"),
+    finalBytes: fs.readFileSync(path.join(fixture.evidenceDir, "serving-final.json")),
     policy: read(fixture.evidenceDir, "quality-policy.json"),
     tag: fixture.manifest.tag, bundleId: fixture.manifest.bundleId,
     rawContentSha256: fixture.review.rawContentSha256,
@@ -250,9 +293,19 @@ function servingInputs(fixture: ReturnType<typeof setup>) {
       RELEASE_FILES.neighborhood))),
     modelSha256: fixture.review.modelSha256,
     cohortSha256: fixture.review.servingCohortSha256,
+    freezeSha256: fixture.review.servingFreezeSha256,
     policySha256: fixture.review.qualityPolicySha256,
     now: (() => { let tick = 0; return () => ++tick; })(),
   };
+}
+
+function changedFinal<T extends ReturnType<typeof servingInputs>>(inputs: T,
+  change: (users: any[]) => void): T {
+  const final = JSON.parse(inputs.finalBytes.toString("utf8"));
+  change(final.users);
+  const finalBytes = Buffer.from(encode(final));
+  return { ...inputs, finalBytes, cohort: { ...inputs.cohort,
+    finalSha256: releaseSha256(finalBytes) } };
 }
 
 test("invented v3 model package copies only item assets and records private hashes", (t) => {
@@ -406,6 +459,49 @@ test("nonfixture package rejects an altered selection after its review hash is r
     /model.npz: safe archive or frozen split-first refit reproduction failed/);
 });
 
+test("frozen serving marker precedes final parsing and a report cannot be replayed", (t) => {
+  const fixture = setup(t, false);
+  const originalReport = fs.readFileSync(path.join(fixture.evidenceDir, "serving-report.json"));
+  const replay = spawnSync(process.execPath, ["--import", "tsx",
+    path.join(repoRoot, "web/bench/model-promotion-serving-evaluation.ts"),
+    "--write-frozen", fixture.candidateDir, fixture.evidenceDir],
+  { cwd: repoRoot, encoding: "utf8" });
+  assert.notEqual(replay.status, 0);
+  assert.match(replay.stderr, /EEXIST/);
+  assert.deepEqual(fs.readFileSync(path.join(fixture.evidenceDir, "serving-report.json")),
+    originalReport);
+
+  const inputs = servingInputs(fixture);
+  const malformed = Buffer.from("{invalid reserved labels");
+  let markerWritten = false;
+  assert.throws(() => generateServingReport({ ...inputs, finalBytes: malformed,
+    cohort: { ...inputs.cohort, finalSha256: releaseSha256(malformed) },
+    beforeFinal: () => { markerWritten = true; } }), /serving-final.json: must be valid JSON/);
+  assert.equal(markerWritten, true);
+});
+
+test("a rehashed policy or reserved final file cannot escape the prefit plan", (t) => {
+  const policyFixture = setup(t, false);
+  const policy = JSON.parse(fs.readFileSync(path.join(policyFixture.evidenceDir,
+    "quality-policy.json"), "utf8"));
+  policy.minimumNdcgLift = 0.01;
+  const qualityPolicySha256 = write(policyFixture.evidenceDir, "quality-policy.json", policy);
+  const report = JSON.parse(fs.readFileSync(path.join(policyFixture.evidenceDir,
+    "serving-report.json"), "utf8"));
+  report.policySha256 = qualityPolicySha256;
+  const servingReportSha256 = write(policyFixture.evidenceDir, "serving-report.json", report);
+  updateReview(policyFixture, { qualityPolicySha256, servingReportSha256 });
+  assert.throws(() => packageModelRelease(policyFixture),
+    /quality-policy.json.minimumNdcgLift: differs from the prefit plan/);
+
+  const finalFixture = setup(t, false);
+  fs.appendFileSync(path.join(finalFixture.evidenceDir, "serving-final.json"), " ");
+  updateReview(finalFixture, { servingFinalSha256: releaseSha256(fs.readFileSync(
+    path.join(finalFixture.evidenceDir, "serving-final.json"))) });
+  assert.throws(() => packageModelRelease(finalFixture),
+    /quality-plan.json.finalSha256: differs from the reviewed input/);
+});
+
 test("a generated report must meet the frozen coverage and fresh latency gates", (t) => {
   const fixture = setup(t);
   const inputs = servingInputs(fixture);
@@ -428,12 +524,15 @@ test("a generated report must meet the frozen coverage and fresh latency gates",
 test("serving evaluation isolates fit, baseline-selection, and final-test users", (t) => {
   const fixture = setup(t);
   const inputs = servingInputs(fixture);
-  const cohort = structuredClone(inputs.cohort);
-  cohort.finalTest[0].userId = cohort.baselineValidation[0].userId;
-  assert.throws(() => generateServingReport({ ...inputs, cohort }),
+  const overlap = changedFinal(inputs, (users) => {
+    users[0].userId = inputs.cohort.baselineValidation[0].userId;
+  });
+  assert.throws(() => generateServingReport(overlap),
     /cohort\.finalTest\[0\]\.userId: overlaps fit or another evaluation group/);
-  cohort.finalTest[0].userId = cohort.trainingUsers[0];
-  assert.throws(() => generateServingReport({ ...inputs, cohort }),
+  const fitOverlap = changedFinal(inputs, (users) => {
+    users[0].userId = inputs.cohort.trainingUsers[0];
+  });
+  assert.throws(() => generateServingReport(fitOverlap),
     /cohort\.finalTest\[0\]\.userId: overlaps fit or another evaluation group/);
   const noValidationPositives = structuredClone(inputs.cohort);
   for (const user of noValidationPositives.baselineValidation) user.labels[0].rawScore = 3;
@@ -445,22 +544,25 @@ test("serving report depends on held-out labels but not their input row order", 
   const fixture = setup(t);
   const inputs = servingInputs(fixture);
   const base = generateServingReport(inputs);
-  const reordered = structuredClone(inputs.cohort);
-  for (const user of reordered.finalTest) user.labels.reverse();
-  const reorderedReport = generateServingReport({ ...inputs, cohort: reordered });
+  const reordered = changedFinal(inputs, (users) => {
+    for (const user of users) user.labels.reverse();
+  });
+  const reorderedReport = generateServingReport(reordered);
   assert.deepEqual(reorderedReport.model, base.model);
   assert.deepEqual(reorderedReport.baseline, base.baseline);
-  const changed = structuredClone(inputs.cohort);
-  for (const user of changed.finalTest) user.labels[0].animeId = 102;
-  const changedReport = generateServingReport({ ...inputs, cohort: changed });
+  const changed = changedFinal(inputs, (users) => {
+    for (const user of users) user.labels[0].animeId = 102;
+  });
+  const changedReport = generateServingReport(changed);
   assert.notEqual(changedReport.baseline.ndcgAtK, base.baseline.ndcgAtK);
-  const observedOrder = structuredClone(inputs.cohort);
-  for (const user of observedOrder.finalTest) {
-    user.observed.push({ animeId: 104, rawScore: 8 });
-  }
-  const prefixA = generateServingReport({ ...inputs, cohort: observedOrder });
-  for (const user of observedOrder.finalTest) user.observed.reverse();
-  const prefixB = generateServingReport({ ...inputs, cohort: observedOrder });
+  const observedOrder = changedFinal(inputs, (users) => {
+    for (const user of users) user.observed.push({ animeId: 104, rawScore: 8 });
+  });
+  const prefixA = generateServingReport(observedOrder);
+  const reversedOrder = changedFinal(observedOrder, (users) => {
+    for (const user of users) user.observed.reverse();
+  });
+  const prefixB = generateServingReport(reversedOrder);
   assert.deepEqual(prefixA.baseline, prefixB.baseline);
   assert.deepEqual(prefixA.model, prefixB.model);
   assert.equal(releaseSha256(fs.readFileSync(path.join(fixture.candidateDir,
@@ -485,7 +587,7 @@ test("failed staging leaves no output and the empty committed registry rejects s
 });
 
 test("an invented reviewed package requires exact model, provider, and data-base approvals", (t) => {
-  const fixture = setup(t, false);
+  const fixture = setup(t, false, true);
   const baseReview: PublicationReviewV1 = {
     format: "publication-review-v1", tag: fixture.baseManifest.tag,
     bundleId: fixture.baseManifest.bundleId,
@@ -538,6 +640,15 @@ test("an invented reviewed package requires exact model, provider, and data-base
     bootstrap: { decisionRef: "docs/decisions/0032-reviewed-first-release-bootstrap.md",
       approvalRef: refs.bootstrap, owner: "Invented Reviewer" },
   }] };
+  assert.ok(fixture.planApproval);
+  const { planApprovals, approvalRepoDir, approvalFiles, freezeRevision } = fixture.planApproval;
+  assert.equal(planApprovals.freezes[0].qualityPlanSha256,
+    audit.evidence.qualityPlanSha256);
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", args, { cwd: approvalRepoDir, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
   const modelApprovals = { schemaVersion: 1, promotions: [{
     promotionId: audit.promotionId, tag: audit.tag, bundleId: audit.bundleId,
     manifestSha256: audit.manifestSha256,
@@ -548,7 +659,11 @@ test("an invented reviewed package requires exact model, provider, and data-base
     sourceRunId: 123, artifactName: "invented-model", decisionRef: promotionDecision,
     datasetBridgeSha256: audit.evidence.datasetBridgeSha256,
     datasetBridgeReviewRef: refs.bridge,
+    qualityPlanSha256: audit.evidence.qualityPlanSha256,
     qualityPolicySha256: audit.evidence.qualityPolicySha256,
+    servingFinalSha256: audit.evidence.servingFinalSha256,
+    servingFreezeSha256: audit.evidence.servingFreezeSha256,
+    freezeRevision, freezeApprovalRef: refs.freeze,
     numericMetadataSha256: audit.numericMetadataSha256,
     servingCohortSha256: audit.evidence.servingCohortSha256,
     servingReportSha256: audit.evidence.servingReportSha256,
@@ -556,12 +671,26 @@ test("an invented reviewed package requires exact model, provider, and data-base
     trainingApprovalRef: refs.training, publicationApprovalRef: refs.publication,
     deploymentApprovalRef: refs.deployment,
   }] };
+  write(approvalFiles, "model-release-bundles.json", modelApprovals);
+  git("add", ".");
+  git("-c", "user.name=Invented Reviewer", "-c", "user.email=invented@example.test",
+    "commit", "-qm", "approve invented model after serving freeze");
   const options = { packageDir: fixture.outputDir, baseDir: basePackage,
     evidenceDir: fixture.evidenceDir, sourceDir: fixture.sourceDir!,
+    approvalRepoDir, planApprovals,
     dispatch: { tag: audit.tag, baseTag: audit.base.tag, sourceRunId: 123,
       artifactName: "invented-model" },
     providerApprovals, publicationApprovals, modelApprovals };
   assert.deepEqual(verifyModelReleasePackage(options), audit);
+  const lateFreeze = structuredClone(modelApprovals);
+  lateFreeze.promotions[0].freezeRevision = git("rev-parse", "HEAD");
+  assert.throws(() => verifyModelReleasePackage({ ...options,
+    sourceDir: path.join(fixture.root, "missing-source"), modelApprovals: lateFreeze }),
+  /freezeRevision: must identify a prior commit/);
+  assert.throws(() => verifyModelReleasePackage({ ...options,
+    sourceDir: path.join(fixture.root, "missing-source"),
+    planApprovals: { schemaVersion: 1, freezes: [] } }),
+  /planApprovals: must be the committed current plan registry/);
   assert.throws(() => verifyModelReleasePackage({ ...options,
     modelApprovals: { schemaVersion: 1, promotions: [] } }), /exact committed owner record/);
   assert.throws(() => verifyModelReleasePackage({ ...options,

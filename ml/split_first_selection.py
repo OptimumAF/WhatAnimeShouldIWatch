@@ -199,7 +199,7 @@ def score_validation_candidate(snapshot: RawSnapshot, manifest: object, metadata
 def freeze_validation_trials(manifest: object, metadata: MetadataSnapshot, spec: SelectionSpec,
                              selection_path: Path, report_path: Path,
                              trials: Sequence[dict[str, Any]], train_sha: str,
-                             fit_sha: str) -> dict[str, Any]:
+                             fit_sha: str, serving_freeze_sha256: str | None = None) -> dict[str, Any]:
     """Bind a complete predeclared validation search to the one-use report boundary."""
     def valid_trial(trial: object) -> bool:
         if not isinstance(trial, dict) or set(trial) != {
@@ -221,6 +221,11 @@ def freeze_validation_trials(manifest: object, metadata: MetadataSnapshot, spec:
     if not all(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value)
                for value in (train_sha, fit_sha)):
         raise ValueError("Validation training fingerprints are missing.")
+    if serving_freeze_sha256 is not None and (
+        not isinstance(serving_freeze_sha256, str) or
+        re.fullmatch(r"[a-f0-9]{64}", serving_freeze_sha256) is None
+    ):
+        raise ValueError("Serving freeze digest is malformed.")
     best = sorted(trials, key=lambda trial: (-trial["validation"]["ndcgAtK"], trial["candidateId"]))[0]
     selected = next(candidate for candidate in spec.candidates if candidate.candidate_id == best["candidateId"])
     # Bind the exact snapshot only for final reporting; it is never a selection score.
@@ -233,12 +238,15 @@ def freeze_validation_trials(manifest: object, metadata: MetadataSnapshot, spec:
               "selectionSpec": spec.as_record(), "selectedCandidate": selected.as_record(),
               "validationTrials": list(trials), "objective": "ndcg-at-k",
               "selectedValidation": best["validation"]}
+    if serving_freeze_sha256 is not None:
+        record["servingFreezeSha256"] = serving_freeze_sha256
     return {**record, "selectionSha256": _sha(record)}
 
 
 def select_on_validation(snapshot: RawSnapshot, manifest: object, metadata: MetadataSnapshot,
                          spec: SelectionSpec, selection_path: Path,
-                         report_path: Path) -> dict[str, Any]:
+                         report_path: Path,
+                         serving_freeze_sha256: str | None = None) -> dict[str, Any]:
     """No access to the test partition's labels or scores while choosing a candidate."""
     partitions = partition_snapshot(snapshot, manifest)
     trials: list[dict[str, Any]] = []
@@ -253,7 +261,7 @@ def select_on_validation(snapshot: RawSnapshot, manifest: object, metadata: Meta
             raise ValueError("Candidate training inputs or preprocessing changed during validation selection.")
         trials.append(trial)
     return freeze_validation_trials(manifest, metadata, spec, selection_path, report_path,
-                                    trials, train_sha, fit_sha)
+                                    trials, train_sha, fit_sha, serving_freeze_sha256)
 
 
 def _checked_selection(record: object, selection_path: Path, report_path: Path,
@@ -262,8 +270,13 @@ def _checked_selection(record: object, selection_path: Path, report_path: Path,
               "identitySha256", "metadataSha256", "trainSha256", "fitSha256",
               "candidateSpecSha256", "selectionSpec", "selectedCandidate",
               "validationTrials", "objective", "selectedValidation", "selectionSha256"}
-    if not isinstance(record, dict) or set(record) != fields or record.get("format") != "split-first-selection-v1":
+    if not isinstance(record, dict) or set(record) not in (fields, fields | {"servingFreezeSha256"}) or record.get("format") != "split-first-selection-v1":
         raise ValueError("Unsupported frozen selection format.")
+    if "servingFreezeSha256" in record and (
+        not isinstance(record["servingFreezeSha256"], str) or
+        re.fullmatch(r"[a-f0-9]{64}", record["servingFreezeSha256"]) is None
+    ):
+        raise ValueError("Frozen serving freeze digest is malformed.")
     digest = record.get("selectionSha256")
     payload = {key: value for key, value in record.items() if key != "selectionSha256"}
     if digest != _sha(payload):
@@ -356,6 +369,8 @@ def main() -> None:
     select.add_argument("--candidates", type=Path, required=True)
     select.add_argument("--out-selection", type=Path, required=True)
     select.add_argument("--out-test-report", type=Path, required=True)
+    select.add_argument("--serving-freeze", type=Path,
+                        help="Existing private serving-freeze.json to bind before validation fitting")
     final.add_argument("--selection", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -370,7 +385,14 @@ def main() -> None:
                     report_path.exists() or marker_path.exists()):
                 raise ValueError("Selection and test paths must be distinct and unused.")
             spec = parse_selection_spec(_load_json(args.candidates))
-            record = select_on_validation(snapshot, manifest, metadata, spec, selection_path, report_path)
+            freeze_sha = None
+            if args.serving_freeze is not None:
+                freeze_path = _private_output(args.serving_freeze)
+                if not freeze_path.is_file() or freeze_path.is_symlink():
+                    raise ValueError("Serving freeze must be an existing private regular file.")
+                freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
+            record = select_on_validation(snapshot, manifest, metadata, spec,
+                                          selection_path, report_path, freeze_sha)
             _write_new(selection_path, record)
             print(f"Froze validation-selected candidate {record['selectedCandidate']['id']} "
                   f"at {selection_path}; test labels were not scored.")

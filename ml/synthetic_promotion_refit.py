@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -28,6 +29,7 @@ def main() -> None:
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--dataset-sha256", required=True)
+    parser.add_argument("--serving-freeze", type=Path, required=True)
     args = parser.parse_args()
 
     # This executable must never become a shortcut for selecting or fitting
@@ -47,9 +49,15 @@ def main() -> None:
     spec = parse_selection_spec(_load_json(ROOT / "fixtures" / "synthetic-mf-candidates.json"))
     selection_path = args.evidence_dir / "selection.json"
     report_path = args.evidence_dir / "final-report.json"
+    freeze_path = args.serving_freeze
+    if freeze_path.is_symlink() or not freeze_path.is_file() or (
+        freeze_path.resolve() != (args.evidence_dir / "serving-freeze.json").resolve()
+    ):
+        parser.exit(1, "Invented promotion refit requires the private prefit serving freeze.\n")
+    freeze_sha256 = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     with contextlib.redirect_stdout(io.StringIO()):
         selection = select_on_validation(snapshot, manifest, metadata, spec,
-                                         selection_path, report_path)
+                                         selection_path, report_path, freeze_sha256)
     _write_new(selection_path, selection)
     with contextlib.redirect_stdout(io.StringIO()):
         report_frozen_test(snapshot, manifest, metadata, selection_path)
