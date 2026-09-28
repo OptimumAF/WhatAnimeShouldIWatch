@@ -141,4 +141,9 @@ export interface CompactGraphDataV2 extends Omit<CompactGraphDataV1, "format" | 
   aa: [leftAnimeIndex: number, rightAnimeIndex: number, weight: number, support: number][];
 }
 
-export type CompactGraphData = CompactGraphDataV1 | CompactGraphDataV2;
+export interface CompactGraphDataV3 extends Omit<CompactGraphDataV2, "format"> {
+  format: "graph-compact-v3";
+  projection: { policy: "omit-user-anime-v1" };
+}
+
+export type CompactGraphData = CompactGraphDataV1 | CompactGraphDataV2 | CompactGraphDataV3;

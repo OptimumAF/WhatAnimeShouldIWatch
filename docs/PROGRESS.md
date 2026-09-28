@@ -916,3 +916,37 @@
 **Unrun / remaining:** Real source rights, privacy-safe graph export, an audited immutable release, hosted deployment, and rollback remain unverified. M8.3 remains unchecked, and the M8 exit gate remains open.
 
 **Single next task:** Implement the separately versioned aggregate-only graph/export contract and its synthetic runtime and manifest checks.
+
+## Session 2026-09-28 — M8.3 aggregate-only graph protocol
+
+**Branch / start:** `codex/m8-aggregate-graph` from clean `450b2da451c23babaac690f5c427fcb3948a0984`, final-head CI-passing PR #43. Re-read the root instructions, latest M8.3 handoff, v2 graph parser/types, graph ID and explorer producers, manifest producer/parser, recommendation index, and browser loader. No private or provider data was accessed.
+
+**Design and affected files:** Added [decision 0029](decisions/0029-aggregate-only-graph.md), merged its rules into `AGENTS.md`, and logged the versioned dependency in the living plan. A v3 public projection preserves selected-rating and pair statistics while carrying no user identifiers or user-anime edges. Exact-field validation is required so an extra JSON property cannot hide a history inside a valid hash-pinned artifact. A zero-edge dummy or a relabeled v2 graph would not satisfy the task.
+
+**Checks / blockers:** Protocol only; no graph code or tests changed yet. M8.3 and M8 remain unchecked. Source/use rights, audit packaging, quality review, and deployment remain held.
+
+**Single next task:** Implement and test the v3 projector, strict parser, linked explorer, manifest and browser path with invented data and mocked transport.
+
+## Session 2026-09-28 — M8.3 aggregate-only graph implementation
+
+**Branch / starting commit:** `codex/m8-aggregate-graph` after protocol commit `b44e066`, based on clean final-head CI-passing PR #43. The v3 contract in decision 0029 was recorded before code changes.
+
+**Implementation and affected files:** `pipeline/src/core/aggregate-projection.ts` copies a validated v2 recommendation graph's anime pairs, dataset identity, config and exact selection counts into v3 while omitting all user IDs/edges; `graph-contract.ts`, `explorer-graph.ts`, `types.ts`, and `release-manifest.ts` compute separate v3 IDs and verify linked explorer and catalog bytes. `web/src/artifacts.ts` requires exact v3 fields, empty `userIds`/`ua`, zero retained user counts, and truthful pair counts; v1/v2 formats still parse. `artifact-loader.ts` accepts a manifest-declared v3 pair only when graph and explorer formats match the manifest and each other. `recommendations.ts` uses v3 pair edges for the same ranking path. `main.ts` labels sample popularity unavailable and uses community-score exploration for automatic no-signal v3 mode. New pipeline and web unit/browser tests cover pairs, strict fields, installer integration, and normal-mode behavior; the old browser unsupported-version fixture now uses v4.
+
+**Commands and actual results:** `npm run data:fixture:check` passed with 7 invented users/8 anime/11 pairs. `npm run typecheck` passed. Pipeline focused v3 tests passed 3/3, and the full pipeline suite passed 73/73; web unit tests passed 107/107. `npm run test:python` passed 68 tests; `python -m unittest discover -s scripts/tests` passed 10 tests. `npm run build:web` passed. The focused release-bundle browser suite passed 7/7; a first full browser run found an old test using v3 as its unsupported format, which was changed to v4; the targeted artifact suite passed 8/8 and the rerun full browser suite passed 66/66. `git diff --check` passed before the final documentation edits. No real provider or release response was used.
+
+**Unrun / blockers:** Clean-checkout PR CI and final stacked-diff review remain. The v3 dataset digest and pair weights still derive from restricted ratings; this projection does not establish redistribution rights, prove a permitted source, or set a release quality threshold. M8.3's publication audit, exact whitelist, approved source/use decision, immutable upload route, hosted check, and M8 exit gate remain open. No private Crunchyroll history was accessed.
+
+**Plan revisions and reason:** The v3 variant preserves v2 semantics and existing readers while representing selected source ratings separately from retained public user edges. M8.3 stays unchecked because the published artifact and authorization criteria are not met.
+
+**Single next task:** Build a synthetic audited data-only publication package that rejects undeclared files and binds provenance, redistribution basis, changes, compatibility, and quality evidence before any future release upload.
+
+## Session 2026-09-28 — M8.3 aggregate graph CI review
+
+**Reviewed implementation:** Draft [PR #44](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/44), `codex/m8-aggregate-graph` implementation commit `845cf93b6e250c0871fea29f31f66ad4c1d472dd`, stacked on PR #43. Reviewed the graph projector/parser, explorer and manifest linkage, installer integration, browser ranking/discovery behavior, and unit/browser regressions; `git diff --check codex/m8-publication-audit...HEAD` passed.
+
+**Clean-checkout evidence:** [CI run 36423310601](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36423310601) and GitGuardian passed on the exact implementation SHA. The run completed fixture and evaluation checks, typecheck, 73 pipeline tests, 107 web unit tests, 68 ML tests, 10 workflow tests, web build, and 66 mocked browser tests.
+
+**Unrun / remaining:** No public asset, provider history, real release, deployment, or model promotion was read or changed. The v3 projection has no per-user rows but its aggregate pairs and dataset identity still need reviewed redistribution and privacy decisions. M8.3 and the M8 exit gate remain open.
+
+**Single next task:** Build and test a synthetic publication package with a strict asset inventory and an audit record bound to the v3 manifest, then separately wire a reviewed immutable release route.

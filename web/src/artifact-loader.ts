@@ -10,8 +10,8 @@ import {
   RELEASE_BUNDLE_LIMITS,
 } from "./artifacts";
 import type {
-  DemoCatalogItem, GraphV2Metadata, LoadedGraphData, ModelRecommendationAnime,
-  ReleaseManifestAsset, ReleaseManifestV1,
+  CompactGraphDataV2, CompactGraphDataV3, DemoCatalogItem, GraphDataV2,
+  LoadedGraphData, ModelRecommendationAnime, ReleaseManifestAsset, ReleaseManifestV1,
 } from "./artifacts";
 import type { ModelRecommendationIndex } from "./domain";
 import type { RuntimePorts } from "./runtime";
@@ -81,8 +81,12 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
     }
     const bundle = await getActiveBundle();
     if (bundle) {
-      return parseCompactGraph(await fetchBundleAsset(bundle, bundle.manifest.neighborhood),
+      const graph = parseCompactGraph(await fetchBundleAsset(bundle, bundle.manifest.neighborhood),
         bundle.manifest.neighborhood.path, "recommendation");
+      if (graph.format !== bundle.manifest.neighborhood.format) {
+        throw new Error(`${bundle.manifest.neighborhood.path}: format differs from release-manifest.json.neighborhood.format.`);
+      }
+      return graph;
     }
     const compactData = await fetchJsonWithGzipFallback({
       path: "./data/graph.compact.json",
@@ -114,13 +118,16 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
     if (bundle) {
       const explorer = parseCompactGraph(await fetchBundleAsset(bundle, bundle.manifest.explorer),
         bundle.manifest.explorer.path, "visualization");
+      if (explorer.format !== bundle.manifest.explorer.format) {
+        throw new Error(`${bundle.manifest.explorer.path}: format differs from release-manifest.json.explorer.format.`);
+      }
       assertExplorerMatches(graphData, explorer);
       return explorer;
     }
-    const needsV2Explorer = isV2Graph(graphData);
+    const needsVersionedExplorer = isVersionedGraph(graphData);
     const explorerCompactData = await fetchJsonWithGzipFallback({
       path: "./data/graph-explorer.compact.json",
-      required: needsV2Explorer,
+      required: needsVersionedExplorer,
       label: "graph-explorer.compact.json",
     });
     if (explorerCompactData !== null) {
@@ -284,19 +291,23 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
   return { fetchGraph, fetchExplorerGraph, fetchModelRecommendationIndex, fetchDemoCatalog };
 }
 
-function isV2Graph(graph: LoadedGraphData): graph is LoadedGraphData & GraphV2Metadata {
+function isVersionedGraph(graph: LoadedGraphData):
+  graph is GraphDataV2 | CompactGraphDataV2 | CompactGraphDataV3 {
   return "format" in graph &&
-    (graph.format === "graph-compact-v2" || graph.format === "graph-legacy-v2");
+    (graph.format === "graph-compact-v2" || graph.format === "graph-compact-v3" ||
+      graph.format === "graph-legacy-v2");
 }
 
 function assertExplorerMatches(main: LoadedGraphData, explorer: LoadedGraphData): void {
-  if (!isV2Graph(main)) {
-    if (isV2Graph(explorer)) {
-      throw new Error("graph-explorer.compact.json: v2 explorer requires a v2 recommendation graph.");
+  if (!isVersionedGraph(main)) {
+    if (isVersionedGraph(explorer)) {
+      const version = explorer.format === "graph-compact-v3" ? "v3" : "v2";
+      throw new Error(`graph-explorer.compact.json: ${version} explorer requires a ${version} recommendation graph.`);
     }
     return;
   }
-  if (!isV2Graph(explorer) || explorer.role !== "visualization" ||
+  if (!isVersionedGraph(explorer) || explorer.role !== "visualization" ||
+      explorer.format !== main.format ||
       explorer.sourceGraphId !== main.graphId ||
       explorer.dataset.sha256 !== main.dataset.sha256 ||
       explorer.dataset.scope !== main.dataset.scope ||
@@ -307,6 +318,10 @@ function assertExplorerMatches(main: LoadedGraphData, explorer: LoadedGraphData)
         ["ratingSelectionPolicy", "seed", "maxRatingsPerUser", "maxAnimeAnimeEdges",
           "maxPairVisits", "maxPairCandidates", "minPairSupport", "maxNeighborsPerAnime"])) {
     throw new Error("graph-explorer.compact.json: sourceGraphId or graph provenance does not match the recommendation graph. Rebuild both artifacts.");
+  }
+  if (main.format === "graph-compact-v3" && explorer.format === "graph-compact-v3" &&
+      explorer.projection.policy !== main.projection.policy) {
+    throw new Error("graph-explorer.compact.json: projection does not match the recommendation graph.");
   }
 }
 

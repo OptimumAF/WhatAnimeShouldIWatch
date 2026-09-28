@@ -4,9 +4,11 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   parseCompactGraph, parseCompactModel, parseReleaseIdentityCatalog, parseReleaseManifest,
-  type CompactAnimeEntry, type CompactGraphDataV2, type ReleaseManifestV1,
+  type CompactAnimeEntry, type CompactGraphDataV2, type CompactGraphDataV3,
+  type ReleaseManifestV1,
 } from "../../web/src/artifacts.js";
-import { recommendationGraphId, visualizationGraphId } from "./core/graph-contract.js";
+import { aggregateRecommendationGraphId, aggregateVisualizationGraphId,
+  recommendationGraphId, visualizationGraphId } from "./core/graph-contract.js";
 import { buildExplorerGraph } from "./core/explorer-graph.js";
 
 export const RELEASE_FILES = {
@@ -53,7 +55,7 @@ function parseJson(bytes: Buffer, filename: string): unknown {
   }
 }
 
-function graphWithoutId(graph: CompactGraphDataV2): Omit<CompactGraphDataV2, "graphId"> {
+function graphWithoutId<T extends CompactGraphDataV2 | CompactGraphDataV3>(graph: T): Omit<T, "graphId"> {
   const { graphId: _graphId, ...withoutId } = graph;
   return withoutId;
 }
@@ -78,12 +80,22 @@ export function buildReleaseManifest(files: ReleaseFileBytes, options: ReleaseBu
     RELEASE_FILES.neighborhood, "recommendation");
   const explorer = parseCompactGraph(parseJson(files.explorer, RELEASE_FILES.explorer),
     RELEASE_FILES.explorer, "visualization");
-  if (neighborhood.format !== "graph-compact-v2") fail(RELEASE_FILES.neighborhood, "requires graph-compact-v2");
-  if (explorer.format !== "graph-compact-v2") fail(RELEASE_FILES.explorer, "requires graph-compact-v2");
-  if (neighborhood.graphId !== recommendationGraphId(graphWithoutId(neighborhood))) {
+  if (neighborhood.format !== "graph-compact-v2" && neighborhood.format !== "graph-compact-v3") {
+    fail(RELEASE_FILES.neighborhood, "requires a v2 or v3 recommendation graph");
+  }
+  if (explorer.format !== neighborhood.format) {
+    fail(RELEASE_FILES.explorer, "must use the same compact graph format as recommendation");
+  }
+  const neighborhoodId = neighborhood.format === "graph-compact-v3"
+    ? aggregateRecommendationGraphId(graphWithoutId(neighborhood))
+    : recommendationGraphId(graphWithoutId(neighborhood));
+  if (neighborhood.graphId !== neighborhoodId) {
     fail(`${RELEASE_FILES.neighborhood}.graphId`, "does not match graph content");
   }
-  if (explorer.graphId !== visualizationGraphId(graphWithoutId(explorer))) {
+  const explorerId = explorer.format === "graph-compact-v3"
+    ? aggregateVisualizationGraphId(graphWithoutId(explorer))
+    : visualizationGraphId(graphWithoutId(explorer));
+  if (explorer.graphId !== explorerId) {
     fail(`${RELEASE_FILES.explorer}.graphId`, "does not match graph content");
   }
   if (explorer.sourceGraphId !== neighborhood.graphId) {
@@ -93,6 +105,10 @@ export function buildReleaseManifest(files: ReleaseFileBytes, options: ReleaseBu
     if (!isDeepStrictEqual(explorer[field], neighborhood[field])) {
       fail(`${RELEASE_FILES.explorer}.${field}`, "does not match recommendation graph");
     }
+  }
+  if (neighborhood.format === "graph-compact-v3" && explorer.format === "graph-compact-v3" &&
+      !isDeepStrictEqual(explorer.projection, neighborhood.projection)) {
+    fail(`${RELEASE_FILES.explorer}.projection`, "does not match recommendation graph");
   }
   const visualization = explorer.visualization;
   if (!visualization) fail(`${RELEASE_FILES.explorer}.visualization`, "is required");
@@ -138,9 +154,9 @@ export function buildReleaseManifest(files: ReleaseFileBytes, options: ReleaseBu
       source: neighborhood.dataset.source },
     catalog: { ...asset(files.catalog, RELEASE_FILES.catalog, "anime-catalog-v1"),
       animeCount: catalog.anime.length, itemMapSha256 },
-    neighborhood: { ...asset(files.neighborhood, RELEASE_FILES.neighborhood, "graph-compact-v2"),
+    neighborhood: { ...asset(files.neighborhood, RELEASE_FILES.neighborhood, neighborhood.format),
       graphId: neighborhood.graphId },
-    explorer: { ...asset(files.explorer, RELEASE_FILES.explorer, "graph-compact-v2"),
+    explorer: { ...asset(files.explorer, RELEASE_FILES.explorer, explorer.format),
       graphId: explorer.graphId, sourceGraphId: explorer.sourceGraphId },
     model: modelEntry,
     lastKnownGood: options.lastKnownGood ? {

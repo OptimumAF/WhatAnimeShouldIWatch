@@ -186,7 +186,7 @@ test("normal mode keeps graph suggestions when the optional model files are abse
 
 test("an unsupported compact graph version is rejected instead of using the legacy fallback", async ({ page }) => {
   const unsupported = demoArtifact("graph.compact.json");
-  unsupported.format = "graph-compact-v3";
+  unsupported.format = "graph-compact-v4";
   await page.route("**/*", (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/data/graph.compact.json.gz") {
@@ -206,7 +206,7 @@ test("an unsupported compact graph version is rejected instead of using the lega
 
   await page.goto(normalAppUrl);
   await expect(page.locator("#rec-message")).toContainText(
-    "graph.compact.json: format is unsupported; expected graph-compact-v1 or graph-compact-v2",
+    "graph.compact.json: format is unsupported; expected graph-compact-v1, v2, or v3",
   );
   await expect(page.locator("#rec-engine-status")).toContainText("artifact is repaired");
 });

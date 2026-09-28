@@ -684,6 +684,8 @@ applyTheme(activeTheme);
 applyContrast(activeContrast);
 
 const graphData = await loadRequiredArtifact(artifactLoader.fetchGraph());
+const samplePopularityAvailable = !isCompactGraphData(graphData) ||
+  graphData.format !== "graph-compact-v3";
 const graphNodes = getGraphNodes(graphData);
 const recommendationIndex = isCompactGraphData(graphData)
   ? buildRecommendationIndexFromCompact(graphData)
@@ -2635,7 +2637,7 @@ async function updateRecommendations(): Promise<void> {
     filters: recommendationFilters,
   });
   const activeDiscoveryView = discoveryView === "auto"
-    ? hasEngineSignal ? null : "popularity"
+    ? hasEngineSignal ? null : samplePopularityAvailable ? "popularity" : "quality"
     : discoveryView;
   if (activeDiscoveryView) {
     await renderCatalogExploration(activeDiscoveryView, preferences, eligibilityPolicy, runId, controller.signal);
@@ -2885,7 +2887,9 @@ async function updateRecommendations(): Promise<void> {
       : activeRankingMode === "model" ? "ML model ranking" : "hybrid graph+ML rank fusion";
   const filterSummary = formatActiveFilterSummary();
   const fallbackScopeNote = usingFallback && currentFallbackDisplay() === "related" && !demoMode
-    ? " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles by sampled rating count."
+    ? samplePopularityAvailable
+      ? " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles by sampled rating count."
+      : " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles in catalog order."
     : "";
   recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${finalEligibility.recommendations.length} eligible candidates (${methodLabel})${filterSummary}. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}${fallbackScopeNote}`;
 
@@ -2931,6 +2935,14 @@ async function renderCatalogExploration(
   runId: number,
   signal: AbortSignal,
 ): Promise<void> {
+  if (view === "popularity" && !samplePopularityAvailable) {
+    recEngineStatusEl.textContent = "Popularity proxy unavailable in this aggregate-only graph.";
+    recSummaryEl.textContent = "This release omits user-anime edges, so sampled rating counts are unavailable. Try community scores or shared genres.";
+    recResultsEl.innerHTML = "";
+    discoveryMetadataControlsEl.hidden = true;
+    setMetadataStatus("unavailable", "Sample-based popularity is unavailable in this graph.");
+    return;
+  }
   const popularity = buildSamplePopularityExploration(recommendationIndex);
   const eligibleCatalog = policy.evaluate(popularity, animeMetadataCache).structurallyEligible;
   const metadataScope = eligibleCatalog.slice(0, METADATA_PREFETCH_LIMIT);
@@ -2964,7 +2976,8 @@ async function renderCatalogExploration(
   if (!demoMode) {
     discoveryMetadataNoteEl.textContent =
       `Metadata loaded for ${knownInScope}/${metadataScopeIds.length} eligible titles in the first ` +
-      `${METADATA_PREFETCH_LIMIT} by sampled ratings; ${scoredInScope} have a community score and ` +
+      `${METADATA_PREFETCH_LIMIT} ${samplePopularityAvailable ? "by sampled ratings" : "in catalog order"}; ` +
+      `${scoredInScope} have a community score and ` +
       `${genresInScope} have genres. ${unavailableInScope} had no metadata. ` +
       "Checking more titles sends only their catalog IDs through the existing metadata provider.";
     discoveryLoadMetadataBtn.disabled = metadataScopeIds.length === 0 ||
@@ -2988,7 +3001,9 @@ async function renderCatalogExploration(
       : view === "related" && !hasLikedSource
       ? "Mark a title Liked to explore shared genres. Seen and Disliked titles are still excluded."
       : view === "quality"
-        ? "No eligible catalog titles with a known community score match these filters. Check more metadata or explore sampled rating counts."
+        ? samplePopularityAvailable
+          ? "No eligible catalog titles with a known community score match these filters. Check more metadata or explore sampled rating counts."
+          : "No eligible catalog titles with a known community score match these filters. Check more metadata."
         : view === "related"
           ? "No checked catalog titles share genres with your Liked titles. Check more metadata or try another Liked title."
           : "No eligible catalog titles match these filters and overrides.";
@@ -3046,7 +3061,9 @@ function renderRecommendationCard(
       : display === "popularity"
         ? `${item.supportCount} user-anime edges are retained for this title in the loaded recommendation graph.`
         : display === "quality"
-          ? `Community score ${item.score.toFixed(2)}/10 is from available catalog metadata; ${item.supportCount} sampled rating edges were retained.`
+          ? samplePopularityAvailable
+            ? `Community score ${item.score.toFixed(2)}/10 is from available catalog metadata; ${item.supportCount} sampled rating edges were retained.`
+            : `Community score ${item.score.toFixed(2)}/10 is from available catalog metadata; sampled rating counts are unavailable.`
           : `Shares ${related!.sharedGenres.join(", ")} with Liked title(s) ${related!.matchingLikedTitles.join(", ")}. ` +
             `Weighted genre-overlap sum: ${item.score.toFixed(2)}.`);
   const score = display === "coverage" ? `${item.supportCount} connections`
@@ -3056,7 +3073,9 @@ function renderRecommendationCard(
           : item.fusion ? `${item.score.toFixed(2)} rank points` : formatWeight(item.score);
   const supportLine = display === "coverage" ? `Positive graph connections: ${item.supportCount}`
     : display === "popularity" || display === "quality"
-      ? `Rating edges in loaded recommendation graph: ${item.supportCount}`
+      ? samplePopularityAvailable
+        ? `Rating edges in loaded recommendation graph: ${item.supportCount}`
+        : "Sampled rating counts unavailable in aggregate-only graph"
       : display === "related"
         ? `Shared genres: ${related!.sharedGenres.length} across ${related!.supportCount} liked titles`
         : item.fusion

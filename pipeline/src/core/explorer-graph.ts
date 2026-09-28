@@ -1,5 +1,6 @@
-import { visualizationGraphId } from "./graph-contract.js";
-import type { CompactGraphData, CompactGraphDataV1, CompactGraphDataV2, GraphData } from "../types.js";
+import { aggregateVisualizationGraphId, visualizationGraphId } from "./graph-contract.js";
+import type { CompactGraphData, CompactGraphDataV1, CompactGraphDataV2,
+  CompactGraphDataV3, GraphData } from "../types.js";
 
 export const EXPLORER_AA_LIMIT = 8000;
 export const EXPLORER_UA_LIMIT = 2500;
@@ -71,8 +72,8 @@ export function buildExplorerGraph(
       !Number.isSafeInteger(maxUserAnimeEdges) || maxUserAnimeEdges < 0) {
     throw new Error("Explorer edge limits must be nonnegative safe integers.");
   }
-  if (graph.format === "graph-compact-v2" && graph.role !== "recommendation") {
-    throw new Error("An explorer sample requires a v2 recommendation graph.");
+  if (graph.format !== "graph-compact-v1" && graph.role !== "recommendation") {
+    throw new Error(`An explorer sample requires a ${graph.format === "graph-compact-v2" ? "v2" : "v3"} recommendation graph.`);
   }
   const selectedUa = selectTopEdges(graph.ua, maxUserAnimeEdges);
   const selectedAa = selectTopEdges(graph.aa, maxAnimeAnimeEdges);
@@ -132,6 +133,23 @@ export function buildExplorerGraph(
     excludedAnimeAnimeEdges: graph.aa.length - aa.length,
   };
   const { graphId: sourceGraphId, ...sourceMetadata } = graph;
+  const pairs: CompactGraphDataV2["aa"] = aa.map(([left, right, weight, support]) => {
+    if (support === undefined) throw new Error("Versioned explorer pair support is missing.");
+    return [left, right, weight, support];
+  });
+  if (graph.format === "graph-compact-v3") {
+    const withoutId: Omit<CompactGraphDataV3, "graphId"> = {
+      ...sourceMetadata,
+      ...core,
+      format: "graph-compact-v3",
+      role: "visualization",
+      sourceGraphId,
+      visualization,
+      projection: { ...graph.projection },
+      aa: pairs,
+    };
+    return { ...withoutId, graphId: aggregateVisualizationGraphId(withoutId) };
+  }
   const withoutId: Omit<CompactGraphDataV2, "graphId"> = {
     ...sourceMetadata,
     ...core,
@@ -139,10 +157,7 @@ export function buildExplorerGraph(
     role: "visualization",
     sourceGraphId,
     visualization,
-    aa: aa.map(([left, right, weight, support]) => {
-      if (support === undefined) throw new Error("V2 explorer pair support is missing.");
-      return [left, right, weight, support];
-    }),
+    aa: pairs,
   };
   return { ...withoutId, graphId: visualizationGraphId(withoutId) };
 }

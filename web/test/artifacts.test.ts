@@ -101,7 +101,7 @@ test("v1 contracts accept selected user-rating and pair subsets with matching co
 test("rejects unsupported versions, malformed tuples, duplicate IDs, and broken graph references", () => {
   const original = fixture("graph.compact.json");
   const cases: [string, (value: any) => void, RegExp][] = [
-    ["format", (v) => { v.format = "graph-compact-v3"; }, /format.*unsupported/],
+    ["format", (v) => { v.format = "graph-compact-v4"; }, /format.*unsupported/],
     ["extra version", (v) => { v.version = 2; }, /version.*unsupported/],
     ["anime tuple", (v) => { v.anime[0].push("extra"); }, /anime\[0\].*exactly 2/],
     ["ua tuple", (v) => { v.ua[0].pop(); }, /ua\[0\].*exactly 3/],
@@ -118,6 +118,30 @@ test("rejects unsupported versions, malformed tuples, duplicate IDs, and broken 
     mutate(graph);
     assert.throws(() => parseCompactGraph(graph, "graph fixture"), message, name);
   }
+});
+
+test("v3 retains pair statistics but rejects public user rows and hidden fields", () => {
+  const graph = fixture("graph.compact.json");
+  graph.format = "graph-compact-v3";
+  graph.projection = { policy: "omit-user-anime-v1" };
+  graph.userIds = [];
+  graph.ua = [];
+  graph.userCount = 0;
+  graph.nodeCount = graph.anime.length;
+  graph.edgeCount = graph.aa.length;
+  assert.equal(parseCompactGraph(graph, "aggregate", "recommendation"), graph);
+  assert.equal(graph.truncation.selectedRatings, 18);
+  assert.throws(() => parseCompactGraph({ ...graph, userIds: ["invented"] }, "aggregate"),
+    /userIds\/ua must be empty/);
+  assert.throws(() => parseCompactGraph({ ...graph, hiddenHistory: [] }, "aggregate"),
+    /root.hiddenHistory is unsupported/);
+  const manifest = fixture("release-manifest.json");
+  manifest.neighborhood.format = "graph-compact-v3";
+  manifest.explorer.format = "graph-compact-v3";
+  assert.equal(parseReleaseManifest(manifest, "aggregate manifest"), manifest);
+  manifest.explorer.format = "graph-compact-v2";
+  assert.throws(() => parseReleaseManifest(manifest, "mixed manifest"),
+    /explorer.format must be graph-compact-v3/);
 });
 
 test("v2 rejects changed semantics, missing support, mismatched counts, and wrong roles", () => {

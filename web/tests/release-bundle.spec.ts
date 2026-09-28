@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { projectAggregateGraph } from "../../pipeline/src/core/aggregate-projection";
+import { buildExplorerGraph } from "../../pipeline/src/core/explorer-graph";
+import { buildReleaseManifest } from "../../pipeline/src/release-manifest";
 
 const normalAppUrl = "http://127.0.0.1:5174/";
 const fixture = (name: string): Buffer =>
@@ -69,6 +72,48 @@ async function routeBundle(page: Page, options: { corruptGraph?: boolean; corrup
   return requests;
 }
 
+async function routeAggregateBundle(page: Page) {
+  const source = JSON.parse(fixture("graph.compact.json").toString("utf8"));
+  const graph = projectAggregateGraph(source);
+  const explorer = buildExplorerGraph(graph, 5, 0);
+  const graphBytes = Buffer.from(`${JSON.stringify(graph, null, 2)}\n`);
+  const explorerBytes = Buffer.from(`${JSON.stringify(explorer, null, 2)}\n`);
+  const catalogBytes = fixture("catalog.identity.json");
+  const release = buildReleaseManifest({ neighborhood: graphBytes, explorer: explorerBytes,
+    catalog: catalogBytes }, { tag: "data-vinvented-aggregate-browser", fixtureGenesis: true });
+  const releaseBytes = Buffer.from(`${JSON.stringify(release, null, 2)}\n`);
+  const active = { format: "active-release-bundle-v1", tag: release.tag,
+    bundleId: release.bundleId,
+    manifestSha256: crypto.createHash("sha256").update(releaseBytes).digest("hex") };
+  const files = new Map<string, Buffer>([
+    ["release-manifest.json", releaseBytes],
+    ["graph.compact.json", graphBytes],
+    ["graph-explorer.compact.json", explorerBytes],
+    ["catalog.identity.json", catalogBytes],
+  ]);
+  const requests: string[] = [];
+  await page.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/data/")) {
+      requests.push(url.pathname);
+      if (url.pathname === "/data/active.json") {
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify(active) });
+      }
+      const prefix = `/data/bundles/${release.bundleId}/`;
+      const bytes = url.pathname.startsWith(prefix) ? files.get(url.pathname.slice(prefix.length)) : null;
+      return bytes ? route.fulfill({ contentType: "application/json", body: bytes })
+        : route.fulfill({ status: 404, body: "" });
+    }
+    if (url.hostname === "api.jikan.moe") {
+      return route.fulfill({ contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": "*" }, body: '{"data":[]}' });
+    }
+    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") return route.abort();
+    return route.continue();
+  });
+  return { requests, graphBytes, release };
+}
+
 test("normal mode pins one verified bundle for graph, model, and explorer", async ({ page }) => {
   const requests = await routeBundle(page);
   await page.goto(normalAppUrl);
@@ -135,4 +180,21 @@ test("a data-only bundle does not borrow a legacy model", async ({ page }) => {
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
   expect(requests.some((name) => name.includes("model-mf-web"))).toBe(false);
+});
+
+test("aggregate-only bundle ranks pairs and labels sampled popularity unavailable", async ({ page }) => {
+  const { requests, graphBytes, release } = await routeAggregateBundle(page);
+  expect(graphBytes.toString("utf8")).not.toContain("fixture-overlap-a");
+  await page.goto(normalAppUrl);
+  await page.locator("#discovery-view").selectOption("popularity");
+  await expect(page.locator("#rec-engine-status")).toContainText(
+    "Popularity proxy unavailable in this aggregate-only graph");
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#discovery-view").selectOption("auto");
+  await expect(page.locator("#rec-engine-status")).toContainText("Using graph recommendations");
+  await expect(page.locator("#rec-results")).toContainText("Moonlit Workshop");
+  expect(requests).toContain(`/data/bundles/${release.bundleId}/graph.compact.json`);
+  expect(requests.some((name) => name.includes("anonymized-ratings"))).toBe(false);
 });
