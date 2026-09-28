@@ -1008,3 +1008,13 @@
 **Plan revision and reason:** Keep M8.3's criteria. Added the independent exact-bundle approval and owner immutability-read credential because the package's own audit and the ordinary Actions token cannot establish those conditions. Restricted dispatch to `master` so an unmerged branch cannot supply approval files or verifier code.
 
 **Single next task:** Review the stacked workflow diff and verify its exact head in clean-checkout CI; then continue with the first-real-bundle and source/use approval dependencies before any real publication.
+
+## Session 2026-09-28 — M8.3 immutable workflow CI review
+
+**Reviewed implementation:** Draft [PR #46](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/46), `codex/m8-publication-workflow` implementation commit `de98718`, stacked on PR #45. The 12-file stacked diff passed `git diff --check codex/m8-publication-package...HEAD`. Reviewed the exact approval binding, package recomputation, read-only/write job boundary, default-branch condition, remote immutability and target preflight, five explicit upload paths, post-publication digests, and invented negative cases. `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/publish-data-release.yml` passed.
+
+**Clean-checkout evidence:** [CI run 36428600447](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36428600447) and GitGuardian passed on the exact implementation SHA. The job ran synthetic fixture and evaluation checks, typecheck, 85 pipeline and 107 web unit tests, 68 ML tests, 14 workflow tests, web build, and 66 mocked browser cases.
+
+**Unrun / remaining:** No workflow dispatch, real package download, release creation, repository-setting change, or provider request was made. The approval records are empty and the read-only API reports immutable releases disabled. A separately reviewed source/use grant and exact package approval, owner-enabled immutable releases and admin-read credential, and a first-real-bundle bootstrap decision remain necessary. The postpublication path is supported only by mocked API cases; M8.3 and M8 stay unchecked.
+
+**Single next task:** Resolve the first-real-bundle bootstrap design against decision 0026 using an invented candidate and explicit owner approval boundary; keep provider-derived publication held while source/use review remains unresolved.
