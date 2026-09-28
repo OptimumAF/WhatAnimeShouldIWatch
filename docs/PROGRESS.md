@@ -714,3 +714,15 @@
 **Plan revisions and reasons:** Kept M5.7's original acceptance criteria and added decision 0022's exact denominators, user-cluster resampling, and timing scope. The report labels zero positive-pair evidence separately from support 1; no graph semantics or candidate policy changed. Checked M5.7 after fresh CI and final review without claiming a production-quality or calibrated latency gate.
 
 **Single next task:** M5.8 - verify Python/TypeScript candidate, score, top-K, and exclusion parity on a tiny invented model and audit artifact loading safety.
+
+## Session 2026-09-28 — M5.8 model parity and safe artifact protocol
+
+**Branch / starting commit:** `codex/m5-artifact-parity` from clean `594bef6`, the final CI-passing head of stacked draft PR #36. Read root `AGENTS.md`, the living plan/latest handoff, and actual MF/LightGCN writers, three pickle-enabled readers, the compact browser model parser/scorer, and the gated retrain workflow. No personal history, live provider data, or production model was read.
+
+**Protocol fixed before parity:** [Decision 0023](decisions/0023-model-artifact-parity-and-safety.md), `fixtures/synthetic-model-parity-input.json`, and its hash-pinned specification define one eight-title numeric model, signed/Seen preferences, history/explicit/allowlist/metadata exclusions, a Seen-only case, eight-decimal export, absolute score tolerance `1e-5`, and stable tie order. New NPZ exchange must use numeric arrays and a SHA-256-bound JSON sidecar; default readers must refuse pickle/object arrays. Existing browser JSON formats remain valid.
+
+**Checks / status:** The starting worktree was clean on `594bef6`. No M5.8 parity measurement or artifact safety test was run before this protocol. M5.8 and the M5 exit gate remain unchecked; decision 0001 still holds provider-derived training and public artifacts.
+
+**Files in this protocol slice:** New decision 0023 and invented input/specification; appended the living plan, existing `AGENTS.md`, and this progress record.
+
+**Single next task:** Implement the safe numeric artifact boundary and independent Python/browser parity harness, then verify with synthetic and mocked gates.

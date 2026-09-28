@@ -1,0 +1,62 @@
+{
+  "format": "synthetic-model-parity-input-v1",
+  "model": {
+    "globalMean": 5,
+    "userIds": ["invented-fit-user"],
+    "userEmbeddings": [[0.25, -0.125]],
+    "userBiases": [0.125],
+    "animeIds": [301, 302, 303, 304, 305, 306, 307, 308],
+    "titles": ["Invented Alpha", "Invented Beta", "Invented Gamma", "Invented Delta", "Invented Epsilon", "Invented Zeta", "Invented Eta", "Invented Theta"],
+    "biases": [0, 0.25, -0.125, 0, 0.5, -0.25, 0.125, 0.125],
+    "embeddings": [[1, 0], [0.5, 0.25], [-0.75, 0.5], [0, -1], [0.125, -0.5], [0.75, -0.25], [0.25, 0.75], [0.25, 0.75]],
+    "trainUserItems": [[0, 2]]
+  },
+  "metadata": [
+    {"animeId": 301, "year": 2020, "score": 7, "genres": ["Adventure"]},
+    {"animeId": 302, "year": 2021, "score": 7.5, "genres": ["Mystery"]},
+    {"animeId": 303, "year": 2022, "score": 8, "genres": ["Mystery"]},
+    {"animeId": 304, "year": 2023, "score": 8, "genres": ["Adventure"]},
+    {"animeId": 305, "year": 2024, "score": 8.5, "genres": ["Mystery"]},
+    {"animeId": 306, "year": 2025, "score": 9, "genres": ["Adventure"]},
+    {"animeId": 307, "year": 2023, "score": 7.8, "genres": ["Mystery"]},
+    {"animeId": 308, "year": 2022, "score": 8.2, "genres": ["Adventure"]}
+  ],
+  "cases": [
+    {
+      "id": "signed-and-excluded",
+      "preferences": [
+        {"animeId": 301, "sentiment": "liked", "importance": 1, "confidence": 1},
+        {"animeId": 303, "sentiment": "disliked", "importance": 2, "confidence": 0.5},
+        {"animeId": 304, "sentiment": "seen", "importance": 1, "confidence": 0}
+      ],
+      "historySeen": [305],
+      "exclude": [306],
+      "includeOnly": [],
+      "filters": {"genre": "", "minYear": null, "maxYear": null, "minScore": null},
+      "topK": 2
+    },
+    {
+      "id": "metadata-and-allowlist",
+      "preferences": [
+        {"animeId": 302, "sentiment": "liked", "importance": 1.5, "confidence": 1},
+        {"animeId": 301, "sentiment": "seen", "importance": 1, "confidence": 0}
+      ],
+      "historySeen": [],
+      "exclude": [308],
+      "includeOnly": [303, 305, 307, 308],
+      "filters": {"genre": "Mystery", "minYear": 2022, "maxYear": null, "minScore": 7.5},
+      "topK": 2
+    },
+    {
+      "id": "seen-only",
+      "preferences": [
+        {"animeId": 301, "sentiment": "seen", "importance": 1, "confidence": 0}
+      ],
+      "historySeen": [],
+      "exclude": [],
+      "includeOnly": [],
+      "filters": {"genre": "", "minYear": null, "maxYear": null, "minScore": null},
+      "topK": 2
+    }
+  ]
+}
