@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   ArtifactValidationError,
+  parseActiveReleaseBundle,
   parseCompactGraph,
   parseCompactModel,
   parseDemoCatalog,
@@ -246,6 +247,15 @@ test("release identity and manifest contracts reject stale fields and mutable ta
     /datasetSha256.*SHA-256/);
   delete malformedModel.datasetSha256;
   assert.equal(parseCompactModel(malformedModel, "older compact model"), malformedModel);
+  const active = { format: "active-release-bundle-v1", tag: manifest.tag,
+    bundleId: manifest.bundleId, manifestSha256: "b".repeat(64) };
+  assert.equal(parseActiveReleaseBundle(active, "active.json"), active);
+  assert.throws(() => parseActiveReleaseBundle({ ...active, tag: "data-latest" }, "active.json"),
+    /tag.*versioned/);
+  assert.throws(() => parseActiveReleaseBundle({ ...active, manifestSha256: "wrong" }, "active.json"),
+    /manifestSha256.*SHA-256/);
+  assert.throws(() => parseActiveReleaseBundle({ ...active, extra: true }, "active.json"),
+    /root.extra.*unsupported/);
 });
 
 test("validation errors identify the artifact and field without echoing content", () => {

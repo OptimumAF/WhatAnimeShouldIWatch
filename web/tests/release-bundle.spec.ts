@@ -1,0 +1,138 @@
+import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
+import { expect, test, type Page } from "@playwright/test";
+
+const normalAppUrl = "http://127.0.0.1:5174/";
+const fixture = (name: string): Buffer =>
+  readFileSync(new URL(`../public/demo-data/${name}`, import.meta.url));
+const manifestBytes = fixture("release-manifest.json");
+const manifest = JSON.parse(manifestBytes.toString("utf8"));
+const pointer = {
+  format: "active-release-bundle-v1", tag: manifest.tag, bundleId: manifest.bundleId,
+  manifestSha256: crypto.createHash("sha256").update(manifestBytes).digest("hex"),
+};
+
+async function routeBundle(page: Page, options: { corruptGraph?: boolean; corruptPointer?: boolean;
+  corruptExplorer?: boolean; corruptManifest?: boolean; withoutModel?: boolean } = {}) {
+  const { bundleId: _originalId, ...originalPayload } = manifest;
+  const dataOnlyPayload = { ...originalPayload, model: null };
+  const dataOnlyManifest = { ...dataOnlyPayload,
+    bundleId: crypto.createHash("sha256").update(JSON.stringify(dataOnlyPayload)).digest("hex") };
+  const deliveredManifest = options.withoutModel ? dataOnlyManifest : manifest;
+  const deliveredManifestBytes = options.withoutModel
+    ? Buffer.from(`${JSON.stringify(dataOnlyManifest, null, 2)}\n`) : manifestBytes;
+  const deliveredPointer = options.withoutModel ? {
+    format: "active-release-bundle-v1", tag: deliveredManifest.tag,
+    bundleId: deliveredManifest.bundleId,
+    manifestSha256: crypto.createHash("sha256").update(deliveredManifestBytes).digest("hex"),
+  } : pointer;
+  const requests: string[] = [];
+  await page.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/data/")) {
+      requests.push(url.pathname);
+      if (url.pathname === "/data/active.json") {
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify(options.corruptPointer
+          ? { ...deliveredPointer, manifestSha256: "invalid" } : deliveredPointer) });
+      }
+      const prefix = `/data/bundles/${deliveredManifest.bundleId}/`;
+      if (url.pathname.startsWith(prefix)) {
+        const name = url.pathname.slice(prefix.length);
+        if (name === "release-manifest.json") {
+          return route.fulfill({ contentType: "application/json",
+            body: options.corruptManifest ? Buffer.from("{}") : deliveredManifestBytes });
+        }
+        if (["graph.compact.json", "graph-explorer.compact.json", "catalog.identity.json",
+          "model-mf-web.compact.json"].includes(name)) {
+          if (options.withoutModel && name === "model-mf-web.compact.json") {
+            return route.fulfill({ status: 404, body: "" });
+          }
+          const body = options.corruptGraph && name === "graph.compact.json"
+            ? Buffer.from("{}")
+            : options.corruptExplorer && name === "graph-explorer.compact.json"
+              ? Buffer.from("{}") : fixture(name);
+          return route.fulfill({ contentType: "application/json", body });
+        }
+      }
+      if (options.withoutModel && url.pathname === "/data/model-mf-web.compact.json.gz") {
+        return route.fulfill({ contentType: "application/json", body: fixture("model-mf-web.compact.json") });
+      }
+      return route.fulfill({ status: 404, body: "" });
+    }
+    if (url.hostname === "api.jikan.moe") {
+      return route.fulfill({ contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": "*" }, body: '{"data":[]}' });
+    }
+    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") return route.abort();
+    return route.continue();
+  });
+  return requests;
+}
+
+test("normal mode pins one verified bundle for graph, model, and explorer", async ({ page }) => {
+  const requests = await routeBundle(page);
+  await page.goto(normalAppUrl);
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations (2 factors)");
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#network-render-status")).toContainText("nodes");
+  expect(requests.filter((name) => name === "/data/active.json")).toHaveLength(1);
+  expect(requests).toContain(`/data/bundles/${manifest.bundleId}/graph.compact.json`);
+  expect(requests).toContain(`/data/bundles/${manifest.bundleId}/model-mf-web.compact.json`);
+  expect(requests).toContain(`/data/bundles/${manifest.bundleId}/graph-explorer.compact.json`);
+  expect(requests.some((name) => name === "/data/graph.json" ||
+    name === "/data/graph.compact.json.gz")).toBe(false);
+});
+
+test("a present corrupt bundle graph fails without reading a legacy graph", async ({ page }) => {
+  const requests = await routeBundle(page, { corruptGraph: true });
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-message")).toContainText(
+    "graph.compact.json: byte length or SHA-256 differs from release-manifest.json",
+  );
+  expect(requests.some((name) => name === "/data/graph.json" ||
+    name === "/data/graph.compact.json.gz")).toBe(false);
+});
+
+test("a present malformed active pointer fails closed", async ({ page }) => {
+  const requests = await routeBundle(page, { corruptPointer: true });
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-message")).toContainText(
+    "active.json: manifestSha256 must be a lowercase SHA-256 digest",
+  );
+  expect(requests.some((name) => name === "/data/graph.json" ||
+    name === "/data/graph.compact.json.gz")).toBe(false);
+});
+
+test("a changed manifest cannot select a different asset set", async ({ page }) => {
+  const requests = await routeBundle(page, { corruptManifest: true });
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-message")).toContainText(
+    "release-manifest.json: SHA-256 differs from active.json.manifestSha256",
+  );
+  expect(requests.some((name) => name === "/data/graph.json" ||
+    name === "/data/graph.compact.json.gz")).toBe(false);
+});
+
+test("a stale explorer cache is rejected inside the pinned bundle", async ({ page }) => {
+  await routeBundle(page, { corruptExplorer: true });
+  await page.goto(normalAppUrl);
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#network-render-status")).toContainText(
+    "graph-explorer.compact.json: byte length or SHA-256 differs from release-manifest.json",
+  );
+});
+
+test("a data-only bundle does not borrow a legacy model", async ({ page }) => {
+  const requests = await routeBundle(page, { withoutModel: true });
+  await page.goto(normalAppUrl);
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
+  expect(requests.some((name) => name.includes("model-mf-web"))).toBe(false);
+});

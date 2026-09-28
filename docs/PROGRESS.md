@@ -844,3 +844,39 @@
 **Plan revisions and reasons:** The demo tag is derived from exact synthetic asset hashes to prevent one fixture tag naming changed bytes. The manifest payload normalizes dataset and previous-pointer field order so equivalent prior pointers yield the same bundle ID. Decision 0026 records both refinements; no task ID or acceptance criterion changed.
 
 **Single next task:** M8.2 — validate bounded downloads into a temporary complete bundle and atomically activate it only after manifest, byte, schema, and last-known-good checks pass, using invented assets and mocked transport.
+
+## Session 2026-09-28 — M8.2 installation protocol
+
+**Branch / starting commit:** `codex/m8-atomic-installer` from clean `2c1839743cfef8ac9cdf2be627c926c105db3f34`, final-head CI-passing PR #41. Read root `AGENTS.md`, the M8 plan and latest handoff, decisions 0001/0002/0026, the current file-by-file release fetch/sync scripts, runtime browser loader, and held Pages workflow. No private watchlist, production asset, or provider endpoint was read.
+
+**Finding and scope:** The current mutable fetch writes each release artifact to `data/` as it arrives; `sync:web` likewise copies a graph and model separately. [Decision 0027](decisions/0027-atomic-release-installation.md) predeclares a versioned `web/public/data/bundles/<bundleId>/` store and one atomic `active.json` pointer, bounded staged downloads, verified prior-bundle linkage, and browser reads pinned to one directory. A missing pointer retains deliberate legacy fallback; a present bad pointer fails closed. The live `data-latest` and gated provider workflows remain untouched.
+
+**Files and checks at protocol stage:** Added decision 0027 and merged its guidance into the existing `AGENTS.md`; updated the living plan and this record. No downloader or browser code has changed yet. M8.2 remains unchecked until implementation, mocked failure/recovery and browser verification, full synthetic gates, and clean-checkout review.
+
+**Single next task:** Implement the staged installer and active-pointer browser route with invented fixture assets and injected transport.
+
+## Session 2026-09-28 — M8.2 synthetic staged installer and pinned browser reads
+
+**Branch / starting commit:** `codex/m8-atomic-installer` at protocol commit `b066f4a`, based on final-head CI-passing `2c18397`. Decision 0027 was fixed before code changes. No live release, private watchlist, provider endpoint, or production dataset was read.
+
+**Implementation and affected files:** `pipeline/src/install-release-bundle.ts` downloads a bounded manifest, accepts one plain/gzip representation per declared file, caps compressed and expanded bytes, and verifies every plain-byte hash, schema, graph link, item map, and named active prior in a temporary directory before renaming it under its bundle ID. It changes only `active.json` to activate and preserves the old directory; a failed activation can reuse the completed new directory. `pipeline/src/github-release-transport.ts` resolves an explicit versioned GitHub release and reconstructs listed asset URLs, with an injected `fetch` in tests; routine tests make no network request. `web/src/artifacts.ts` adds a strict active-pointer contract and shared size limits. `web/src/artifact-loader.ts` pins one pointer per normal-mode session, checks exact manifest and asset bytes, and never reads legacy files after a present pointer fails. It still uses deliberate compact/legacy fallback on pointer 404. `.gitignore` excludes versioned local bundles/staging files; new pipeline/unit/browser tests cover the path. Existing mutable `data-latest` fetch/sync/workflows were not invoked or changed.
+
+**Verification commands and actual results:** `npm run data:fixture:check` passed with 7 invented users/8 anime/11 pairs. `npm run typecheck` passed. `npm test` passed 70 pipeline and 105 web unit cases; the focused installer run passed 7 cases. `npm run test:python` passed 68 ML cases; `python -m unittest discover -s scripts/tests` passed 12 workflow cases; `npm run build:web` passed; `npm run test:e2e` passed 65 invented/mocked browser cases. Tests rejected missing, corrupt, partial, ambiguous, stale, oversized, and undeclared assets without changing the prior pointer. They verified data-only model isolation, graph/explorer hash failures, malformed/mismatched pointer failure, plain/gzip installation, one-pointer browser pinning, and retry after simulated pre-activation failure. No real GitHub API or release download occurred.
+
+**Checks not run / blockers:** Clean-checkout PR CI and final stacked-diff review remain. Provider source/use approval, production payload measurements for the provisional caps, release publication, Pages deployment, model promotion, and practiced remote rollback are absent. M8.2 and the M8 exit gate remain unchecked pending acceptance review; the old workflow is still legacy and approval-gated.
+
+**Plan revisions and reasons:** Decision 0027 separates atomic local activation from later approved deployment wiring. The browser fails closed on a present bad pointer to avoid silently combining a corrupt new release with old assets. The adapter accepts only an explicit versioned tag and does not forward the metadata token to asset URLs. No task ID or acceptance criterion was lowered.
+
+**Single next task:** Rerun the full synthetic gate on the final diff, review it, and verify PR CI before checking M8.2.
+
+## Session 2026-09-28 — M8.2 acceptance and next publication task
+
+**Branch / reviewed implementation:** `codex/m8-atomic-installer`, commit `1100d58adb7e60996e68171aa427fd1289ace2a2`, draft [PR #42](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/42) stacked on the clean M8.1 branch at `2c18397`. Reviewed the full 13-file stacked change, including decision 0027, installer/transport, browser loader, tests, ignore rules, and records; `git diff --check codex/m8-release-manifest...HEAD` passed.
+
+**Acceptance evidence:** [Fixture and fast checks run 36413680033](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36413680033) and GitGuardian passed on the exact implementation SHA. Clean checkout and install, synthetic fixture and evaluation commands, typecheck, 70 pipeline tests, 105 web unit tests, 68 ML tests, 12 approval/workflow tests, web build, and 65 mocked browser tests passed. The installer cases prove bounded plain/gzip downloads, exact hashes and full schema/count validation, unchanged prior pointer after partial/corrupt/missing/oversized files, and reuse of a verified directory after simulated pre-activation failure. Browser cases prove one pinned directory, malformed and stale file failure, and no legacy read after a present pointer. M8.2's stated atomic local installation acceptance criteria pass; the plan checkbox is updated in this record change.
+
+**Checks not run / remaining blockers:** No real GitHub release, provider request, private history, production dataset/model, data publication, Pages deployment, model promotion, or remote rollback was used. The old `data-latest` workflow and its file-by-file sync remain approval-gated; M8.5 must connect any approved deployment to this verified route. The synthetic route's size caps are provisional until measured against approved release payloads. Source/use decisions and owner approvals in decisions 0001/0002/0024 remain unresolved. The M8 exit gate remains open.
+
+**Plan revisions and reasons:** M8.2 is checked after its exact-head CI and review. Decision 0027's scope continues to separate local atomic activation from publication and hosted deployment; no acceptance criterion or task ID was lowered.
+
+**Single next task:** M8.3 — make release-data publication auditable using an invented asset inventory and approval-gated workflow checks, without publishing or collecting data.

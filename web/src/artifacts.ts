@@ -193,6 +193,21 @@ export interface ReleaseManifestV1 {
   lastKnownGood: { tag: string; bundleId: string; manifestSha256: string } | null;
 }
 
+export interface ActiveReleaseBundleV1 {
+  format: "active-release-bundle-v1";
+  tag: string;
+  bundleId: string;
+  manifestSha256: string;
+}
+
+export const RELEASE_BUNDLE_LIMITS = {
+  manifestBytes: 256 * 1024,
+  compressedAssetBytes: 64 * 1024 * 1024,
+  plainAssetBytes: 256 * 1024 * 1024,
+  totalPlainBytes: 512 * 1024 * 1024,
+  activePointerBytes: 16 * 1024,
+} as const;
+
 export class ArtifactValidationError extends Error {
   constructor(label: string, location: string, reason: string) {
     super(`${label}: ${location} ${reason}. Rebuild or replace this artifact.`);
@@ -678,6 +693,16 @@ export function parseReleaseManifest(value: unknown, label: string): ReleaseMani
     sha256(previous.manifestSha256, label, "lastKnownGood.manifestSha256");
   }
   return value as ReleaseManifestV1;
+}
+
+export function parseActiveReleaseBundle(value: unknown, label: string): ActiveReleaseBundleV1 {
+  const active = record(value, label, "root");
+  exactFields(active, ["format", "tag", "bundleId", "manifestSha256"], label, "root");
+  expectFormat(active, "active-release-bundle-v1", label);
+  versionTag(active.tag, label, "tag");
+  sha256(active.bundleId, label, "bundleId");
+  sha256(active.manifestSha256, label, "manifestSha256");
+  return value as ActiveReleaseBundleV1;
 }
 
 function checkModelBase(model: Record<string, unknown>, label: string): number {
