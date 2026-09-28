@@ -782,3 +782,15 @@
 **Plan revisions and reasons:** Extended decision 0024 and the M5.9 plan evidence to distinguish data-only containment from a future model promotion route. Added destination inspection because refusing only newly staged models could still leave an old model on an updated release. Added a read-only preflight with an empty committed review list so invented compatibility tests cannot accidentally authorize publication. No acceptance criterion was lowered.
 
 **Single next task:** Add a synthetic LightGCN/content candidate adapter to the same split-first, centrally eligible new-user evaluation harness without Jikan or live provider calls. Keep real model promotion held for a reviewed source/quality decision and remote rollback proof.
+
+## Session 2026-09-28 — M5.9 synthetic experiment protocol
+
+**Branch / starting commit:** `codex/m5-experiment-adapters` from clean `a3b23a129b51cab5fb2bc34caa0ceb665f5ccff9`, the final-head CI-passing PR #39 revision. Read the root `AGENTS.md`, living plan/latest handoff, decision 0024, existing split-first baseline evaluator/exporter, and legacy LightGCN/content scripts. No browser account history, provider endpoint, or production artifact was read.
+
+**Finding and scope:** The old LightGCN command makes its own split from a full graph and the content builder calls Jikan, so neither supplies M5.9 comparison evidence. [Decision 0025](decisions/0025-synthetic-experiment-adapters.md) and `fixtures/synthetic-experiment-spec.json` fix two invented candidates, CPU LightGCN parameters, a ratings-free feature snapshot, and the exact M5.6 browser comparison path before validation scoring. The authored final cohort remains unscored.
+
+**Files in this protocol slice:** `AGENTS.md`, `docs/decisions/0025-synthetic-experiment-adapters.md`, `fixtures/synthetic-experiment-content-metadata.json`, `fixtures/synthetic-experiment-spec.json`, the living plan, and this handoff. The baseline spec hash is `9b9beefe8a461fcea2ef704dae16dd220f61442bbd50af6e0062c498d2257303`; the content snapshot hash is `0550674621e50cfdcee5da1e1dd7737478b36f388de2bae3bf849464e85fce6e` after CRLF normalization.
+
+**Checks / blockers:** No new experiment fit or validation metric has run at this protocol stage. The separate source/use, quality, promotion, and rollback holds from decision 0024 remain. M5.9 and the M5 exit gate are unchecked.
+
+**Single next task:** Implement and verify the train-only LightGCN and ratings-free content exporters, then evaluate both with the shared M5.6 new-user cases and central eligibility path.

@@ -1,0 +1,30 @@
+{
+  "format": "experiment-content-metadata-v1",
+  "source": "invented-fixture",
+  "anime": [
+    {"animeId": 201, "genres": ["Invented", "Adventure"], "studios": ["Studio A"]},
+    {"animeId": 202, "genres": ["Invented", "Mystery"], "studios": ["Studio B"]},
+    {"animeId": 203, "genres": ["Invented", "Adventure"], "studios": ["Studio C"]},
+    {"animeId": 204, "genres": ["Invented", "Mystery"], "studios": ["Studio A"]},
+    {"animeId": 205, "genres": ["Invented", "Adventure"], "studios": ["Studio B"]},
+    {"animeId": 206, "genres": ["Invented", "Mystery"], "studios": ["Studio C"]},
+    {"animeId": 207, "genres": ["Invented", "Adventure"], "studios": ["Studio A"]},
+    {"animeId": 208, "genres": ["Invented", "Mystery"], "studios": ["Studio B"]},
+    {"animeId": 209, "genres": ["Invented", "Adventure"], "studios": ["Studio C"]},
+    {"animeId": 210, "genres": ["Invented", "Mystery"], "studios": ["Studio A"]},
+    {"animeId": 211, "genres": ["Invented", "Adventure"], "studios": ["Studio B"]},
+    {"animeId": 212, "genres": ["Invented", "Mystery"], "studios": ["Studio C"]},
+    {"animeId": 213, "genres": ["Invented", "Adventure"], "studios": ["Studio A"]},
+    {"animeId": 214, "genres": ["Invented", "Mystery"], "studios": ["Studio B"]},
+    {"animeId": 215, "genres": ["Invented", "Adventure"], "studios": ["Studio C"]},
+    {"animeId": 216, "genres": ["Invented", "Mystery"], "studios": ["Studio A"]},
+    {"animeId": 217, "genres": ["Invented", "Adventure"], "studios": ["Studio B"]},
+    {"animeId": 218, "genres": ["Invented", "Mystery"], "studios": ["Studio C"]},
+    {"animeId": 219, "genres": ["Invented", "Adventure"], "studios": ["Studio A"]},
+    {"animeId": 220, "genres": ["Invented", "Mystery"], "studios": ["Studio B"]},
+    {"animeId": 221, "genres": ["Invented", "Adventure"], "studios": ["Studio C"]},
+    {"animeId": 222, "genres": ["Invented", "Mystery"], "studios": ["Studio A"]},
+    {"animeId": 223, "genres": ["Invented", "Adventure"], "studios": ["Studio B"]},
+    {"animeId": 224, "genres": ["Invented", "Mystery"], "studios": ["Studio C"]}
+  ]
+}
