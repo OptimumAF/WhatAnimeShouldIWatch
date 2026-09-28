@@ -476,6 +476,7 @@ app.innerHTML = `
               <p id="discovery-metadata-note" class="muted" role="status"></p>
               <button id="discovery-load-metadata" type="button" class="ghost-btn">Check 12 more catalog titles for quality and genres</button>
             </div>
+            <p id="rec-action-status" class="rec-action-status" role="status" aria-live="polite" tabindex="-1"></p>
             <ol id="rec-results" class="rec-results"></ol>
 
             <section class="seasonal">
@@ -698,6 +699,7 @@ const excludeInput = mustElement<HTMLInputElement>("#exclude-input");
 const excludeAnimeEl = mustElement<HTMLDivElement>("#exclude-anime");
 const clearExcludeBtn = mustElement<HTMLButtonElement>("#clear-exclude");
 const recSummaryEl = mustElement<HTMLParagraphElement>("#rec-summary");
+const recActionStatusEl = mustElement<HTMLParagraphElement>("#rec-action-status");
 const discoveryMetadataControlsEl = mustElement<HTMLDivElement>("#discovery-metadata-controls");
 const discoveryMetadataNoteEl = mustElement<HTMLParagraphElement>("#discovery-metadata-note");
 const discoveryLoadMetadataBtn = mustElement<HTMLButtonElement>("#discovery-load-metadata");
@@ -1191,12 +1193,36 @@ watchlistListEl.addEventListener("click", (event) => {
 recResultsEl.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  const button = target.closest<HTMLButtonElement>("button[data-watchlist-save-id]");
+  const button = target.closest<HTMLButtonElement>("button[data-card-action]");
   if (!button) return;
-  const animeId = Number(button.dataset.watchlistSaveId);
+  const animeId = Number(button.dataset.animeId);
+  if (!Number.isSafeInteger(animeId) || animeId <= 0) return;
   const anime = recommendationIndex.animeByAnimeId.get(animeId);
-  if (anime) addToWatchlist(anime);
+  if (!anime) return;
+  if (button.dataset.cardAction === "save") {
+    addToWatchlist(anime);
+    recActionStatusEl.textContent = watchlistStatusEl.textContent;
+    recActionStatusEl.focus({ preventScroll: true });
+  } else if (button.dataset.cardAction === "seen") {
+    markResultSeen(anime);
+  } else if (button.dataset.cardAction === "hide") {
+    hideResult(anime);
+  } else if (button.dataset.cardAction === "retry-metadata") {
+    void retryResultMetadata(anime, button);
+  }
 });
+
+recResultsEl.addEventListener("error", (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.classList.contains("rec-cover")) return;
+  const placeholder = document.createElement("div");
+  placeholder.className = "rec-cover rec-cover-placeholder rec-cover-error";
+  placeholder.setAttribute("role", "img");
+  const title = image.closest(".rec-item")?.querySelector(".rec-title")?.textContent ?? "this title";
+  placeholder.setAttribute("aria-label", `Cover could not load for ${title}`);
+  placeholder.textContent = "Cover could not load";
+  image.replaceWith(placeholder);
+}, true);
 
 bulkImportForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -2701,6 +2727,61 @@ function addToWatchlist(anime: AnimeInfo): boolean {
   }], `Saved ${anime.label} to Plan to Watch.`);
 }
 
+function markResultSeen(anime: AnimeInfo): void {
+  if (selectedAnimeNodeIds.includes(anime.nodeId)) return;
+  selectedAnimeNodeIds.push(anime.nodeId);
+  selectedAnimePreferences.set(anime.nodeId, manualPreference(anime.nodeId, "seen"));
+  if (!persistRecommendationState()) {
+    selectedAnimeNodeIds.pop();
+    selectedAnimePreferences.delete(anime.nodeId);
+    recActionStatusEl.textContent = "Browser storage rejected Seen; no preference was saved.";
+    recActionStatusEl.focus({ preventScroll: true });
+    void updateRecommendations();
+    return;
+  }
+  renderSelectedAnime();
+  recActionStatusEl.textContent = `Marked ${anime.label} Seen. This hides it without treating it as Liked. Remove it from Watched & Preferences to undo.`;
+  recActionStatusEl.focus({ preventScroll: true });
+  void updateRecommendations();
+}
+
+function hideResult(anime: AnimeInfo): void {
+  if (excludeCandidateNodeIds.includes(anime.nodeId)) return;
+  excludeCandidateNodeIds.push(anime.nodeId);
+  if (!persistRecommendationState()) {
+    excludeCandidateNodeIds.pop();
+    recActionStatusEl.textContent = "Browser storage rejected Not interested; the title was not hidden.";
+    recActionStatusEl.focus({ preventScroll: true });
+    void updateRecommendations();
+    return;
+  }
+  renderExcludeCandidates();
+  recActionStatusEl.textContent = `Hidden ${anime.label}. Not interested excludes this title; it does not create a Disliked model signal. Remove it under Candidate Overrides to undo.`;
+  recActionStatusEl.focus({ preventScroll: true });
+  void updateRecommendations();
+}
+
+async function retryResultMetadata(anime: AnimeInfo, button: HTMLButtonElement): Promise<void> {
+  const signal = recommendationController?.signal;
+  if (!signal || signal.aborted || demoMode) return;
+  animeMetadataFailed.delete(anime.animeId);
+  button.disabled = true;
+  button.textContent = "Retrying details...";
+  recActionStatusEl.textContent = `Retrying details for ${anime.label}.`;
+  const metadata = await ensureAnimeMetadata(anime.animeId, signal);
+  if (signal.aborted) return;
+  if (metadata || animeMetadataUnavailable.has(anime.animeId)) {
+    recActionStatusEl.textContent = metadata
+      ? `Details loaded for ${anime.label}.`
+      : `Details remain unavailable for ${anime.label}.`;
+    void updateRecommendations();
+  } else {
+    button.disabled = false;
+    button.textContent = "Retry details";
+    recActionStatusEl.textContent = `Details still failed for ${anime.label}. You can retry.`;
+  }
+}
+
 function changeWatchlistEntry(nextEntry: WatchlistEntry): void {
   const current = watchlistEntries.find((item) => item.animeId === nextEntry.animeId);
   if (!current || JSON.stringify(current) === JSON.stringify(nextEntry)) return;
@@ -3379,24 +3460,33 @@ function renderRecommendationCard(
   relationshipNote?: string,
 ): string {
   const metadata = animeMetadataCache.get(item.anime.animeId) ?? null;
-  const imageUrl = safeExternalImageUrl(metadata?.imageUrl ?? "");
+  const metadataState = metadata ? "ready"
+    : animeMetadataFailed.has(item.anime.animeId) ? "failed"
+      : animeMetadataUnavailable.has(item.anime.animeId) ? "unavailable" : "not-loaded";
+  const rawImageUrl = metadata?.imageUrl ?? "";
+  const imageUrl = safeExternalImageUrl(rawImageUrl);
+  const coverLabel = rawImageUrl && !imageUrl ? "Cover blocked"
+    : metadataState === "unavailable" ? "Cover unavailable"
+      : metadataState === "ready" ? "No cover available" : "Cover not loaded";
   const coverHtml =
     imageUrl
       ? `<img class="rec-cover" src="${escapeHtml(imageUrl)}" alt="Cover for ${escapeHtml(item.anime.label)}" loading="lazy" referrerpolicy="no-referrer" />`
-      : `<div class="rec-cover rec-cover-placeholder" aria-hidden="true">No image</div>`;
-  const metadataMeta = formatRecommendationMetadataMeta(metadata);
+      : `<div class="rec-cover rec-cover-placeholder" role="img" aria-label="${escapeHtml(`${coverLabel} for ${item.anime.label}`)}">${coverLabel}</div>`;
+  const metadataMeta = formatRecommendationMetadataMeta(metadata, metadataState);
   const synopsisText =
     metadata && metadata.synopsis
       ? truncateText(metadata.synopsis, 180)
-      : "Metadata loading...";
+      : metadataState === "not-loaded" ? "Description not loaded."
+        : metadataState === "failed" ? "Description failed to load."
+          : "No description available.";
   const synopsisClass =
     metadata && metadata.synopsis
       ? "rec-synopsis"
       : "rec-synopsis rec-synopsis-muted";
   const related = display === "related" ? item as GenreOverlapRecommendation : null;
   const explanation = display === "ranking" ? explainRecommendation(item) : null;
-  const reason = explanation ? formatRecommendationWhyHtml(explanation)
-    : escapeHtml(display === "coverage"
+  const reasonHeadline = display === "ranking" ? ""
+    : display === "coverage"
       ? `Catalog coverage: ${item.supportCount} positive graph connections; personal preference evidence is unavailable.`
       : display === "popularity"
         ? `${item.supportCount} user-anime edges are retained for this title in the loaded recommendation graph.`
@@ -3405,12 +3495,28 @@ function renderRecommendationCard(
             ? `Community score ${item.score.toFixed(2)}/10 is from available catalog metadata; ${item.supportCount} sampled rating edges were retained.`
             : `Community score ${item.score.toFixed(2)}/10 is from available catalog metadata; sampled rating counts are unavailable.`
           : `Shares ${related!.sharedGenres.join(", ")} with Liked title(s) ${related!.matchingLikedTitles.join(", ")}. ` +
-            `Weighted genre-overlap sum: ${item.score.toFixed(2)}.`);
+            `Weighted genre-overlap sum: ${item.score.toFixed(2)}.`;
+  const evidenceNote = display === "coverage" ? "Coverage only; this is not a personal ranking or quality score."
+    : display === "popularity" ? "Sampled graph count only; not global popularity or personal fit."
+      : display === "quality" ? "Provider community opinion; not a personal prediction."
+        : "Exact shared genres from Liked titles; no calibrated confidence interval.";
+  const reason = explanation ? formatRecommendationWhyHtml(explanation)
+    : `<div class="rec-why-line">${escapeHtml(reasonHeadline)}</div>` +
+      `<div class="rec-why-line rec-evidence">${escapeHtml(evidenceNote)}</div>`;
   const score = display === "coverage" ? `${item.supportCount} connections`
     : display === "popularity" ? `${item.supportCount} sampled ratings`
       : display === "quality" ? `${item.score.toFixed(2)} / 10`
         : display === "related" ? `${item.score.toFixed(2)} overlap`
           : item.fusion ? `${item.score.toFixed(2)} rank points` : formatWeight(item.score);
+  const scoreLabel = display === "coverage" ? "Catalog connections"
+    : display === "popularity" ? "Sample count"
+      : display === "quality" ? "Community score"
+        : display === "related" ? "Genre overlap"
+          : item.fusion ? "Hybrid ranking"
+            : item.scoreSource?.kind === "model" ? "Model ranking" : "Graph ranking";
+  const communityScore = metadata?.score !== null && metadata?.score !== undefined && display !== "quality"
+    ? `<div class="rec-community-score">${demoMode ? "Demo" : "MAL"} community score: ${metadata.score.toFixed(2)}/10</div>`
+    : "";
   const supportLine = display === "coverage" ? `Positive graph connections: ${item.supportCount}`
     : display === "popularity" || display === "quality"
       ? samplePopularityAvailable
@@ -3430,35 +3536,47 @@ function renderRecommendationCard(
           : `Support edges: ${item.supportCount} | Strongest: ${formatWeight(item.strongest)}`;
 
   return `
-      <li class="rec-item">
+      <li class="rec-item" data-metadata-state="${metadataState}">
         <div class="rec-main">
           ${coverHtml}
           <div class="rec-copy">
-            <div class="rec-title">${escapeHtml(item.anime.label)}</div>
-            <div class="rec-meta">${supportLine}</div>
-            <div class="rec-meta rec-meta-details">${escapeHtml(metadataMeta)}</div>
-            <p class="${synopsisClass}">${escapeHtml(synopsisText)}</p>
+            <div class="rec-heading-row">
+              <div class="rec-title">${escapeHtml(item.anime.label)}</div>
+              <div class="rec-score-wrap"><span class="rec-score-label">${scoreLabel}</span><div class="rec-score">${score}</div></div>
+            </div>
+            <div class="rec-meta rec-meta-details">${escapeHtml(metadataMeta)}${metadataState === "failed"
+              ? ` <button type="button" class="rec-metadata-retry" data-card-action="retry-metadata" data-anime-id="${item.anime.animeId}">Retry details</button>` : ""}</div>
+            ${communityScore}
             <div class="rec-why">${reason}</div>
+            <div class="rec-meta rec-support">${escapeHtml(supportLine)}</div>
+            <p class="${synopsisClass}">${escapeHtml(synopsisText)}</p>
             <div class="rec-relationship">${escapeHtml(relationshipNote ?? "Prerequisites unverified; relationship data may be incomplete.")}</div>
-            <button type="button" class="ghost-btn rec-watchlist-save" data-watchlist-save-id="${item.anime.animeId}">Plan to Watch</button>
+            <div class="rec-actions" role="group" aria-label="Actions for ${escapeHtml(item.anime.label)}">
+              <button type="button" class="ghost-btn rec-watchlist-save" data-card-action="save" data-anime-id="${item.anime.animeId}" data-watchlist-save-id="${item.anime.animeId}">Plan to Watch</button>
+              <button type="button" class="ghost-btn" data-card-action="seen" data-anime-id="${item.anime.animeId}" aria-label="Mark ${escapeHtml(item.anime.label)} Seen">Seen</button>
+              <button type="button" class="ghost-btn" data-card-action="hide" data-anime-id="${item.anime.animeId}" aria-label="Not interested in ${escapeHtml(item.anime.label)}">Not interested</button>
+            </div>
           </div>
         </div>
-        <div class="rec-score">${score}</div>
       </li>
     `;
 }
 
-function formatRecommendationMetadataMeta(metadata: AnimeMetadata | null): string {
+function formatRecommendationMetadataMeta(
+  metadata: AnimeMetadata | null,
+  state: "ready" | "not-loaded" | "failed" | "unavailable",
+): string {
   if (!metadata) {
-    return "Metadata pending";
+    return state === "failed" ? "Details failed to load"
+      : state === "unavailable" ? "Details unavailable from provider" : "Details not loaded";
   }
 
   const parts: string[] = [];
   if (metadata.year !== null) {
     parts.push(String(metadata.year));
   }
-  if (metadata.score !== null) {
-    parts.push(`${demoMode ? "Demo" : "MAL"} ${metadata.score.toFixed(2)}`);
+  if (metadata.mediaFormat) {
+    parts.push(metadata.mediaFormat);
   }
   if (metadata.studios.length > 0) {
     parts.push(metadata.studios.slice(0, 2).join(", "));
@@ -3467,7 +3585,7 @@ function formatRecommendationMetadataMeta(metadata: AnimeMetadata | null): strin
     parts.push(metadata.genres.slice(0, 3).join(", "));
   }
   if (parts.length === 0) {
-    return "Metadata available";
+    return "Year, format, studios, and genres unavailable";
   }
   return parts.join(" | ");
 }
@@ -4686,6 +4804,7 @@ function renderStorageWarnings(): void {
 }
 
 function persistRecommendationState(): boolean {
+  recActionStatusEl.textContent = "";
   cancelActiveUsernameImport();
   cancelBulkFileLoad();
   clearPendingHistoryImport();
