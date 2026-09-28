@@ -30,6 +30,7 @@ jobs:
           npm run split:fixture:check
           npm run ml:train:split:fixture
           npm run eval:new-user:fixture
+          npm run eval:baselines:fixture
       - name: Typecheck
         run: npm run typecheck
       - name: Pipeline tests

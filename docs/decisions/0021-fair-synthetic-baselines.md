@@ -8,6 +8,8 @@ Use the validated 72/24/24 raw fit split, fixed ID/title metadata, and four disj
 
 For each user and nested 1/3/5/10 observed prefix, map native scores through `preferenceFromHistory`. Construct one candidate universe from the train-present 24-title catalog and `createCandidateEligibilityPolicy`, using the same watched/history, exclusions, Include Only, and genre/year/score metadata for every method. Each method must rank **every** eligible ID. Give missing graph, similarity, content, or model signal a neutral score of zero; report nonzero signal coverage separately. Sort equal scores by ascending anime ID. Apply the existing final franchise selector to every ordered list. The common universe is before that selector; any selector-caused retained-set difference must be disclosed. An eligible positive label has raw score at least 7 and belongs to this common universe.
 
+**Interpretation clarification:** Completing sparse source lists with neutral zeros is an evaluation intervention for common-candidate fairness. The graph, content, and hybrid rows therefore do not reproduce the current browser's sparse candidate generation or fallback rates. Decisions 0018 and 0020 remain the serving-path checks. This clarification changes neither the declared methods nor their scores.
+
 ## Predeclared methods
 
 | Method | Score source |

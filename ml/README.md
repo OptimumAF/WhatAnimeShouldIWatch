@@ -53,6 +53,14 @@ npm run eval:hybrid:split:select
 
 This one-time command writes `data/synthetic-hybrid-selection-local.json` and refuses an existing selection or report. It only hashes the separate invented final cohort; it does not score it. The separate `report-test` command in `web/bench/split-first-hybrid-selection.ts` is guarded by a one-use marker and is reserved until later M5 baseline/reporting choices are fixed. The selected fixture weight is not promoted to the product.
 
+[Decision 0021](../docs/decisions/0021-fair-synthetic-baselines.md) compares ten predeclared simple, similarity, content, graph, MF, and hybrid methods on the same centrally eligible invented validation titles:
+
+```bash
+npm run eval:baselines:fixture
+```
+
+The exporter derives popularity, support-shrunk adjusted cosine, pair edges, and four two-epoch MF variants from the validated training rows only. The browser evaluator gives missing method signal a neutral zero, applies the same candidate policy and final selector, and reports each method's NDCG@10 and signal coverage. Filling sparse lists makes this a common-candidate comparison; graph/content/hybrid rows are not a replay of the browser's usual candidate generation or fallback. The fixed metadata-score baseline uses authored fixture metadata; v1 pair-preference graph weights are not item similarity. The reserved final cohort stays unscored, and these authored validation numbers do not select a product model.
+
 ## Install
 
 ```bash
