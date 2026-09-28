@@ -206,3 +206,43 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/verify_immutable_data_release.py published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate
+
+  trigger_pages:
+    needs: publish
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recheck source-use approvals before release access
+        env:
+          PUBLICATION_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+          DEPLOYMENT_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+        run: |
+          PROVIDER_DATA_APPROVAL_REF="$PUBLICATION_REF" python3 scripts/verify_provider_data_approval.py publication
+          PROVIDER_DATA_APPROVAL_REF="$DEPLOYMENT_REF" python3 scripts/verify_provider_data_approval.py deployment
+
+      - name: Recheck exact immutable release and dispatch Pages
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir candidate
+          gh release download "$RELEASE_TAG" --dir candidate \
+            --pattern release-manifest.json --pattern graph.compact.json \
+            --pattern graph-explorer.compact.json --pattern catalog.identity.json \
+            --pattern publication-audit.json
+          python3 scripts/verify_immutable_data_release.py published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate
+          MANIFEST_SHA256="$(sha256sum candidate/release-manifest.json | cut -d ' ' -f 1)"
+          python3 -m scripts.verify_pages_deployment "$GITHUB_REPOSITORY" data "$RELEASE_TAG" "$MANIFEST_SHA256" "$SOURCE_RUN_ID" "$ARTIFACT_NAME" "$PREVIOUS_TAG"
+          gh workflow run deploy-web.yml --ref master \
+            -f kind=data -f "tag=$RELEASE_TAG" -f "manifest_sha256=$MANIFEST_SHA256" \
+            -f "source_run_id=$SOURCE_RUN_ID" -f "artifact_name=$ARTIFACT_NAME" \
+            -f "previous_tag=$PREVIOUS_TAG"

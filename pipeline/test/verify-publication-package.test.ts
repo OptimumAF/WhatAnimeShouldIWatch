@@ -8,9 +8,11 @@ import { fileURLToPath } from "node:url";
 import { projectAggregateGraph } from "../src/core/aggregate-projection.js";
 import { buildExplorerGraph } from "../src/core/explorer-graph.js";
 import { aggregateRecommendationGraphId } from "../src/core/graph-contract.js";
+import { finalizePagesBuild } from "../src/finalize-pages-build.js";
 import { packageDataRelease, PUBLIC_FIELDS, type PublicationReviewV1,
   type ValidatedFirstBundleApproval, type ValidatedPublicationApproval } from
   "../src/package-data-release.js";
+import { preparePagesBundle } from "../src/prepare-pages-bundle.js";
 import { RELEASE_FILES, releaseSha256, writeReleaseManifest } from "../src/release-manifest.js";
 import { verifyPublicationPackage, type PublicationDispatch } from
   "../src/verify-publication-package.js";
@@ -272,4 +274,85 @@ test("the executable verifier refuses the committed empty approval records", (t)
     encoding: "utf8" });
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /providerApprovals.approvals.publication.*must be an object/);
+});
+
+test("Pages first installation requires exact reviewed package and deployment use", async (t) => {
+  const fixture = setupFirst(t);
+  const storeDir = path.join(fixture.directory, "pages-data");
+  const deploymentRef = "https://example.test/invented-deployment-review";
+  const providerApprovals = { ...fixture.providerApprovals, approvals: {
+    ...fixture.providerApprovals.approvals,
+    deployment: { ...fixture.providerApprovals.approvals.publication,
+      use: "Deploy invented aggregate graph", approvalRef: deploymentRef },
+  } };
+  const options = { kind: "data" as const, packageDir: fixture.packageDir,
+    storeDir, tag: fixture.dispatch.tag, manifestSha256: fixture.audit.manifestSha256,
+    sourceRunId: fixture.dispatch.sourceRunId,
+    artifactName: fixture.dispatch.artifactName,
+    publicationApprovalRef: fixture.dispatch.approvalRef,
+    deploymentApprovalRef: deploymentRef, providerApprovals,
+    publicationApprovals: fixture.packageApprovals,
+    modelApprovals: { schemaVersion: 1, promotions: [] },
+    planApprovals: { schemaVersion: 1, freezes: [] } };
+  await assert.rejects(() => preparePagesBundle({ ...options,
+    deploymentApprovalRef: fixture.dispatch.approvalRef }),
+  /providerApprovals.approvals.deployment.*source, owner, and reference/);
+  await assert.rejects(() => preparePagesBundle({ ...options,
+    manifestSha256: "a".repeat(64) }), /manifestSha256.*dispatched/);
+  assert.equal(fs.existsSync(path.join(storeDir, "active.json")), false);
+  const installed = await preparePagesBundle(options);
+  assert.equal(installed.bundleId, fixture.first.manifest.bundleId);
+  const bundleDir = path.join(storeDir, "bundles", installed.bundleId);
+  assert.deepEqual(fs.readdirSync(bundleDir).sort(), [RELEASE_FILES.manifest,
+    RELEASE_FILES.neighborhood, RELEASE_FILES.explorer, RELEASE_FILES.catalog].sort());
+  assert.equal(fs.existsSync(path.join(bundleDir, "publication-audit.json")), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(storeDir, "active.json"), "utf8")).tag,
+    fixture.dispatch.tag);
+  const distDir = path.join(fixture.directory, "dist");
+  fs.mkdirSync(distDir);
+  fs.cpSync(storeDir, path.join(distDir, "data"), { recursive: true });
+  const basePath = "/WhatAnimeShouldIWatch/";
+  fs.writeFileSync(path.join(distDir, "index.html"),
+    `<link href="${basePath}favicon.svg"><link href="${basePath}manifest.webmanifest">` +
+    `<link href="${basePath}icons/apple-touch-icon.png">` +
+    `<script type="module" src="${basePath}assets/app.js"></script>`);
+  assert.equal(finalizePagesBuild({ distDir, tag: fixture.dispatch.tag,
+    manifestSha256: fixture.audit.manifestSha256, basePath }), installed.bundleId);
+  assert.deepEqual(fs.readFileSync(path.join(distDir, "404.html")),
+    fs.readFileSync(path.join(distDir, "index.html")));
+  fs.writeFileSync(path.join(distDir, "data", "ratings.sqlite"), "invented only");
+  assert.throws(() => finalizePagesBuild({ distDir, tag: fixture.dispatch.tag,
+    manifestSha256: fixture.audit.manifestSha256, basePath }), /data.*legacy or unsupported/);
+});
+
+test("Pages successor keeps the verified prior and refuses legacy or private files", async (t) => {
+  const fixture = setup(t);
+  const storeDir = path.join(fixture.directory, "pages-data");
+  const deploymentRef = "https://example.test/invented-deployment-review";
+  const providerApprovals = { ...fixture.providerApprovals, approvals: {
+    ...fixture.providerApprovals.approvals,
+    deployment: { ...fixture.providerApprovals.approvals.publication,
+      use: "Deploy invented aggregate graph", approvalRef: deploymentRef },
+  } };
+  const options = { kind: "data" as const, packageDir: fixture.packageDir,
+    previousDir: fixture.prior.out, previousTag: fixture.prior.manifest.tag,
+    storeDir, tag: fixture.dispatch.tag, manifestSha256: fixture.audit.manifestSha256,
+    sourceRunId: fixture.dispatch.sourceRunId,
+    artifactName: fixture.dispatch.artifactName,
+    publicationApprovalRef: fixture.dispatch.approvalRef,
+    deploymentApprovalRef: deploymentRef, providerApprovals,
+    publicationApprovals: fixture.packageApprovals,
+    modelApprovals: { schemaVersion: 1, promotions: [] },
+    planApprovals: { schemaVersion: 1, freezes: [] } };
+  const privateFile = path.join(fixture.packageDir, "ratings.sqlite");
+  fs.writeFileSync(privateFile, "invented bytes only");
+  await assert.rejects(() => preparePagesBundle(options), /packageDir.*five declared files/);
+  fs.rmSync(privateFile);
+  await assert.rejects(() => preparePagesBundle({ ...options, previousTag: "data-vother" }),
+    /release-manifest.json.*predecessor/);
+  const installed = await preparePagesBundle(options);
+  assert.equal(installed.bundleId, fixture.current.manifest.bundleId);
+  assert.equal(fs.existsSync(path.join(storeDir, "bundles", fixture.prior.manifest.bundleId,
+    RELEASE_FILES.manifest)), true);
+  assert.equal(fs.existsSync(path.join(storeDir, "ratings.sqlite")), false);
 });

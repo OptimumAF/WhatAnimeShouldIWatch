@@ -23,6 +23,10 @@ export interface InstallReleaseOptions {
   transport: ReleaseAssetTransport;
   /** Only invented fixture bootstrap may install a genesis bundle. */
   fixtureBootstrap?: boolean;
+  /** Supplied only after a separate exact published-release and owner-approval check. */
+  reviewedGenesis?: { tag: string; bundleId: string; manifestSha256: string };
+  /** An independently verified immutable predecessor for an empty deployment store. */
+  verifiedPriorDir?: string;
   /** Test seam for a failure after complete directory staging but before pointer activation. */
   beforeActivate?: () => void;
 }
@@ -237,11 +241,44 @@ function activate(storeDir: string, pointer: ActiveReleaseBundleV1): void {
   }
 }
 
+/** Keep the exact verified predecessor beside a fresh Pages candidate for recovery. */
+function storeVerifiedPrior(storeDir: string, external: string, candidateDirectory: string): void {
+  verifyStored(candidateDirectory, external, false);
+  const priorBytes = readSmall(path.join(external, RELEASE_FILES.manifest),
+    RELEASE_DOWNLOAD_LIMITS.manifestBytes, "verifiedPriorDir.release-manifest.json");
+  const prior = parseReleaseManifest(json(priorBytes, "verifiedPriorDir.release-manifest.json"),
+    "verifiedPriorDir.release-manifest.json");
+  const stored = bundlePath(storeDir, prior.bundleId);
+  if (fs.existsSync(stored)) {
+    verifyStored(candidateDirectory, stored, false);
+    return;
+  }
+  const stage = fs.mkdtempSync(path.join(storeDir, ".incoming-prior-"));
+  try {
+    for (const name of [RELEASE_FILES.manifest, RELEASE_FILES.neighborhood,
+      RELEASE_FILES.explorer, RELEASE_FILES.catalog,
+      ...(prior.model ? [RELEASE_FILES.model] : [])]) {
+      const maximum = name === RELEASE_FILES.manifest
+        ? RELEASE_DOWNLOAD_LIMITS.manifestBytes : RELEASE_DOWNLOAD_LIMITS.plainAssetBytes;
+      fs.writeFileSync(path.join(stage, name), readSmall(path.join(external, name),
+        maximum, `verifiedPriorDir.${name}`), { flag: "wx" });
+    }
+    verifyStored(candidateDirectory, stage, false);
+    fs.renameSync(stage, stored);
+  } finally {
+    if (fs.existsSync(stage)) removeStaging(stage, storeDir);
+  }
+}
+
 /** Install a fully verified local bundle before changing the sole active pointer. */
 export async function installReleaseBundle(options: InstallReleaseOptions): Promise<InstallReleaseResult> {
   if (!/^data-v[A-Za-z0-9][A-Za-z0-9._-]*$/.test(options.tag) ||
       options.transport.tag !== options.tag) {
     fail("tag", "requires a matching explicit versioned release tag");
+  }
+  if ((options.fixtureBootstrap && options.reviewedGenesis) ||
+      (options.verifiedPriorDir && (options.fixtureBootstrap || options.reviewedGenesis))) {
+    fail("bootstrap", "reviewed genesis, fixture genesis, and a named prior are exclusive");
   }
   const storeDir = path.resolve(options.storeDir);
   fs.mkdirSync(storeDir, { recursive: true });
@@ -255,8 +292,11 @@ export async function installReleaseBundle(options: InstallReleaseOptions): Prom
   }
   let stage: string | null = null;
   try {
-    const current = readActive(storeDir, options.fixtureBootstrap === true);
-    if (!current && !options.fixtureBootstrap) fail("active.json", "a verified prior bundle is required");
+    const current = readActive(storeDir,
+      options.fixtureBootstrap === true || options.reviewedGenesis !== undefined);
+    if (current && options.verifiedPriorDir) fail("verifiedPriorDir", "requires an empty store");
+    if (!current && !options.fixtureBootstrap && !options.reviewedGenesis &&
+        !options.verifiedPriorDir) fail("active.json", "a verified prior bundle is required");
     const inventory = new Set(options.transport.assets);
     if (!inventory.has(RELEASE_FILES.manifest)) fail(RELEASE_FILES.manifest, "missing release asset");
     const manifestBytes = await readReleaseResponse(await options.transport.fetchAsset(RELEASE_FILES.manifest),
@@ -266,6 +306,27 @@ export async function installReleaseBundle(options: InstallReleaseOptions): Prom
     assertDeclaredSizes(manifest);
     validateInventory(options.transport, manifest.model !== null);
     const manifestSha256 = releaseSha256(manifestBytes);
+    if (options.reviewedGenesis && (manifest.lastKnownGood !== null ||
+        options.reviewedGenesis.tag !== manifest.tag ||
+        options.reviewedGenesis.bundleId !== manifest.bundleId ||
+        options.reviewedGenesis.manifestSha256 !== manifestSha256)) {
+      fail("reviewedGenesis", "does not match the exact first published bundle");
+    }
+    let priorDirectory = current?.directory;
+    if (options.verifiedPriorDir) {
+      const external = path.resolve(options.verifiedPriorDir);
+      assertDirectoryNotLink(external, "verifiedPriorDir");
+      const priorBytes = readSmall(path.join(external, RELEASE_FILES.manifest),
+        RELEASE_DOWNLOAD_LIMITS.manifestBytes, "verifiedPriorDir.release-manifest.json");
+      const prior = parseReleaseManifest(json(priorBytes, "verifiedPriorDir.release-manifest.json"),
+        "verifiedPriorDir.release-manifest.json");
+      if (!manifest.lastKnownGood || manifest.lastKnownGood.tag !== prior.tag ||
+          manifest.lastKnownGood.bundleId !== prior.bundleId ||
+          manifest.lastKnownGood.manifestSha256 !== releaseSha256(priorBytes)) {
+        fail("verifiedPriorDir", "does not match the candidate's exact named predecessor");
+      }
+      priorDirectory = external;
+    }
     if (current?.pointer.bundleId === manifest.bundleId) {
       if (current.pointer.manifestSha256 !== manifestSha256) {
         fail("release-manifest.json", "same bundleId has different manifest bytes");
@@ -279,17 +340,20 @@ export async function installReleaseBundle(options: InstallReleaseOptions): Prom
           prior.manifestSha256 !== current.pointer.manifestSha256) {
         fail("lastKnownGood", "must exactly identify the currently active bundle");
       }
-    } else if (manifest.lastKnownGood !== null) {
-      fail("lastKnownGood", "genesis fixture must not name a prior bundle");
+    } else if (!options.verifiedPriorDir && manifest.lastKnownGood !== null) {
+      fail("lastKnownGood", "genesis must not name a prior bundle");
     }
 
     const destination = bundlePath(storeDir, manifest.bundleId);
     if (fs.existsSync(destination)) {
-      const existing = verifyStored(destination, current?.directory, !current);
+      const existing = verifyStored(destination, priorDirectory, !priorDirectory);
       const existingManifestSha256 = releaseSha256(fs.readFileSync(path.join(destination,
         RELEASE_FILES.manifest)));
       if (existing.bundleId !== manifest.bundleId || existingManifestSha256 !== manifestSha256) {
         fail("bundleId", "pre-existing versioned directory differs from downloaded manifest");
+      }
+      if (options.verifiedPriorDir && priorDirectory) {
+        storeVerifiedPrior(storeDir, priorDirectory, destination);
       }
     } else {
       const bundlesDir = path.join(storeDir, "bundles");
@@ -303,7 +367,10 @@ export async function installReleaseBundle(options: InstallReleaseOptions): Prom
         const plain = await downloadAsset(options.transport, inventory, entry);
         fs.writeFileSync(path.join(stage, entry.path), plain, { flag: "wx" });
       }
-      verifyStored(stage, current?.directory, !current);
+      verifyStored(stage, priorDirectory, !priorDirectory);
+      if (options.verifiedPriorDir && priorDirectory) {
+        storeVerifiedPrior(storeDir, priorDirectory, stage);
+      }
       fs.renameSync(stage, destination);
       stage = null;
     }

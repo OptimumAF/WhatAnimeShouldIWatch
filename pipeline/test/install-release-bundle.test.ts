@@ -223,6 +223,62 @@ test("only explicit fixture bootstrap can create the first active bundle", async
   assert.equal(fs.existsSync(path.join(storeDir, "active.json")), false);
 });
 
+test("reviewed first-install proof pins exact bytes and cannot be mixed with fixture mode", async (t) => {
+  const first = genesis();
+  const storeDir = directory(t);
+  const proof = { tag: first.tag, bundleId: first.manifest.bundleId,
+    manifestSha256: releaseSha256(first.manifestBytes) };
+  await assert.rejects(() => installReleaseBundle({ storeDir, tag: first.tag,
+    transport: first.transport, reviewedGenesis: { ...proof, manifestSha256: "a".repeat(64) } }),
+  /reviewedGenesis.*exact first published bundle/);
+  assert.equal(fs.existsSync(path.join(storeDir, "active.json")), false);
+  await assert.rejects(() => installReleaseBundle({ storeDir, tag: first.tag,
+    transport: first.transport, reviewedGenesis: proof, fixtureBootstrap: true }),
+  /bootstrap.*exclusive/);
+  const installed = await installReleaseBundle({ storeDir, tag: first.tag,
+    transport: first.transport, reviewedGenesis: proof });
+  assert.equal(installed.manifest.bundleId, first.manifest.bundleId);
+  assert.equal((await installReleaseBundle({ storeDir, tag: first.tag,
+    transport: first.transport, reviewedGenesis: proof })).changed, false);
+});
+
+test("an empty deployment store accepts only the exact verified predecessor", async (t) => {
+  const storeDir = directory(t);
+  const first = genesis();
+  const prior = successor(first, "prior");
+  const next = successor(prior, "next");
+  const priorDir = path.join(directory(t), "prior");
+  fs.mkdirSync(priorDir);
+  fs.writeFileSync(path.join(priorDir, RELEASE_FILES.manifest), prior.manifestBytes);
+  for (const [name, bytes] of [[RELEASE_FILES.neighborhood, prior.files.neighborhood],
+    [RELEASE_FILES.explorer, prior.files.explorer],
+    [RELEASE_FILES.catalog, prior.files.catalog],
+    [RELEASE_FILES.model, prior.files.model!]] as [string, Buffer][]) {
+    fs.writeFileSync(path.join(priorDir, name), bytes);
+  }
+  const manifestPath = path.join(priorDir, RELEASE_FILES.manifest);
+  const original = fs.readFileSync(manifestPath);
+  fs.appendFileSync(manifestPath, " ");
+  await assert.rejects(() => installReleaseBundle({ storeDir, tag: next.tag,
+    transport: next.transport, verifiedPriorDir: priorDir }), /verifiedPriorDir.*predecessor/);
+  fs.writeFileSync(manifestPath, original);
+  const modelPath = path.join(priorDir, RELEASE_FILES.model);
+  const originalModel = fs.readFileSync(modelPath);
+  fs.writeFileSync(modelPath, "{}\n");
+  await assert.rejects(() => installReleaseBundle({ storeDir, tag: next.tag,
+    transport: next.transport, verifiedPriorDir: priorDir }), /model-mf-web.compact.json/);
+  fs.writeFileSync(modelPath, originalModel);
+  assert.equal(fs.existsSync(path.join(storeDir, "active.json")), false);
+  const installed = await installReleaseBundle({ storeDir, tag: next.tag,
+    transport: next.transport, verifiedPriorDir: priorDir });
+  assert.equal(installed.manifest.bundleId, next.manifest.bundleId);
+  assert.equal(fs.existsSync(path.join(storeDir, "bundles", prior.manifest.bundleId,
+    RELEASE_FILES.manifest)), true);
+  assert.equal(fs.existsSync(path.join(storeDir, "bundles", first.manifest.bundleId)), false);
+  assert.equal((await installReleaseBundle({ storeDir, tag: next.tag,
+    transport: next.transport })).changed, false);
+});
+
 test("an explicit GitHub release transport works with mocked HTTPS responses only", async (t) => {
   const storeDir = directory(t);
   const first = genesis();

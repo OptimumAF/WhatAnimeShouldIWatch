@@ -20,4 +20,4 @@ GitHub's [immutable release setting endpoint](https://docs.github.com/en/rest/re
 
 ## Remaining hold
 
-The route stops after verified model release. The exact-tag Pages deployment trigger, hosted base-path and fallback checks, and rollback practice remain for M8.5/M8.7. The current provider permissions and invented serving labels do not support a real model approval or quality claim. M8.4 and M8 remain unchecked.
+The publication route stops after verified model release. [Decision 0037](0037-exact-tag-pages-deployment.md) adds a separate exact-tag Pages trigger, installer, and mocked hosted check; no real deployment or hosted result is established. Rollback practice remains for M8.7. The current provider permissions and invented serving labels do not support a real model approval or quality claim. M8.4 and M8 remain unchecked.
