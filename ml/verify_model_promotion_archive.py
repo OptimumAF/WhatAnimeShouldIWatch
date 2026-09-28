@@ -10,6 +10,7 @@ from pathlib import Path
 
 from export_model_web import build_payload
 from model_artifact import load_numeric_model, metadata_path
+from prepare_graph_dataset_bridge import prepare
 from split_first_graph_mf import model_fingerprint
 
 
@@ -33,7 +34,8 @@ def _read(path: Path) -> dict[str, object]:
     return value
 
 
-def verify_private_archive(evidence_dir: Path, web_model_path: Path) -> None:
+def verify_private_archive(evidence_dir: Path, web_model_path: Path,
+                           source_dir: Path | None = None) -> None:
     """Require a safe NPZ whose fitted bytes and item export match private records."""
     archive_path = evidence_dir / "model.npz"
     loaded = load_numeric_model(archive_path)
@@ -61,6 +63,19 @@ def verify_private_archive(evidence_dir: Path, web_model_path: Path) -> None:
         len(set(fit_ids)) != len(fit_ids) or set(fit_ids) != set(loaded.user_ids)
     ):
         raise ValueError("model.metadata.json userIds differ from serving-cohort.trainingUsers.")
+    if source_dir is not None:
+        prepared = prepare(source_dir / "raw-ratings.json",
+                           source_dir / "split-manifest.json",
+                           source_dir / "anime-metadata.json")
+        expected_users: dict[str, set[int]] = {}
+        for row in prepared["rows"]:
+            expected_users.setdefault(row["userId"], set()).add(row["animeId"])
+        if set(expected_users) != set(loaded.user_ids):
+            raise ValueError("model.npz fitted user IDs differ from validated raw fit users.")
+        for user_id, item_indices in zip(loaded.user_ids, loaded.train_user_items):
+            actual = {loaded.anime_ids[index] for index in item_indices}
+            if actual != expected_users[user_id]:
+                raise ValueError("model.npz packed fit items differ from validated raw fit rows.")
 
     expected = build_payload(archive_path, "compact", 8)
     for field in ("format", "sourceModel", "sourceModelSha256", "globalMean",
@@ -73,9 +88,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--web-model", type=Path, required=True)
+    parser.add_argument("--source-dir", type=Path)
     args = parser.parse_args()
     try:
-        verify_private_archive(args.evidence_dir, args.web_model)
+        verify_private_archive(args.evidence_dir, args.web_model, args.source_dir)
     except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
         parser.exit(1, f"Promotion archive verification failed: {exc}\n")
     print("Verified private numeric archive and item model.")

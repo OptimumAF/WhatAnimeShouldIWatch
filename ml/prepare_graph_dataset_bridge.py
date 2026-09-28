@@ -8,6 +8,7 @@ for a local verifier pipe, never for logs, web assets, or release artifacts.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,18 +23,21 @@ def prepare(raw: Path, split: Path, metadata_path: Path) -> dict[str, object]:
                           object_pairs_hook=_no_duplicate_json_keys)
     partitions = partition_snapshot(snapshot, manifest)
     metadata = load_metadata_snapshot(metadata_path)
+    original_train = fit_training_partition(partitions.train, metadata)
     fit = fit_training_partition(partitions.train + partitions.validation, metadata)
     titles = dict(metadata.anime)
     return {
         "format": "private-graph-bridge-rows-v1",
         "rawContentSha256": manifest["rawContentSha256"],
         "splitIdentitySha256": manifest["identitySha256"],
+        "splitManifestSha256": hashlib.sha256(split.read_bytes()).hexdigest(),
         "metadataSha256": metadata.sha256,
         "trainRows": len(partitions.train),
         "validationRows": len(partitions.validation),
         "testRowsExcluded": len(partitions.test),
         "refitTrainSha256": fit.train_sha256,
         "refitFitSha256": fit.fit_sha256,
+        "originalTrainSha256": original_train.train_sha256,
         "rows": [{"userId": row.user_id, "animeId": row.anime_id,
                   "title": titles[row.anime_id], "rawScore": row.raw_score,
                   "normalizedScore": row.normalized_score} for row in fit.rows],
