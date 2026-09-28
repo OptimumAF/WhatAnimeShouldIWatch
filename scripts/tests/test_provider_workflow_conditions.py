@@ -126,6 +126,78 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         self.assertNotIn("anonymized-ratings", str(workflow))
         self.assertNotIn("data-latest", str(workflow))
 
+    def test_immutable_model_release_transfers_only_six_public_files(self):
+        workflow = yaml.safe_load((WORKFLOWS / "publish-model-release.yml").read_text(
+            encoding="utf-8"
+        ))
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+        inputs = workflow[True]["workflow_dispatch"]["inputs"]
+        self.assertEqual(set(inputs), {"tag", "source_run_id", "artifact_name", "base_tag"})
+        self.assertTrue(all(item["required"] for item in inputs.values()))
+        verify = workflow["jobs"]["verify"]
+        publish = workflow["jobs"]["publish"]
+        self.assertEqual(verify["permissions"], {"contents": "read", "actions": "read"})
+        self.assertEqual(publish["permissions"], {"contents": "write", "actions": "read"})
+        self.assertEqual(publish["needs"], "verify")
+        gate_parts = ["github.ref == 'refs/heads/master'"]
+        for scope in ("TRAINING", "PUBLICATION", "DEPLOYMENT"):
+            gate_parts.extend([
+                f"vars.PROVIDER_DATA_{scope}_APPROVED == 'true'",
+                f"vars.PROVIDER_DATA_{scope}_APPROVAL_REF != ''",
+            ])
+        gate_parts.extend(["vars.MODEL_PROMOTION_APPROVED == 'true'",
+                           "vars.MODEL_PROMOTION_APPROVAL_REF != ''"])
+        expected_gate = "${{ " + " && ".join(gate_parts) + " }}"
+        for job in (verify, publish):
+            gate = job["if"]
+            self.assertEqual(gate, expected_gate)
+            self.assertIn("github.ref == 'refs/heads/master'", gate)
+            for scope in ("TRAINING", "PUBLICATION", "DEPLOYMENT"):
+                self.assertIn(f"vars.PROVIDER_DATA_{scope}_APPROVED == 'true'", gate)
+                self.assertIn(f"vars.PROVIDER_DATA_{scope}_APPROVAL_REF != ''", gate)
+            self.assertIn("vars.MODEL_PROMOTION_APPROVED == 'true'", gate)
+            self.assertIn("vars.MODEL_PROMOTION_APPROVAL_REF != ''", gate)
+            steps = job["steps"]
+            self.assertEqual(steps[0].get("uses"), "actions/checkout@v4")
+            self.assertEqual(steps[0].get("with", {}).get("fetch-depth"), 0)
+            for scope in ("training", "publication", "deployment"):
+                self.assertIn(f"scripts/verify_provider_data_approval.py {scope}",
+                              steps[1]["run"])
+        verify_steps = verify["steps"]
+        publish_steps = publish["steps"]
+        verify_names = [step.get("name") for step in verify_steps]
+        publish_names = [step.get("name") for step in publish_steps]
+        self.assertLess(verify_names.index("Require immutable releases and unused target"),
+                        verify_names.index("Download exact public candidate and named data base"))
+        self.assertLess(verify_names.index("Verify immutable published data base"),
+                        verify_names.index("Verify exact public package and committed approvals"))
+        self.assertLess(verify_names.index("Verify exact public package and committed approvals"),
+                        verify_names.index("Pass only six verified public assets to write-permission job"))
+        self.assertLess(publish_names.index("Reverify package and approvals before publication"),
+                        publish_names.index("Recheck immutable setting and unused target"))
+        self.assertLess(publish_names.index("Recheck immutable setting and unused target"),
+                        publish_names.index("Create new release with six exact audited assets"))
+        self.assertLess(publish_names.index("Create new release with six exact audited assets"),
+                        publish_names.index("Reverify local approved bytes after release creation"))
+        self.assertLess(publish_names.index("Reverify local approved bytes after release creation"),
+                        publish_names.index("Verify immutable published release and exact remote hashes"))
+        allowed = {"release-manifest.json", "graph.compact.json",
+                   "graph-explorer.compact.json", "catalog.identity.json",
+                   "model-mf-web.compact.json", "model-promotion-audit.json"}
+        upload = verify_steps[verify_names.index(
+            "Pass only six verified public assets to write-permission job")]
+        self.assertEqual({line.removeprefix("candidate/") for line in
+                          upload["with"]["path"].splitlines()}, allowed)
+        create = publish_steps[publish_names.index(
+            "Create new release with six exact audited assets")]["run"]
+        self.assertEqual({name for name in allowed if f"candidate/{name}" in create}, allowed)
+        self.assertIn('--target "$GITHUB_SHA"', create)
+        for text in ("model.npz", "raw-ratings", "serving-final", "data-latest",
+                     "--clobber"):
+            self.assertNotIn(text, str(workflow))
+        self.assertNotIn("*", create)
+
 
 if __name__ == "__main__":
     unittest.main()

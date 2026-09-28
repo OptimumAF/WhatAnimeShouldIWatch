@@ -1,0 +1,240 @@
+name: Publish Audited Immutable Model Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Reviewed versioned model-bearing data-v tag
+        required: true
+        type: string
+      source_run_id:
+        description: Same-repository run holding the reviewed six-file public package
+        required: true
+        type: string
+      artifact_name:
+        description: Exact reviewed public package artifact name
+        required: true
+        type: string
+      base_tag:
+        description: Approved immutable data-only base release
+        required: true
+        type: string
+
+concurrency:
+  group: model-publication-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_TRAINING_APPROVED == 'true' && vars.PROVIDER_DATA_TRAINING_APPROVAL_REF != '' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' && vars.MODEL_PROMOTION_APPROVED == 'true' && vars.MODEL_PROMOTION_APPROVAL_REF != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify recorded source-use approvals before artifact download
+        env:
+          TRAINING_REF: ${{ vars.PROVIDER_DATA_TRAINING_APPROVAL_REF }}
+          PUBLICATION_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+          DEPLOYMENT_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+        run: |
+          PROVIDER_DATA_APPROVAL_REF="$TRAINING_REF" python3 scripts/verify_provider_data_approval.py training
+          PROVIDER_DATA_APPROVAL_REF="$PUBLICATION_REF" python3 scripts/verify_provider_data_approval.py publication
+          PROVIDER_DATA_APPROVAL_REF="$DEPLOYMENT_REF" python3 scripts/verify_provider_data_approval.py deployment
+
+      - name: Validate exact dispatch inputs
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          BASE_TAG: ${{ inputs.base_tag }}
+        run: python3 -m scripts.verify_immutable_model_release inputs "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$SOURCE_RUN_ID" "$ARTIFACT_NAME" "$BASE_TAG"
+
+      - name: Require immutable releases and unused target
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_IMMUTABILITY_READ_TOKEN: ${{ secrets.RELEASE_IMMUTABILITY_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.verify_immutable_model_release preflight "$GITHUB_REPOSITORY" "$RELEASE_TAG"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned Node dependencies
+        run: npm ci
+
+      - name: Download exact public candidate and named data base
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          BASE_TAG: ${{ inputs.base_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir candidate base
+          gh run download "$SOURCE_RUN_ID" --name "$ARTIFACT_NAME" --dir candidate
+          gh release download "$BASE_TAG" --dir base \
+            --pattern release-manifest.json \
+            --pattern graph.compact.json \
+            --pattern graph-explorer.compact.json \
+            --pattern catalog.identity.json \
+            --pattern publication-audit.json
+
+      - name: Verify immutable published data base
+        env:
+          BASE_TAG: ${{ inputs.base_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify_immutable_data_release.py published "$GITHUB_REPOSITORY" "$BASE_TAG" base
+
+      - name: Verify exact public package and committed approvals
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          BASE_TAG: ${{ inputs.base_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          OWNER_REF: ${{ vars.MODEL_PROMOTION_APPROVAL_REF }}
+        run: |
+          node --import tsx pipeline/src/verify-model-release-public.ts \
+            --package candidate --base base --tag "$RELEASE_TAG" \
+            --base-tag "$BASE_TAG" --run-id "$SOURCE_RUN_ID" \
+            --artifact-name "$ARTIFACT_NAME" --owner-approval-ref "$OWNER_REF"
+
+      - name: Pass only six verified public assets to write-permission job
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-model-release-package
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            candidate/release-manifest.json
+            candidate/graph.compact.json
+            candidate/graph-explorer.compact.json
+            candidate/catalog.identity.json
+            candidate/model-mf-web.compact.json
+            candidate/model-promotion-audit.json
+
+  publish:
+    needs: verify
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_TRAINING_APPROVED == 'true' && vars.PROVIDER_DATA_TRAINING_APPROVAL_REF != '' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' && vars.MODEL_PROMOTION_APPROVED == 'true' && vars.MODEL_PROMOTION_APPROVAL_REF != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify recorded source-use approvals before artifact download
+        env:
+          TRAINING_REF: ${{ vars.PROVIDER_DATA_TRAINING_APPROVAL_REF }}
+          PUBLICATION_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+          DEPLOYMENT_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+        run: |
+          PROVIDER_DATA_APPROVAL_REF="$TRAINING_REF" python3 scripts/verify_provider_data_approval.py training
+          PROVIDER_DATA_APPROVAL_REF="$PUBLICATION_REF" python3 scripts/verify_provider_data_approval.py publication
+          PROVIDER_DATA_APPROVAL_REF="$DEPLOYMENT_REF" python3 scripts/verify_provider_data_approval.py deployment
+
+      - name: Validate exact dispatch inputs
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          BASE_TAG: ${{ inputs.base_tag }}
+        run: python3 -m scripts.verify_immutable_model_release inputs "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$SOURCE_RUN_ID" "$ARTIFACT_NAME" "$BASE_TAG"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned Node dependencies
+        run: npm ci
+
+      - name: Download the six verified bytes from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: verified-model-release-package
+          path: candidate
+
+      - name: Download exact named data-only base
+        env:
+          BASE_TAG: ${{ inputs.base_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir base
+          gh release download "$BASE_TAG" --dir base \
+            --pattern release-manifest.json \
+            --pattern graph.compact.json \
+            --pattern graph-explorer.compact.json \
+            --pattern catalog.identity.json \
+            --pattern publication-audit.json
+
+      - name: Reverify immutable published data base
+        env:
+          BASE_TAG: ${{ inputs.base_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify_immutable_data_release.py published "$GITHUB_REPOSITORY" "$BASE_TAG" base
+
+      - name: Reverify package and approvals before publication
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          BASE_TAG: ${{ inputs.base_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          OWNER_REF: ${{ vars.MODEL_PROMOTION_APPROVAL_REF }}
+        run: |
+          node --import tsx pipeline/src/verify-model-release-public.ts \
+            --package candidate --base base --tag "$RELEASE_TAG" \
+            --base-tag "$BASE_TAG" --run-id "$SOURCE_RUN_ID" \
+            --artifact-name "$ARTIFACT_NAME" --owner-approval-ref "$OWNER_REF"
+
+      - name: Recheck immutable setting and unused target
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_IMMUTABILITY_READ_TOKEN: ${{ secrets.RELEASE_IMMUTABILITY_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.verify_immutable_model_release preflight "$GITHUB_REPOSITORY" "$RELEASE_TAG"
+
+      - name: Create new release with six exact audited assets
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            candidate/release-manifest.json \
+            candidate/graph.compact.json \
+            candidate/graph-explorer.compact.json \
+            candidate/catalog.identity.json \
+            candidate/model-mf-web.compact.json \
+            candidate/model-promotion-audit.json \
+            --target "$GITHUB_SHA" --latest=false --title "$RELEASE_TAG" \
+            --notes "Audited item-only model over an approved aggregate data bundle."
+
+      - name: Reverify local approved bytes after release creation
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          BASE_TAG: ${{ inputs.base_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          OWNER_REF: ${{ vars.MODEL_PROMOTION_APPROVAL_REF }}
+        run: |
+          node --import tsx pipeline/src/verify-model-release-public.ts \
+            --package candidate --base base --tag "$RELEASE_TAG" \
+            --base-tag "$BASE_TAG" --run-id "$SOURCE_RUN_ID" \
+            --artifact-name "$ARTIFACT_NAME" --owner-approval-ref "$OWNER_REF"
+
+      - name: Verify immutable published release and exact remote hashes
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.verify_immutable_model_release published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate

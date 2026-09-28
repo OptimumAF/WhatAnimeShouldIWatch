@@ -13,6 +13,7 @@
     "publish:release": "tsx src/publish-release-data.ts",
     "check:model-promotion": "tsx src/check-model-promotion.ts",
     "check:model-release-package": "tsx src/verify-model-release-package.ts",
+    "check:model-release-public": "tsx src/verify-model-release-public.ts",
     "check:model-dataset-bridge": "tsx src/verify-graph-dataset-bridge.ts",
     "sync:web": "tsx src/sync-web.ts",
     "generate:fixture": "tsx src/generate-fixture.ts",
