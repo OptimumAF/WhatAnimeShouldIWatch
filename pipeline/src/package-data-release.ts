@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  parseCompactGraph, RELEASE_BUNDLE_LIMITS, type CompactGraphDataV3,
+  parseCompactGraph, parseReleaseManifest, RELEASE_BUNDLE_LIMITS, type CompactGraphDataV3,
   type ReleaseManifestV1,
 } from "../../web/src/artifacts.js";
 import { getRepoRoot } from "./paths.js";
@@ -51,6 +51,18 @@ export interface ValidatedPublicationApproval {
   sources: string[];
 }
 
+/** A separate, exact first-real-bundle approval; the workflow validates its registry source. */
+export interface ValidatedFirstBundleApproval {
+  scope: "first-real-bundle";
+  approved: true;
+  tag: string;
+  bundleId: string;
+  manifestSha256: string;
+  decisionRef: string;
+  approvalRef: string;
+  owner: string;
+}
+
 export interface PackageDataReleaseOptions {
   candidateDir: string;
   previousDir?: string;
@@ -58,6 +70,7 @@ export interface PackageDataReleaseOptions {
   review: unknown;
   fixtureGenesis?: boolean;
   approval?: ValidatedPublicationApproval;
+  bootstrapApproval?: ValidatedFirstBundleApproval;
   /** Test seam for failure after complete staging but before output activation. */
   beforeActivate?: () => void;
 }
@@ -249,7 +262,8 @@ function boundedBytes(directory: string, manifest: ReleaseManifestV1): Map<strin
 
 function assertApproval(review: PublicationReviewV1, options: PackageDataReleaseOptions): boolean {
   if (review.redistribution.status === "synthetic-only") {
-    if (!options.fixtureGenesis || options.approval || review.source.name !== "synthetic-fixture") {
+    if (!options.fixtureGenesis || options.approval || options.bootstrapApproval ||
+        review.source.name !== "synthetic-fixture") {
       fail("review.redistribution", "synthetic-only requires an invented fixture without approval");
     }
     return false;
@@ -265,6 +279,23 @@ function assertApproval(review: PublicationReviewV1, options: PackageDataRelease
       approval.owner !== review.redistribution.owner ||
       !Array.isArray(approval.sources) || !approval.sources.includes(review.source.name)) {
     fail("approval", "must match a separately validated publication approval");
+  }
+  if (options.previousDir) {
+    if (options.bootstrapApproval) fail("bootstrapApproval", "cannot accompany a previous bundle");
+  } else {
+    const bootstrap = options.bootstrapApproval;
+    if (!bootstrap || bootstrap.scope !== "first-real-bundle" ||
+        bootstrap.approved !== true || bootstrap.tag !== review.tag ||
+        bootstrap.bundleId !== review.bundleId ||
+        bootstrap.manifestSha256 !== review.manifestSha256 ||
+        bootstrap.owner !== review.redistribution.owner ||
+        bootstrap.approvalRef === approval.approvalRef ||
+        !/^https:\/\/[^\s/]+\/\S+$/.test(bootstrap.approvalRef) ||
+        !/^docs\/decisions\/[0-9]{4}-[a-z0-9-]+\.md$/.test(bootstrap.decisionRef) ||
+        !fs.existsSync(path.join(repoRoot, bootstrap.decisionRef)) ||
+        review.changes.previousTag !== null) {
+      fail("bootstrapApproval", "requires a separate exact first-real-bundle approval");
+    }
   }
   return true;
 }
@@ -297,7 +328,16 @@ export function packageDataRelease(options: PackageDataReleaseOptions): Publicat
     assertBoundedInput(previousDir, true);
   }
   const manifest = verifyReleaseBundle(candidateDir, options.previousDir,
-    options.fixtureGenesis === true);
+    options.fixtureGenesis === true, options.bootstrapApproval !== undefined);
+  if (publishable && options.previousDir) {
+    const prior = parseReleaseManifest(JSON.parse(fs.readFileSync(path.join(options.previousDir,
+      RELEASE_FILES.manifest), "utf8")), "previous.release-manifest.json");
+    if (prior.dataset.source === "synthetic-fixture" ||
+        prior.neighborhood.format !== "graph-compact-v3" ||
+        prior.explorer.format !== "graph-compact-v3" || prior.model !== null) {
+      fail("previousDir", "requires a reviewed data-only v3 predecessor");
+    }
+  }
   if (manifest.neighborhood.format !== "graph-compact-v3" ||
       manifest.explorer.format !== "graph-compact-v3" || manifest.model !== null) {
     fail("release-manifest.json", "requires a data-only v3 recommendation and explorer pair");

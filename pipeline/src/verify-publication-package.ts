@@ -3,11 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import { RELEASE_BUNDLE_LIMITS } from "../../web/src/artifacts.js";
+import { parseReleaseManifest, RELEASE_BUNDLE_LIMITS, type ReleaseManifestV1 } from
+  "../../web/src/artifacts.js";
 import { getRepoRoot } from "./paths.js";
 import { OUTPUT_FILES, PUBLIC_FIELDS, SOURCE_FILES, packageDataRelease,
   type PublicationAuditV1, type PublicationReviewV1,
-  type ValidatedPublicationApproval } from "./package-data-release.js";
+  type ValidatedFirstBundleApproval, type ValidatedPublicationApproval } from
+  "./package-data-release.js";
 import { RELEASE_FILES, releaseSha256 } from "./release-manifest.js";
 
 const repoRoot = getRepoRoot(import.meta.url);
@@ -20,13 +22,13 @@ export interface PublicationDispatch {
   tag: string;
   sourceRunId: number;
   artifactName: string;
-  previousTag: string;
+  previousTag: string | null;
   approvalRef: string;
 }
 
 export interface VerifyPublicationPackageOptions {
   packageDir: string;
-  previousDir: string;
+  previousDir?: string;
   dispatch: PublicationDispatch;
   providerApprovals: unknown;
   packageApprovals: unknown;
@@ -110,13 +112,16 @@ function validateDispatch(value: PublicationDispatch): void {
   match(value.tag, TAG, "dispatch.tag");
   positiveRunId(value.sourceRunId, "dispatch.sourceRunId");
   match(value.artifactName, ARTIFACT_NAME, "dispatch.artifactName");
-  match(value.previousTag, TAG, "dispatch.previousTag");
-  if (value.previousTag === value.tag) fail("dispatch.previousTag", "must differ from tag");
+  if (value.previousTag !== null) {
+    match(value.previousTag, TAG, "dispatch.previousTag");
+    if (value.previousTag === value.tag) fail("dispatch.previousTag", "must differ from tag");
+  }
   match(value.approvalRef, /^https:\/\/[^\s/]+\/\S+$/, "dispatch.approvalRef");
 }
 
 function validatedApproval(provider: unknown, packageRegistry: unknown, audit: Record<string, unknown>,
-  dispatch: PublicationDispatch, auditSha256: string): ValidatedPublicationApproval {
+  dispatch: PublicationDispatch, auditSha256: string, manifest: ReleaseManifestV1):
+  { publication: ValidatedPublicationApproval; bootstrap?: ValidatedFirstBundleApproval } {
   const providerRoot = record(provider, "providerApprovals");
   if (providerRoot.schemaVersion !== 1) fail("providerApprovals.schemaVersion", "is unsupported");
   const approvals = record(providerRoot.approvals, "providerApprovals.approvals");
@@ -143,7 +148,7 @@ function validatedApproval(provider: unknown, packageRegistry: unknown, audit: R
   }
   const entries = registry.packages.map((value, index) => fields(value,
     ["tag", "bundleId", "manifestSha256", "auditSha256", "sourceRunId",
-      "artifactName", "previousTag", "decisionRef", "approvalRef", "owner"],
+      "artifactName", "previousTag", "decisionRef", "approvalRef", "owner", "bootstrap"],
     `packageApprovals.packages[${index}]`));
   const seen = new Set<string>();
   for (const [index, entry] of entries.entries()) {
@@ -153,12 +158,31 @@ function validatedApproval(provider: unknown, packageRegistry: unknown, audit: R
     match(entry.auditSha256, DIGEST, `packageApprovals.packages[${index}].auditSha256`);
     positiveRunId(entry.sourceRunId, `packageApprovals.packages[${index}].sourceRunId`);
     match(entry.artifactName, ARTIFACT_NAME, `packageApprovals.packages[${index}].artifactName`);
-    match(entry.previousTag, TAG, `packageApprovals.packages[${index}].previousTag`);
+    if (entry.previousTag !== null) {
+      match(entry.previousTag, TAG, `packageApprovals.packages[${index}].previousTag`);
+    }
     decisionRef(entry.decisionRef, `packageApprovals.packages[${index}].decisionRef`);
     match(entry.approvalRef, /^https:\/\/[^\s/]+\/\S+$/,
       `packageApprovals.packages[${index}].approvalRef`);
     if (typeof entry.owner !== "string" || !entry.owner.trim()) {
       fail(`packageApprovals.packages[${index}].owner`, "is required");
+    }
+    if (entry.previousTag === null) {
+      const bootstrap = fields(entry.bootstrap,
+        ["decisionRef", "approvalRef", "owner"],
+        `packageApprovals.packages[${index}].bootstrap`);
+      decisionRef(bootstrap.decisionRef, `packageApprovals.packages[${index}].bootstrap.decisionRef`);
+      match(bootstrap.approvalRef, /^https:\/\/[^\s/]+\/\S+$/,
+        `packageApprovals.packages[${index}].bootstrap.approvalRef`);
+      if (bootstrap.approvalRef === entry.approvalRef ||
+          bootstrap.decisionRef === entry.decisionRef ||
+          bootstrap.owner !== entry.owner) {
+        fail(`packageApprovals.packages[${index}].bootstrap`,
+          "requires a separate approval and decision with the same owner");
+      }
+    } else if (entry.bootstrap !== null) {
+      fail(`packageApprovals.packages[${index}].bootstrap`,
+        "must be null when a previous bundle is named");
     }
     if (seen.has(entry.tag as string)) fail("packageApprovals.packages", "contains duplicate tags");
     seen.add(entry.tag as string);
@@ -175,9 +199,31 @@ function validatedApproval(provider: unknown, packageRegistry: unknown, audit: R
       approved.owner !== use.owner) {
     fail("packageApprovals", "no exact independently reviewed package matches these bytes and inputs");
   }
-  return { scope: "publication", approved: true, approvalRef: dispatch.approvalRef,
+  if (dispatch.previousTag !== null) {
+    const prior = manifest.lastKnownGood;
+    const priorApproved = entries.find((entry) => entry.tag === dispatch.previousTag);
+    if (!prior || prior.tag !== dispatch.previousTag || !priorApproved ||
+        priorApproved.bundleId !== prior.bundleId ||
+        priorApproved.manifestSha256 !== prior.manifestSha256) {
+      fail("packageApprovals", "named predecessor needs an exact approved registry entry");
+    }
+  } else if (manifest.lastKnownGood !== null) {
+    fail("release-manifest.json.lastKnownGood", "must be null for reviewed first bundle");
+  }
+  const publication: ValidatedPublicationApproval = {
+    scope: "publication", approved: true, approvalRef: dispatch.approvalRef,
     decisionRef: use.decisionRef as string, owner: use.owner as string,
-    sources: use.sources as string[] };
+    sources: use.sources as string[],
+  };
+  if (dispatch.previousTag !== null) return { publication };
+  const bootstrap = approved.bootstrap as Record<string, string>;
+  return { publication, bootstrap: {
+    scope: "first-real-bundle", approved: true, tag: dispatch.tag,
+    bundleId: approved.bundleId as string,
+    manifestSha256: approved.manifestSha256 as string,
+    decisionRef: bootstrap.decisionRef,
+    approvalRef: bootstrap.approvalRef, owner: bootstrap.owner,
+  } };
 }
 
 function reviewFromAudit(audit: Record<string, unknown>): PublicationReviewV1 {
@@ -208,8 +254,13 @@ function cleanup(root: string): void {
 /** Verify a downloaded five-file package without modifying a release. */
 export function verifyPublicationPackage(options: VerifyPublicationPackageOptions): PublicationAuditV1 {
   validateDispatch(options.dispatch);
+  if ((options.dispatch.previousTag === null) !== (options.previousDir === undefined)) {
+    fail("previousDir", "must be absent exactly for a reviewed first bundle");
+  }
   const packageDir = path.resolve(options.packageDir);
   exactFiles(packageDir);
+  const manifest = parseReleaseManifest(JSON.parse(fs.readFileSync(path.join(packageDir,
+    RELEASE_FILES.manifest), "utf8")), RELEASE_FILES.manifest);
   const auditBytes = fs.readFileSync(path.join(packageDir, "publication-audit.json"));
   let audit: Record<string, unknown>;
   try {
@@ -227,8 +278,8 @@ export function verifyPublicationPackage(options: VerifyPublicationPackageOption
   if (changes.previousTag !== options.dispatch.previousTag) {
     fail("publication-audit.json.changes.previousTag", "does not match requested prior");
   }
-  const approval = validatedApproval(options.providerApprovals, options.packageApprovals,
-    audit, options.dispatch, releaseSha256(auditBytes));
+  const approvals = validatedApproval(options.providerApprovals, options.packageApprovals,
+    audit, options.dispatch, releaseSha256(auditBytes), manifest);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "publication-verify-"));
   try {
     const sourceDir = path.join(temporary, "source");
@@ -239,7 +290,8 @@ export function verifyPublicationPackage(options: VerifyPublicationPackageOption
     }
     const recomputed = packageDataRelease({ candidateDir: sourceDir,
       previousDir: options.previousDir, outputDir: path.join(temporary, "recomputed"),
-      review: reviewFromAudit(audit), approval });
+      review: reviewFromAudit(audit), approval: approvals.publication,
+      bootstrapApproval: approvals.bootstrap });
     const computedDir = path.join(temporary, "recomputed");
     for (const filename of OUTPUT_FILES) {
       if (!fs.readFileSync(path.join(computedDir, filename)).equals(
@@ -258,15 +310,18 @@ export function verifyPublicationPackage(options: VerifyPublicationPackageOption
 
 function main(): void {
   const command = new Command();
-  command.requiredOption("--package <path>").requiredOption("--previous <path>")
+  command.requiredOption("--package <path>").option("--previous <path>")
     .requiredOption("--tag <tag>").requiredOption("--run-id <number>")
-    .requiredOption("--artifact-name <name>").requiredOption("--prior-tag <tag>")
+    .requiredOption("--artifact-name <name>").option("--prior-tag <tag>")
     .requiredOption("--approval-ref <url>");
   command.parse(process.argv);
   const flags = command.opts();
+  if (Boolean(flags.previous) !== Boolean(flags.priorTag)) {
+    fail("previousDir", "--previous and --prior-tag must be supplied together");
+  }
   const runId = Number(flags.runId);
   const dispatch: PublicationDispatch = { tag: flags.tag, sourceRunId: runId,
-    artifactName: flags.artifactName, previousTag: flags.priorTag,
+    artifactName: flags.artifactName, previousTag: flags.priorTag ?? null,
     approvalRef: flags.approvalRef };
   const audit = verifyPublicationPackage({ packageDir: flags.package, previousDir: flags.previous,
     dispatch,

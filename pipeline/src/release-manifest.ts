@@ -32,6 +32,8 @@ export interface ReleaseBuildOptions {
   tag: string;
   lastKnownGood?: Previous;
   fixtureGenesis?: boolean;
+  /** Only a separately reviewed first-real-bundle path may set this. */
+  reviewedGenesis?: boolean;
 }
 
 function fail(field: string, reason: string): never {
@@ -68,11 +70,12 @@ export function buildReleaseManifest(files: ReleaseFileBytes, options: ReleaseBu
   if (!/^data-v[A-Za-z0-9][A-Za-z0-9._-]*$/.test(options.tag)) {
     fail("tag", "must be a versioned data-v tag");
   }
-  if (!options.lastKnownGood && !options.fixtureGenesis) {
-    fail("lastKnownGood", "a prior bundle is required unless fixtureGenesis is explicit");
+  if (!options.lastKnownGood && !options.fixtureGenesis && !options.reviewedGenesis) {
+    fail("lastKnownGood", "a prior bundle or explicit genesis mode is required");
   }
-  if (options.lastKnownGood && options.fixtureGenesis) {
-    fail("fixtureGenesis", "cannot be combined with a previous bundle");
+  if ((options.fixtureGenesis && options.reviewedGenesis) ||
+      (options.lastKnownGood && (options.fixtureGenesis || options.reviewedGenesis))) {
+    fail("genesis", "fixture and reviewed genesis are exclusive and require no previous bundle");
   }
   if (options.lastKnownGood?.tag === options.tag) fail("lastKnownGood.tag", "must differ from current tag");
 
@@ -208,15 +211,16 @@ function verifyOne(directory: string): { manifest: ReleaseManifestV1; manifestBy
 
 /** Verify all current bytes and the complete named prior bundle, without following the prior bundle's own chain. */
 export function verifyReleaseBundle(directory: string, previousDirectory?: string,
-  fixtureGenesis = false): ReleaseManifestV1 {
+  fixtureGenesis = false, reviewedGenesis = false): ReleaseManifestV1 {
+  if (fixtureGenesis && reviewedGenesis) fail("genesis", "fixture and reviewed modes are exclusive");
   const current = verifyOne(directory).manifest;
   if (current.lastKnownGood === null) {
-    if (!fixtureGenesis || previousDirectory) {
-      fail("lastKnownGood", "genesis requires explicit fixtureGenesis and no previous directory");
+    if ((!fixtureGenesis && !reviewedGenesis) || previousDirectory) {
+      fail("lastKnownGood", "genesis requires one explicit mode and no previous directory");
     }
     return current;
   }
-  if (fixtureGenesis || !previousDirectory) {
+  if (fixtureGenesis || reviewedGenesis || !previousDirectory) {
     fail("lastKnownGood", "a separate previous bundle directory is required");
   }
   if (fs.realpathSync(directory) === fs.realpathSync(previousDirectory)) {
@@ -233,7 +237,7 @@ export function verifyReleaseBundle(directory: string, previousDirectory?: strin
 
 /** Write once; a prior bundle must already pass the same byte and compatibility checks. */
 export function writeReleaseManifest(directory: string, tag: string, previousDirectory?: string,
-  fixtureGenesis = false): ReleaseManifestV1 {
+  fixtureGenesis = false, reviewedGenesis = false): ReleaseManifestV1 {
   if (fs.existsSync(path.join(directory, RELEASE_FILES.manifest))) {
     fail(RELEASE_FILES.manifest, "already exists and will not be overwritten");
   }
@@ -246,9 +250,10 @@ export function writeReleaseManifest(directory: string, tag: string, previousDir
     lastKnownGood = { tag: previous.manifest.tag, bundleId: previous.manifest.bundleId,
       manifestSha256: releaseSha256(previous.manifestBytes) };
   }
-  const manifest = buildReleaseManifest(readFiles(directory), { tag, lastKnownGood, fixtureGenesis });
+  const manifest = buildReleaseManifest(readFiles(directory),
+    { tag, lastKnownGood, fixtureGenesis, reviewedGenesis });
   fs.writeFileSync(path.join(directory, RELEASE_FILES.manifest), `${JSON.stringify(manifest, null, 2)}\n`,
     { encoding: "utf8", flag: "wx" });
-  verifyReleaseBundle(directory, previousDirectory, fixtureGenesis);
+  verifyReleaseBundle(directory, previousDirectory, fixtureGenesis, reviewedGenesis);
   return manifest;
 }

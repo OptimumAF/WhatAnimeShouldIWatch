@@ -67,6 +67,8 @@ test("synthetic manifest pins exact bytes, graph IDs, item maps, and explicit ge
   assert.equal(manifest.explorer.sourceGraphId, manifest.neighborhood.graphId);
   assert.throws(() => buildReleaseManifest(source, { tag: "data-latest" }), /tag.*versioned/);
   assert.throws(() => buildReleaseManifest(source, { tag: "data-vnext" }), /lastKnownGood.*required/);
+  assert.throws(() => buildReleaseManifest(source, { tag: "data-vnext",
+    fixtureGenesis: true, reviewedGenesis: true }), /genesis.*exclusive/);
   const prior = { tag: "data-vprior", bundleId: "a".repeat(64), manifestSha256: "b".repeat(64) };
   const reorderedPrior = { manifestSha256: prior.manifestSha256, bundleId: prior.bundleId,
     tag: prior.tag };
@@ -81,6 +83,12 @@ test("synthetic manifest pins exact bytes, graph IDs, item maps, and explicit ge
   writeReleaseManifest(genesis, fixtureTag, undefined, true);
   assert.equal(verifyReleaseBundle(genesis, undefined, true).bundleId, manifest.bundleId);
   assert.throws(() => verifyReleaseBundle(genesis), /lastKnownGood.*genesis/);
+  assert.throws(() => verifyReleaseBundle(genesis, undefined, true, true), /genesis.*exclusive/);
+  const reviewed = path.join(root, "reviewed");
+  writeFiles(reviewed, source);
+  writeReleaseManifest(reviewed, "data-vreviewed", undefined, false, true);
+  assert.equal(verifyReleaseBundle(reviewed, undefined, false, true).lastKnownGood, null);
+  assert.throws(() => verifyReleaseBundle(reviewed), /lastKnownGood.*genesis/);
   assert.throws(() => writeReleaseManifest(genesis, fixtureTag, undefined, true),
     /release-manifest.json.*already exists/);
 });

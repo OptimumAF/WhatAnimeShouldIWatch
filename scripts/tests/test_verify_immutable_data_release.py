@@ -27,6 +27,7 @@ class ImmutableDataReleaseTests(unittest.TestCase):
     def test_dispatch_input_validation(self):
         validate_dispatch("invented/repo", "data-vnew", "12345", "invented-package",
                           "data-vprior")
+        validate_dispatch("invented/repo", "data-vfirst", "12345", "invented-package", "")
         with self.assertRaisesRegex(ReleaseCheckError, "source run ID"):
             validate_dispatch("invented/repo", "data-vnew", "0", "invented-package",
                               "data-vprior")
@@ -36,6 +37,9 @@ class ImmutableDataReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseCheckError, "previous tag"):
             validate_dispatch("invented/repo", "data-vnew", "123", "invented-package",
                               "data-vnew")
+        with self.assertRaisesRegex(ReleaseCheckError, "previous tag"):
+            validate_dispatch("invented/repo", "data-vnew", "123", "invented-package",
+                              "data-latest")
 
     def test_preflight_requires_enabled_setting_and_absent_release_and_tag(self):
         seen = []
