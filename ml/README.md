@@ -45,6 +45,14 @@ npm run eval:new-user:fixture
 
 The command uses only invented files and writes no model or report artifact. The fit-user test IDs remain unscored here. These small authored results are an isolation and serving-path check, not a release-quality estimate.
 
+Decision [0020](../docs/decisions/0020-hybrid-validation-boundary.md) adds a predeclared five-weight hybrid selector over the same train-only model and browser eligibility/final-list path:
+
+```bash
+npm run eval:hybrid:split:select
+```
+
+This one-time command writes `data/synthetic-hybrid-selection-local.json` and refuses an existing selection or report. It only hashes the separate invented final cohort; it does not score it. The separate `report-test` command in `web/bench/split-first-hybrid-selection.ts` is guarded by a one-use marker and is reserved until later M5 baseline/reporting choices are fixed. The selected fixture weight is not promoted to the product.
+
 ## Install
 
 ```bash

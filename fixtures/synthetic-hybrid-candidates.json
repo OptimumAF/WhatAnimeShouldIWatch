@@ -6,5 +6,7 @@
   "positiveRawScoreMin": 7,
   "topK": 10,
   "tieBreak": "smaller-model-weight",
+  "validationFixtureSha256": "c6292dd8ff0440da5e57b5255b5bb95f35fb84bac247f9a18c440f401fc9faf1",
+  "testFixtureSha256": "429a26ebdddb2f863ab6e7ea03b882dd460c6bd7d096d58d2b36206cca2557dc",
   "modelWeights": [0, 0.25, 0.5, 0.75, 1]
 }
