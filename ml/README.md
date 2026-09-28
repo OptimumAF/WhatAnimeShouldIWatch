@@ -35,7 +35,7 @@ python ml/split_first_selection.py select --raw-ratings fixtures/synthetic-split
 python ml/split_first_selection.py report-test --raw-ratings fixtures/synthetic-split-input.json --split-manifest fixtures/synthetic-split-manifest.json --metadata fixtures/synthetic-anime-metadata.json --selection data/synthetic-selection-local.json
 ```
 
-The second command refuses a repeat using a one-use marker beside the selection file. These ignored local reports are restricted evaluation records, and their tiny warm-user metrics do not establish ranking quality. [Decision 0017](../docs/decisions/0017-validation-test-boundary.md) defines the read boundary. M5.4 remains open while hybrid blend and other candidate choices are not yet connected to it.
+The second command refuses a repeat using a one-use marker beside the selection file. These ignored local reports are restricted evaluation records, and their tiny warm-user metrics do not establish ranking quality. [Decision 0017](../docs/decisions/0017-validation-test-boundary.md) defines the read boundary. M5.4's supported MF-grid, Optuna, and browser hybrid selectors now use validation-only choice with frozen one-use final reporting. The reserved new-user final cohort remains unscored; M5.6-M5.9 and the milestone exit gate remain open.
 
 M5.5's [separate new-user fixture](../docs/decisions/0018-new-user-split-first-evaluation.md) has an invented fit-only raw snapshot with a pinned 72/24/24 split and four disjoint evaluation users. The local Python adapter exports only train-fitted item factors/biases, a train-present catalog, and positive train pairs to the TypeScript evaluator; it never exports fitted user factors or evaluation ratings. The TypeScript runner calls the browser's native-score mapper, signed preference-to-vector scorer, candidate eligibility policy, and final-list selector. It reports 1/3/5/10 supplied-rating model validation separately from the fit users' warm validation metric and labels any graph/catalog fallback:
 
@@ -44,6 +44,14 @@ npm run eval:new-user:fixture
 ```
 
 The command uses only invented files and writes no model or report artifact. The fit-user test IDs remain unscored here. These small authored results are an isolation and serving-path check, not a release-quality estimate.
+
+Decision [0020](../docs/decisions/0020-hybrid-validation-boundary.md) adds a predeclared five-weight hybrid selector over the same train-only model and browser eligibility/final-list path:
+
+```bash
+npm run eval:hybrid:split:select
+```
+
+This one-time command writes `data/synthetic-hybrid-selection-local.json` and refuses an existing selection or report. It only hashes the separate invented final cohort; it does not score it. The separate `report-test` command in `web/bench/split-first-hybrid-selection.ts` is guarded by a one-use marker and is reserved until later M5 baseline/reporting choices are fixed. The selected fixture weight is not promoted to the product.
 
 ## Install
 

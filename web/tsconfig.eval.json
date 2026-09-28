@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["vite/client", "node"]
   },
-  "include": ["bench/**/*.ts", "test/user-vector-eval.test.ts", "test/split-first-new-user-eval.test.ts", "test/hybrid-blend.test.ts", "test/explanations.test.ts", "test/franchise-diversity.test.ts"]
+  "include": ["bench/**/*.ts", "test/user-vector-eval.test.ts", "test/split-first-new-user-eval.test.ts", "test/split-first-hybrid-selection.test.ts", "test/hybrid-blend.test.ts", "test/explanations.test.ts", "test/franchise-diversity.test.ts"]
 }

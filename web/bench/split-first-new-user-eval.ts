@@ -48,7 +48,7 @@ export type UserResult = {
   excludedPositiveReasons: { watchedOrExcluded: number; includeOnly: number; metadataFilter: number };
   ranks: (number | null)[];
   ranked: { animeId: number; score: number }[];
-  displayedEngine: "model" | "graph" | "coverage";
+  displayedEngine: "model" | "hybrid" | "graph" | "coverage";
   displayedCandidateCount: number; displayedRanks: (number | null)[];
   hitAtK: number; recallAtK: number; ndcgAtK: number; reciprocalRank: number;
 };
@@ -164,10 +164,11 @@ export function fitUserIds(value: unknown): Set<string> {
   return users;
 }
 
-export function parseEvalFixture(value: unknown, bundle: EvalBundle, fitUsers: ReadonlySet<string>): EvalFixture {
+export function parseEvalFixture(value: unknown, bundle: EvalBundle, fitUsers: ReadonlySet<string>,
+                                 role: "validation" | "test" = "validation"): EvalFixture {
   const root = record(value, "fixture");
   fields(root, ["format", "seed", "positiveRawScoreMin", "topK", "candidateMetadata", "users"], "fixture");
-  if (root.format !== "new-user-validation-fixture-v1" || root.seed !== 42 ||
+  if (root.format !== `new-user-${role === "test" ? "final-test" : "validation"}-fixture-v1` || root.seed !== 42 ||
       root.positiveRawScoreMin !== 7 || root.topK !== 10) fail("fixture protocol");
   const catalogIds = new Set(bundle.catalog.map((item) => item.animeId));
   const candidateMetadata = array(root.candidateMetadata, "candidateMetadata").map((entry, i) => {
@@ -188,7 +189,7 @@ export function parseEvalFixture(value: unknown, bundle: EvalBundle, fitUsers: R
   const seenUsers = new Set<string>();
   const users = array(root.users, "users").map((entry, i) => {
     const item = record(entry, `users[${i}]`);
-    fields(item, ["userId", "observed", "validation", "historySeen", "exclude",
+    fields(item, ["userId", "observed", role, "historySeen", "exclude",
       "includeOnly", "filters"], `users[${i}]`);
     const userId = item.userId;
     if (typeof userId !== "string" || !userId || fitUsers.has(userId) || seenUsers.has(userId)) {
@@ -196,7 +197,7 @@ export function parseEvalFixture(value: unknown, bundle: EvalBundle, fitUsers: R
     }
     seenUsers.add(userId);
     const observed = ratings(item.observed, `users[${i}].observed`, catalogIds);
-    const validation = ratings(item.validation, `users[${i}].validation`, catalogIds);
+    const validation = ratings(item[role], `users[${i}].${role}`, catalogIds);
     const historySeen = idList(item.historySeen, `users[${i}].historySeen`, catalogIds);
     const exclude = idList(item.exclude, `users[${i}].exclude`, catalogIds);
     const includeOnly = idList(item.includeOnly, `users[${i}].includeOnly`, catalogIds);
@@ -254,7 +255,12 @@ export function metricsForRanks(ranks: readonly (number | null)[], positiveCount
     reciprocalRank: found.length ? 1 / Math.min(...found) : 0 };
 }
 
-export function evaluateNewUsers(bundle: EvalBundle, fixture: EvalFixture): UserResult[] {
+export function evaluateNewUsers(bundle: EvalBundle, fixture: EvalFixture,
+                                 mode: "model" | "hybrid" | "graph" = "model",
+                                 modelWeight = 0.5): UserResult[] {
+  if (mode === "hybrid" && (!Number.isFinite(modelWeight) || modelWeight < 0 || modelWeight > 1)) {
+    fail("modelWeight");
+  }
   const nodes: GraphData["nodes"] = bundle.catalog.map((anime) =>
     ({ id: `anime:${anime.animeId}`, label: anime.title, nodeType: "anime" }));
   const edges: GraphData["edges"] = bundle.positivePairs.map((pair) => ({
@@ -286,12 +292,20 @@ export function evaluateNewUsers(bundle: EvalBundle, fixture: EvalFixture): User
         includeOnlyNodeIds: user.includeOnly.map((id) => `anime:${id}`),
         excludeNodeIds: user.exclude.map((id) => `anime:${id}`), filters: user.filters });
       const modelResults = buildModelRecommendationsForPreferences(preferences, index, model);
-      const ranked = rankEligibleCandidates("model", { model: modelResults }, policy, metadata).recommendations;
-      let displayedEngine: UserResult["displayedEngine"] = "model";
+      const graph = mode !== "model"
+        ? buildGraphRecommendationsForPreferences(preferences, index) : [];
+      const modelAvailable = mode === "hybrid" &&
+        policy.evaluate(modelResults, metadata).structurallyEligible.length > 0;
+      const initialMode = mode === "hybrid" ? (modelAvailable ? "hybrid" : "graph") : mode;
+      const ranked = rankEligibleCandidates(initialMode, { graph, model: modelResults },
+        policy, metadata, modelWeight).recommendations;
+      let displayedEngine: UserResult["displayedEngine"] = initialMode;
       let displayed = ranked;
       if (!displayed.length) {
-        const graph = buildGraphRecommendationsForPreferences(preferences, index);
-        displayed = rankEligibleCandidates("graph", { graph }, policy, metadata).recommendations;
+        const fallbackGraph = mode !== "model" ? graph
+          : buildGraphRecommendationsForPreferences(preferences, index);
+        displayed = rankEligibleCandidates("graph", { graph: fallbackGraph },
+          policy, metadata).recommendations;
         displayedEngine = "graph";
       }
       if (!displayed.length) {

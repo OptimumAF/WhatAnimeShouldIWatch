@@ -29,6 +29,7 @@
     "test:e2e": "npm run test:e2e --workspace web",
     "eval:user-vector:fixture": "npm run data:fixture:check && npm run eval:user-vector:fixture --workspace web",
     "eval:new-user:fixture": "npm run new-user:split:fixture:check && npm run eval:new-user:fixture --workspace web",
+    "eval:hybrid:split:select": "npm run new-user:split:fixture:check && node --import tsx web/bench/split-first-hybrid-selection.ts select",
     "eval:hybrid-blend:fixture": "npm run data:fixture:check && npm run eval:hybrid-blend:fixture --workspace web",
     "eval:franchise-diversity:fixture": "npm run data:fixture:check && npm run eval:franchise-diversity:fixture --workspace web",
     "build:web": "npm run build --workspace web",
