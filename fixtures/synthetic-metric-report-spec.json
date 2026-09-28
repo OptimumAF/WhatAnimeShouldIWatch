@@ -1,0 +1,12 @@
+{
+  "format": "split-first-metric-report-spec-v1",
+  "baselineSpecSha256": "9b9beefe8a461fcea2ef704dae16dd220f61442bbd50af6e0062c498d2257303",
+  "topKs": [10, 20],
+  "suppliedCounts": [1, 3, 5, 10],
+  "positiveRawScoreMin": 7,
+  "lowSupportMax": 1,
+  "bootstrapSeed": 271828,
+  "bootstrapReplicates": 2048,
+  "latencyWarmups": 5,
+  "latencySamples": 31
+}
