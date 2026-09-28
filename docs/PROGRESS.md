@@ -1270,3 +1270,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI, final stacked-diff review, and commit/PR reference remain. M8.5 acceptance still needs an approved immutable real release, a reviewed Pages run at the actual URL, observed base/direct/data/gzip/header/optional-model behavior, and M8.7 rollback evidence. Provider source/use and bundle/model owner approval registries remain empty. The mocked project-path/browser/HTTP checks do not establish live CDN behavior; M8.5 and M8 stay unchecked.
 
 **Plan revision / single next task:** The M8.5 log and decision add exact publication-to-Pages triggering and independently reviewed genesis/prior installation without changing the hosted acceptance gate. Next pursue M8.6 local privacy-conscious app/data/model version and actionable error diagnostics while real deployment remains held.
+
+## Session 2026-09-28 — M8.5 exact-tag Pages CI review
+
+**PR / exact implementation head:** Committed `081d1a421cb3fa9a0090b56c52b25a313f02e64c` and opened draft [PR #58](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/58) against PR #57's branch. The 29-file stacked diff passed `git diff codex/m8-model-release-publisher...HEAD --check`, and the checkout was clean. [Fixture CI run 36471703131](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36471703131) passed on that implementation SHA, as did GitGuardian. CI installed clean Node/Python dependencies, generated and verified invented fixtures, typechecked, ran pipeline/Python/workflow tests, built web, and passed mocked browser smoke. Local `npm run test:e2e` covered 68 cases and `npm run test:pages` covered the built project-path preview; CI did not itself run the full 68-case browser or project-path preview suites.
+
+**Checks not run / blockers:** This documentation-only handoff commit still needs its own final-head CI result. No real provider data, release download, workflow dispatch, Pages publication, hosted behavior, or rollback was tested. The source/use and owner registries authorize no real release. M8.5 and M8 remain unchecked pending an approved immutable release, exact hosted checks, and M8.7 recovery practice.
+
+**Single next task:** Implement M8.6 local privacy-conscious app/data/model version and actionable error diagnostics with invented inputs and mocked browser checks while the real deployment hold remains.
