@@ -88,6 +88,18 @@ body,
   margin: 0;
 }
 
+#app[hidden] {
+  display: none;
+}
+
+#startup-status {
+  max-width: 40rem;
+  margin: 3rem auto;
+  padding: 1rem;
+  color: var(--text);
+  text-align: center;
+}
+
 body {
   background: radial-gradient(circle at 20% 20%, var(--bg-spot-1) 0%, transparent 40%),
     radial-gradient(circle at 80% 80%, var(--bg-spot-2) 0%, transparent 35%),
@@ -1106,6 +1118,10 @@ button:hover,
   display: none;
 }
 
+.profile-backup [hidden] {
+  display: none;
+}
+
 .import-preview h3,
 .imported-history h3 {
   margin: 0;
@@ -1200,6 +1216,32 @@ button:hover,
   color: var(--text);
   padding: 0.5rem 0.7rem;
   cursor: pointer;
+}
+
+.profile-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.profile-backup-actions button,
+.profile-backup-actions input[type="file"] {
+  max-width: 100%;
+}
+
+.profile-backup-actions button {
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+
+.profile-backup .import-preview {
+  margin-top: 0.6rem;
 }
 
 .chip {

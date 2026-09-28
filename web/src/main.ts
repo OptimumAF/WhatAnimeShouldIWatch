@@ -61,11 +61,15 @@ import type { AnimePreference, PreferenceSentiment } from "./preferences";
 import {
   COMMAND_HISTORY_LIMIT,
   COMMAND_PINNED_LIMIT,
+  MAX_PROFILE_BACKUP_BYTES,
   RECOMMENDATION_STORAGE_VERSION,
   createPersistenceAdapter,
+  emptyRecommendationState,
 } from "./persistence";
 import type {
   ContrastMode,
+  ProfileBackupDocument,
+  ProfileBackupImportMode,
   RecommendationMode,
   RecommendationProfileRecord,
   StoredRecommendationState,
@@ -133,6 +137,12 @@ interface CommandTokenMatch {
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
   throw new Error("Missing #app container");
+}
+const startupStatusEl = document.querySelector<HTMLElement>("#startup-status");
+
+function revealApp(): void {
+  app!.hidden = false;
+  startupStatusEl?.remove();
 }
 
 app.innerHTML = `
@@ -345,6 +355,33 @@ app.innerHTML = `
                   </button>
                   <button id="profile-delete-btn" type="button" class="ghost-btn">Delete</button>
                 </div>
+              </section>
+              <section class="profiles profile-backup">
+                <h3>Backup &amp; Recovery</h3>
+                <p class="muted">Download your current preferences, imported history, candidate overrides, and named profiles as a versioned JSON file. It stays on your device; store it privately because it contains your watch history. A backup does not depend on the current catalog or model release.</p>
+                <div class="profile-backup-actions">
+                  <button id="profile-export-btn" type="button">Download Profile Backup</button>
+                  <label for="profile-backup-file">Import a local .json backup (up to 8 MiB)</label>
+                  <input id="profile-backup-file" type="file" accept=".json,application/json" />
+                  <button id="profile-reset-preview-btn" type="button" class="ghost-btn">Preview Local Reset</button>
+                  <button id="profile-repair-btn" type="button" class="ghost-btn">Recover Loaded Copy</button>
+                </div>
+                <p id="profile-backup-status" class="muted" role="status" aria-live="polite"></p>
+                <section id="profile-backup-preview" class="import-preview" hidden>
+                  <h3 id="profile-backup-preview-title">Backup Preview</h3>
+                  <p id="profile-backup-summary"></p>
+                  <p id="profile-backup-unmapped" class="muted"></p>
+                  <label id="profile-backup-mode-row" for="profile-backup-mode">Apply as
+                    <select id="profile-backup-mode">
+                      <option value="merge">Merge; keep local values on conflicts</option>
+                      <option value="replace">Replace current state and named profiles</option>
+                    </select>
+                  </label>
+                  <div class="profile-backup-actions">
+                    <button id="profile-backup-apply" type="button" class="primary-btn">Apply Backup</button>
+                    <button id="profile-backup-cancel" type="button" class="ghost-btn">Cancel</button>
+                  </div>
+                </section>
               </section>
             </details>
 
@@ -588,6 +625,19 @@ const profileNameInput = mustElement<HTMLInputElement>("#profile-name-input");
 const profileSelect = mustElement<HTMLSelectElement>("#profile-select");
 const profileLoadBtn = mustElement<HTMLButtonElement>("#profile-load-btn");
 const profileDeleteBtn = mustElement<HTMLButtonElement>("#profile-delete-btn");
+const profileExportBtn = mustElement<HTMLButtonElement>("#profile-export-btn");
+const profileBackupFile = mustElement<HTMLInputElement>("#profile-backup-file");
+const profileResetPreviewBtn = mustElement<HTMLButtonElement>("#profile-reset-preview-btn");
+const profileRepairBtn = mustElement<HTMLButtonElement>("#profile-repair-btn");
+const profileBackupStatusEl = mustElement<HTMLParagraphElement>("#profile-backup-status");
+const profileBackupPreviewEl = mustElement<HTMLElement>("#profile-backup-preview");
+const profileBackupPreviewTitleEl = mustElement<HTMLElement>("#profile-backup-preview-title");
+const profileBackupSummaryEl = mustElement<HTMLParagraphElement>("#profile-backup-summary");
+const profileBackupUnmappedEl = mustElement<HTMLParagraphElement>("#profile-backup-unmapped");
+const profileBackupModeRowEl = mustElement<HTMLLabelElement>("#profile-backup-mode-row");
+const profileBackupModeEl = mustElement<HTMLSelectElement>("#profile-backup-mode");
+const profileBackupApplyBtn = mustElement<HTMLButtonElement>("#profile-backup-apply");
+const profileBackupCancelBtn = mustElement<HTMLButtonElement>("#profile-backup-cancel");
 const addIncludeForm = mustElement<HTMLFormElement>("#add-include-form");
 const includeInput = mustElement<HTMLInputElement>("#include-input");
 const includeAnimeEl = mustElement<HTMLDivElement>("#include-anime");
@@ -661,6 +711,14 @@ let activeUsernameImport: { controller: AbortController; provider: UsernameImpor
 let bulkFileLoadId = 0;
 let activeBulkFileLoadId: number | null = null;
 let pendingHistoryImport: { parsed: ParsedHistory; origin: "local" | "username" } | null = null;
+let profileBackupFileLoadId = 0;
+let activeProfileBackupFileLoadId: number | null = null;
+let pendingProfileBackup: {
+  kind: "import" | "reset";
+  document?: ProfileBackupDocument;
+  storageRevision: string;
+  memoryRevision: string;
+} | null = null;
 let graphRenderRunId = 0;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
 let modelLoadError: string | null = null;
@@ -1057,6 +1115,17 @@ profileDeleteBtn.addEventListener("click", () => {
   deleteSelectedProfile();
 });
 
+profileExportBtn.addEventListener("click", downloadProfileBackup);
+profileBackupFile.addEventListener("change", () => { void loadProfileBackupFile(); });
+profileBackupModeEl.addEventListener("change", renderProfileBackupPreview);
+profileBackupApplyBtn.addEventListener("click", applyPendingProfileBackup);
+profileBackupCancelBtn.addEventListener("click", () => {
+  clearPendingProfileBackup();
+  profileBackupStatusEl.textContent = "Backup operation canceled; local data is unchanged.";
+});
+profileResetPreviewBtn.addEventListener("click", previewProfileReset);
+profileRepairBtn.addEventListener("click", recoverLoadedProfileCopy);
+
 filterGenreSelect.addEventListener("change", () => {
   recommendationFilters.genre = filterGenreSelect.value.trim().toLowerCase();
   void updateRecommendations();
@@ -1325,6 +1394,8 @@ networkSearchForm.addEventListener("submit", (event) => {
   networkSearchMessage.textContent = `Focused: ${match.label} (${match.id})`;
   selectNodeAndFocus(match.id);
 });
+
+revealApp();
 
 function setActiveView(view: AppView, fromHash: boolean): void {
   activeView = view;
@@ -3826,6 +3897,7 @@ async function loadRequiredArtifact<T>(operation: Promise<T>): Promise<T> {
   try {
     return await operation;
   } catch (error) {
+    revealApp();
     const authoredError = error instanceof ArtifactValidationError || error instanceof ArtifactLoadError;
     const detail = authoredError ? error.message : "unable to load or verify the required asset";
     recMessageEl.textContent = `Data unavailable: ${detail}`;
@@ -4342,6 +4414,7 @@ function persistRecommendationState(): boolean {
   cancelActiveUsernameImport();
   cancelBulkFileLoad();
   clearPendingHistoryImport();
+  invalidatePendingProfileBackup();
   recommendationController?.abort();
   ++recommendationRunId;
   const saved = persistence.persistRecommendationState(buildCurrentRecommendationState());
@@ -4364,6 +4437,233 @@ function buildCurrentRecommendationState(): StoredRecommendationState {
     excludeCandidates: [...excludeCandidateNodeIds],
     history: [...historyEntries],
   };
+}
+
+function profileMemoryRevision(): string {
+  return JSON.stringify({
+    state: buildCurrentRecommendationState(),
+    profiles: [...savedProfiles.entries()],
+  });
+}
+
+function clearPendingProfileBackup(): void {
+  ++profileBackupFileLoadId;
+  activeProfileBackupFileLoadId = null;
+  pendingProfileBackup = null;
+  profileBackupFile.value = "";
+  profileBackupPreviewEl.hidden = true;
+}
+
+function invalidatePendingProfileBackup(): void {
+  if (pendingProfileBackup === null && activeProfileBackupFileLoadId === null) return;
+  clearPendingProfileBackup();
+  profileBackupStatusEl.textContent = "Profile data changed. Choose the backup again to review a fresh preview.";
+}
+
+function downloadProfileBackup(): void {
+  try {
+    const raw = persistence.createProfileBackup(buildCurrentRecommendationState(), savedProfiles);
+    const url = URL.createObjectURL(new Blob([raw], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `wasiw-profile-backup-${runtime.now().toISOString().slice(0, 10)}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    runtime.schedule(() => URL.revokeObjectURL(url), 1000);
+    profileBackupStatusEl.textContent = "Profile backup prepared for download. Keep the file private; it contains watch history.";
+  } catch {
+    profileBackupStatusEl.textContent = "Unable to prepare this profile backup. Local data was not changed.";
+  }
+}
+
+async function loadProfileBackupFile(): Promise<void> {
+  const file = profileBackupFile.files?.[0];
+  if (!file) return;
+  clearPendingProfileBackup();
+  const loadId = ++profileBackupFileLoadId;
+  activeProfileBackupFileLoadId = loadId;
+  if (!file.name.toLowerCase().endsWith(".json") || file.size > MAX_PROFILE_BACKUP_BYTES) {
+    activeProfileBackupFileLoadId = null;
+    profileBackupStatusEl.textContent = "Choose a .json profile backup no larger than 8 MiB. Local data is unchanged.";
+    return;
+  }
+  profileBackupStatusEl.textContent = "Reading local profile backup...";
+  try {
+    const raw = await file.text();
+    if (activeProfileBackupFileLoadId !== loadId) return;
+    const document = persistence.parseProfileBackup(raw);
+    const storageRevision = persistence.getProfileStorageRevision();
+    if (storageRevision === null) throw new Error("Storage unavailable");
+    activeProfileBackupFileLoadId = null;
+    pendingProfileBackup = {
+      kind: "import", document, storageRevision, memoryRevision: profileMemoryRevision(),
+    };
+    profileBackupModeEl.value = "merge";
+    renderProfileBackupPreview();
+    if (pendingProfileBackup !== null) {
+      profileBackupStatusEl.textContent = "Local backup parsed. Review the counts and choose merge or replace before applying.";
+    }
+  } catch {
+    if (activeProfileBackupFileLoadId !== loadId) return;
+    clearPendingProfileBackup();
+    profileBackupStatusEl.textContent = "Profile backup is unreadable, unsupported, or invalid. Local data is unchanged.";
+  }
+}
+
+function renderProfileBackupPreview(): void {
+  const pending = pendingProfileBackup;
+  if (!pending) return;
+  profileBackupPreviewEl.hidden = false;
+  if (pending.kind === "reset") {
+    profileBackupPreviewTitleEl.textContent = "Local Reset Preview";
+    profileBackupModeRowEl.hidden = true;
+    profileBackupApplyBtn.textContent = "Reset Local Profiles";
+    profileBackupSummaryEl.textContent =
+      `Reset will clear ${selectedAnimeNodeIds.length} current preferences, ${historyEntries.length} imported history entries, ` +
+      `${savedProfiles.size} named profiles, and current candidate overrides. Older source keys and raw backups remain in browser storage.`;
+    profileBackupUnmappedEl.textContent = persistence.getStorageWarnings().length > 0
+      ? "Unreadable browser copies may also exist. Reset archives them when storage permits. Download a readable backup first if possible."
+      : "Download a profile backup first if you may want to restore these choices.";
+    return;
+  }
+  if (!pending.document) return;
+  const mode: ProfileBackupImportMode = profileBackupModeEl.value === "replace" ? "replace" : "merge";
+  let plan;
+  try {
+    plan = persistence.planProfileBackupImport(
+      pending.document, buildCurrentRecommendationState(), savedProfiles, mode,
+    );
+  } catch {
+    clearPendingProfileBackup();
+    profileBackupStatusEl.textContent = "This backup cannot be combined with current browser data. Local data is unchanged.";
+    return;
+  }
+  const c = plan.counts;
+  profileBackupPreviewTitleEl.textContent = "Profile Backup Preview";
+  profileBackupModeRowEl.hidden = false;
+  profileBackupApplyBtn.textContent = "Apply Profile Backup";
+  profileBackupSummaryEl.textContent = mode === "merge"
+    ? `Backup has ${c.importedPreferences} preferences, ${c.importedHistory} history entries, and ${c.importedProfiles} named profiles. ` +
+      `Merge adds ${c.addedPreferences} preferences, ${c.addedHistory} history entries, and ${c.addedProfiles} profiles; ` +
+      `keeps your local values for ${c.keptPreferences}, ${c.keptHistory}, and ${c.keptProfiles} matching identities. ` +
+      "Your current engine and settings stay; candidate lists are extended and exclusions still win."
+    : `Backup has ${c.importedPreferences} preferences, ${c.importedHistory} history entries, and ${c.importedProfiles} named profiles. ` +
+      `Replace removes ${c.removedPreferences} local preferences, ${c.removedHistory} history entries, and ${c.removedProfiles} profiles absent from the file; ` +
+      `overwrites ${c.replacedPreferences} preferences, ${c.replacedHistory} history entries, and ${c.replacedProfiles} matching profiles. ` +
+      "It also replaces the engine, settings, and candidate overrides.";
+  const unmappedPreferences = plan.state.preferences.filter((item) =>
+    !recommendationIndex.animeByNodeId.has(item.nodeId)).length;
+  const unmappedHistory = (plan.state.history ?? []).filter((item) =>
+    item.animeId === null || !recommendationIndex.animeByAnimeId.has(item.animeId)).length;
+  profileBackupUnmappedEl.textContent =
+    `${unmappedPreferences} resulting preferences and ${unmappedHistory} history entries are unavailable in this catalog; their original identities are retained.`;
+}
+
+function previewProfileReset(): void {
+  clearPendingProfileBackup();
+  const storageRevision = persistence.getProfileStorageRevision();
+  if (storageRevision === null) {
+    profileBackupStatusEl.textContent = "Browser storage could not be read. Reset was not prepared.";
+    renderStorageWarnings();
+    return;
+  }
+  pendingProfileBackup = { kind: "reset", storageRevision, memoryRevision: profileMemoryRevision() };
+  renderProfileBackupPreview();
+  profileBackupStatusEl.textContent = "Review the local reset counts before applying.";
+}
+
+function applyCommittedProfileCollection(
+  state: StoredRecommendationState, profiles: Map<string, RecommendationProfileRecord>,
+): void {
+  cancelActiveUsernameImport();
+  cancelBulkFileLoad();
+  clearPendingHistoryImport();
+  recommendationController?.abort();
+  ++recommendationRunId;
+  clearPendingProfileBackup();
+  savedProfiles.clear();
+  for (const [name, profile] of profiles) savedProfiles.set(name, profile);
+  applyRecommendationState({
+    ...state,
+    modelBlendWeight: state.modelBlendWeight ?? 0.5,
+    allowRelatedTitles: state.allowRelatedTitles ?? false,
+    includeCandidates: state.includeCandidates ?? [],
+    excludeCandidates: state.excludeCandidates ?? [],
+    history: state.history ?? [],
+  });
+  renderProfileOptions(savedProfiles);
+  renderSelectedAnime();
+  renderImportedHistory();
+  renderIncludeCandidates();
+  renderExcludeCandidates();
+  renderStorageWarnings();
+  void updateRecommendations();
+}
+
+function applyPendingProfileBackup(): void {
+  const pending = pendingProfileBackup;
+  if (!pending) return;
+  if (profileMemoryRevision() !== pending.memoryRevision ||
+    persistence.getProfileStorageRevision() !== pending.storageRevision) {
+    clearPendingProfileBackup();
+    profileBackupStatusEl.textContent = "Profile data changed since the preview. Review a fresh preview before applying.";
+    renderStorageWarnings();
+    return;
+  }
+  const isReset = pending.kind === "reset";
+  let plan;
+  try {
+    plan = !isReset && pending.document
+      ? persistence.planProfileBackupImport(pending.document, buildCurrentRecommendationState(), savedProfiles,
+        profileBackupModeEl.value === "replace" ? "replace" : "merge")
+      : null;
+  } catch {
+    clearPendingProfileBackup();
+    profileBackupStatusEl.textContent = "This backup cannot be applied to current browser data. Local data is unchanged.";
+    return;
+  }
+  const state = plan?.state ?? emptyRecommendationState();
+  const profiles = plan?.profiles ?? new Map<string, RecommendationProfileRecord>();
+  const saved = isReset
+    ? persistence.resetProfileCollection(pending.storageRevision)
+    : persistence.commitProfileCollection(state, profiles, pending.storageRevision);
+  if (!saved) {
+    clearPendingProfileBackup();
+    profileBackupStatusEl.textContent = "Browser storage rejected the change. The original data is retained or available for recovery.";
+    renderStorageWarnings();
+    return;
+  }
+  applyCommittedProfileCollection(state, profiles);
+  profileBackupStatusEl.textContent = isReset
+    ? "Local recommendation state and named profiles were reset. Older source keys and backups were retained."
+    : "Profile backup was applied and saved locally.";
+}
+
+function recoverLoadedProfileCopy(): void {
+  clearPendingProfileBackup();
+  if (!persistence.recoverInterruptedProfileWrite()) {
+    profileBackupStatusEl.textContent = "Browser storage still rejects recovery. Original data remains in the recovery journal.";
+    renderStorageWarnings();
+    return;
+  }
+  const state = persistence.loadRecommendationState();
+  const profiles = persistence.loadRecommendationProfiles();
+  if (persistence.getStorageWarnings().some((warning) => warning.includes("could not be read"))) {
+    profileBackupStatusEl.textContent = "No readable copy was found for part of this profile data. Preview reset or import a valid backup.";
+    renderStorageWarnings();
+    return;
+  }
+  const revision = persistence.getProfileStorageRevision();
+  if (revision === null || !persistence.commitProfileCollection({
+    version: RECOMMENDATION_STORAGE_VERSION, ...state,
+  }, profiles, revision)) {
+    profileBackupStatusEl.textContent = "Browser storage rejected repair. The original and backup copies remain available.";
+    renderStorageWarnings();
+    return;
+  }
+  applyCommittedProfileCollection({ version: RECOMMENDATION_STORAGE_VERSION, ...state }, profiles);
+  profileBackupStatusEl.textContent = "Readable profile data was restored to current browser storage.";
 }
 
 function renderProfileOptions(profiles: Map<string, RecommendationProfileRecord>): void {
@@ -4406,6 +4706,8 @@ function saveCurrentProfile(): void {
     recMessageEl.textContent = `Could not save profile "${profileName}".`;
     return;
   }
+
+  invalidatePendingProfileBackup();
   renderStorageWarnings();
   renderProfileOptions(savedProfiles);
   profileSelect.value = profileName;
@@ -4463,6 +4765,8 @@ function deleteSelectedProfile(): void {
     recMessageEl.textContent = `Could not delete profile "${name}".`;
     return;
   }
+
+  invalidatePendingProfileBackup();
   renderStorageWarnings();
   renderProfileOptions(savedProfiles);
   recMessageEl.textContent = `Deleted profile "${name}".`;

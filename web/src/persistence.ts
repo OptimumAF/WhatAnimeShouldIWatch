@@ -1,6 +1,6 @@
 /** Local browser state and legacy profile parsing behind injected storage and clock. */
 import { clampModelBlendWeight, clampWatchWeight } from "./recommendations";
-import { validateHistoryEntries } from "./import-history";
+import { historyIdentity, validateHistoryEntries } from "./import-history";
 import type { HistoryEntry } from "./import-history";
 import { migrateLegacyPreferences, validatePreferences } from "./preferences";
 import type { AnimePreference } from "./preferences";
@@ -35,6 +35,53 @@ export type RecommendationState = Omit<StoredRecommendationState, "version"> & {
 };
 
 export const RECOMMENDATION_STORAGE_VERSION = 5;
+export function emptyRecommendationState(): StoredRecommendationState {
+  return {
+    version: RECOMMENDATION_STORAGE_VERSION,
+    mode: "graph", preferences: [], modelBlendWeight: 0.5, allowRelatedTitles: false,
+    includeCandidates: [], excludeCandidates: [], history: [],
+  };
+}
+export const PROFILE_BACKUP_FORMAT = "wasiw-profile-backup";
+export const PROFILE_BACKUP_VERSION = 1;
+export const MAX_PROFILE_BACKUP_BYTES = 8 * 1024 * 1024;
+
+export type ProfileBackupImportMode = "merge" | "replace";
+export interface ProfileBackupDocument {
+  format: typeof PROFILE_BACKUP_FORMAT;
+  version: typeof PROFILE_BACKUP_VERSION;
+  exportedAt: string;
+  state: StoredRecommendationState;
+  profiles: RecommendationProfileRecord[];
+}
+
+export interface ProfileBackupImportPlan {
+  mode: ProfileBackupImportMode;
+  state: StoredRecommendationState;
+  profiles: Map<string, RecommendationProfileRecord>;
+  counts: {
+    importedPreferences: number;
+    addedPreferences: number;
+    keptPreferences: number;
+    replacedPreferences: number;
+    removedPreferences: number;
+    importedHistory: number;
+    addedHistory: number;
+    keptHistory: number;
+    replacedHistory: number;
+    removedHistory: number;
+    importedProfiles: number;
+    addedProfiles: number;
+    keptProfiles: number;
+    replacedProfiles: number;
+    removedProfiles: number;
+  };
+}
+
+interface ProfileWriteJournal {
+  version: 1;
+  originals: Record<string, string | null>;
+}
 
 interface StoredHelpTipsState {
   version: number;
@@ -51,8 +98,19 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
   const V4_PROFILES_KEY = `${storagePrefix}.recommendationProfiles.v4`;
   const STATE_KEY = `${storagePrefix}.recommendationState.v5`;
   const PROFILES_KEY = `${storagePrefix}.recommendationProfiles.v5`;
-  const storageWarnings = new Map<"state" | "profiles", string>();
+  const storageWarnings = new Map<"state" | "profiles" | "recovery", string>();
   let migrationNotice: string | null = null;
+  const PROFILE_WRITE_JOURNAL_KEY = `${storagePrefix}.profileWrite.v1.pending`;
+  const PROFILE_WRITE_KEYS = [
+    STATE_KEY, PROFILES_KEY,
+    `${STATE_KEY}.backup`, `${STATE_KEY}.corrupt`,
+    `${PROFILES_KEY}.backup`, `${PROFILES_KEY}.corrupt`,
+    `${V4_STATE_KEY}.backup`, `${LEGACY_STATE_KEY}.backup`,
+    `${V4_PROFILES_KEY}.backup`, `${LEGACY_PROFILES_KEY}.backup`,
+  ];
+  let pendingProfileWrite: ProfileWriteJournal | null = null;
+  let invalidProfileWriteJournal = false;
+  let profileWriteInProgress = false;
   const THEME_STORAGE_KEY = `${storagePrefix}.theme.v1`;
   const CONTRAST_STORAGE_KEY = `${storagePrefix}.contrast.v1`;
   const HELP_TIPS_STORAGE_KEY = `${storagePrefix}.helpTips.v1`;
@@ -205,6 +263,61 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
 
+  function parseProfileWriteJournal(raw: string): ProfileWriteJournal {
+    const value = JSON.parse(raw) as unknown;
+    if (!isRecord(value) || value.version !== 1 ||
+      !Object.keys(value).every((key) => ["version", "originals"].includes(key)) ||
+      !isRecord(value.originals)) {
+      throw new Error("Invalid profile write journal");
+    }
+    const originals = value.originals;
+    if (Object.keys(originals).length !== PROFILE_WRITE_KEYS.length ||
+      PROFILE_WRITE_KEYS.some((key) => !(key in originals) ||
+        !(originals[key] === null || typeof originals[key] === "string"))) {
+      throw new Error("Invalid profile write journal");
+    }
+    return value as unknown as ProfileWriteJournal;
+  }
+
+  function restoreRaw(key: string, raw: string | null): void {
+    if (runtime.storage.getItem(key) === raw) return;
+    if (raw === null) runtime.storage.removeItem(key);
+    else runtime.storage.setItem(key, raw);
+  }
+
+  function recoverInterruptedProfileWrite(): boolean {
+    let raw: string | null;
+    try {
+      raw = runtime.storage.getItem(PROFILE_WRITE_JOURNAL_KEY);
+    } catch {
+      invalidProfileWriteJournal = true;
+      storageWarnings.set("recovery", "Browser storage cannot read profile recovery data. New changes are blocked.");
+      return false;
+    }
+    try {
+      if (raw === null) {
+        pendingProfileWrite = null;
+        invalidProfileWriteJournal = false;
+        return true;
+      }
+      const journal = parseProfileWriteJournal(raw);
+      pendingProfileWrite = journal;
+      for (const key of PROFILE_WRITE_KEYS) restoreRaw(key, journal.originals[key]);
+      if (PROFILE_WRITE_KEYS.some((key) => runtime.storage.getItem(key) !== journal.originals[key])) {
+        throw new Error("Profile write recovery did not match original bytes");
+      }
+      runtime.storage.removeItem(PROFILE_WRITE_JOURNAL_KEY);
+      pendingProfileWrite = null;
+      invalidProfileWriteJournal = false;
+      storageWarnings.set("recovery", "An interrupted profile change was rolled back to the original browser data.");
+      return true;
+    } catch {
+      if (pendingProfileWrite === null) invalidProfileWriteJournal = true;
+      storageWarnings.set("recovery", "An interrupted profile change needs recovery. Original data is retained; new changes are blocked.");
+      return false;
+    }
+  }
+
   function parseState(value: unknown, versions: number[]): StoredRecommendationState {
     if (!isRecord(value) || !versions.includes(value.version as number) ||
       (value.mode !== "graph" && value.mode !== "model" && value.mode !== "hybrid")) {
@@ -302,6 +415,20 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     encode: (value: T) => string,
   ): T | null {
     const label = kind === "state" ? "recommendation state" : "saved profiles";
+    if (pendingProfileWrite !== null || invalidProfileWriteJournal) {
+      if (invalidProfileWriteJournal) return null;
+      try {
+        const originalRaw = pendingProfileWrite!.originals[kind === "state" ? STATE_KEY : PROFILES_KEY];
+        if (originalRaw !== null) return parseCurrent(originalRaw);
+        for (const source of legacySources) {
+          for (const candidate of [runtime.storage.getItem(source.key), runtime.storage.getItem(`${source.key}.backup`)]) {
+            if (candidate === null) continue;
+            try { return source.parse(candidate); } catch { /* Try the next original copy. */ }
+          }
+        }
+      } catch { /* The recovery warning is already visible. */ }
+      return null;
+    }
     try {
       const currentRaw = runtime.storage.getItem(currentKey);
       if (currentRaw !== null) {
@@ -370,6 +497,10 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     raw: string, validateCurrent: (raw: string) => unknown,
   ): boolean {
     const label = kind === "state" ? "recommendation state" : "saved profiles";
+    if (!profileWriteInProgress && (pendingProfileWrite !== null || invalidProfileWriteJournal)) {
+      storageWarnings.set(kind, `Browser storage needs profile recovery before saving ${label}.`);
+      return false;
+    }
     try {
       validateCurrent(raw);
       const existing = runtime.storage.getItem(currentKey);
@@ -425,10 +556,13 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
         history: stored.history ?? [],
       };
     }
+    const state = emptyRecommendationState();
     return {
-      mode: "graph", preferences: [], modelBlendWeight: 0.5, allowRelatedTitles: false,
-      includeCandidates: [], excludeCandidates: [],
-      history: [],
+      mode: state.mode, preferences: state.preferences,
+      modelBlendWeight: state.modelBlendWeight ?? 0.5,
+      allowRelatedTitles: state.allowRelatedTitles ?? false,
+      includeCandidates: state.includeCandidates ?? [],
+      excludeCandidates: state.excludeCandidates ?? [], history: state.history ?? [],
     };
   }
 
@@ -462,6 +596,221 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     }
   }
 
+  function onlyFields(value: unknown, fields: readonly string[], label: string): asserts value is Record<string, unknown> {
+    if (!isRecord(value) || Object.keys(value).some((key) => !fields.includes(key))) {
+      throw new Error(`Invalid ${label} fields`);
+    }
+  }
+
+  function parseProfileBackup(raw: string): ProfileBackupDocument {
+    if (new TextEncoder().encode(raw).byteLength > MAX_PROFILE_BACKUP_BYTES) {
+      throw new Error("Profile backup exceeds 8 MiB");
+    }
+    const value = JSON.parse(raw) as unknown;
+    onlyFields(value, ["format", "version", "exportedAt", "state", "profiles"], "profile backup");
+    if (value.format !== PROFILE_BACKUP_FORMAT || value.version !== PROFILE_BACKUP_VERSION ||
+      typeof value.exportedAt !== "string" || !Number.isFinite(Date.parse(value.exportedAt))) {
+      throw new Error("Unsupported profile backup format or version");
+    }
+    onlyFields(value.state, ["version", "mode", "preferences", "modelBlendWeight", "allowRelatedTitles",
+      "includeCandidates", "excludeCandidates", "history"], "profile backup state");
+    if (!Array.isArray(value.state.preferences) || !Array.isArray(value.state.history)) {
+      throw new Error("Invalid profile backup state");
+    }
+    for (const item of value.state.preferences) {
+      onlyFields(item, ["nodeId", "sentiment", "importance", "confidence", "source"], "preference");
+    }
+    for (const item of value.state.history) {
+      onlyFields(item, ["provider", "sourceId", "title", "animeId", "status", "sourceStatus",
+        "progressEpisodes", "score", "scoreScale"], "history");
+    }
+    if (!Array.isArray(value.profiles) || value.profiles.length > 1000) {
+      throw new Error("Invalid profile backup profile count");
+    }
+    for (const profile of value.profiles) {
+      onlyFields(profile, ["name", "updatedAt", "state"], "profile");
+      if (typeof profile.name !== "string" || profile.name !== profile.name.trim() ||
+        profile.name.length > 160 || typeof profile.updatedAt !== "string") {
+        throw new Error("Invalid profile backup profile name or date");
+      }
+      onlyFields(profile.state, ["version", "mode", "preferences", "modelBlendWeight", "allowRelatedTitles",
+        "includeCandidates", "excludeCandidates", "history"], "profile state");
+      if (!Array.isArray(profile.state.preferences) || !Array.isArray(profile.state.history)) {
+        throw new Error("Invalid profile state");
+      }
+      for (const item of profile.state.preferences) {
+        onlyFields(item, ["nodeId", "sentiment", "importance", "confidence", "source"], "profile preference");
+      }
+      for (const item of profile.state.history) {
+        onlyFields(item, ["provider", "sourceId", "title", "animeId", "status", "sourceStatus",
+          "progressEpisodes", "score", "scoreScale"], "profile history");
+      }
+    }
+    const state = parseState(value.state, [RECOMMENDATION_STORAGE_VERSION]);
+    const profiles = parseProfiles({ version: RECOMMENDATION_STORAGE_VERSION, profiles: value.profiles }, 5);
+    return {
+      format: PROFILE_BACKUP_FORMAT,
+      version: PROFILE_BACKUP_VERSION,
+      exportedAt: value.exportedAt,
+      state,
+      profiles: [...profiles.values()],
+    };
+  }
+
+  function createProfileBackup(
+    state: StoredRecommendationState, profiles: Map<string, RecommendationProfileRecord>,
+  ): string {
+    const document: ProfileBackupDocument = {
+      format: PROFILE_BACKUP_FORMAT,
+      version: PROFILE_BACKUP_VERSION,
+      exportedAt: runtime.now().toISOString(),
+      state: parseState(state, [RECOMMENDATION_STORAGE_VERSION]),
+      profiles: [...parseProfiles(JSON.parse(encodeProfiles(profiles)) as unknown, 5).values()],
+    };
+    const raw = JSON.stringify(document, null, 2);
+    parseProfileBackup(raw);
+    return `${raw}\n`;
+  }
+
+  function planProfileBackupImport(
+    backup: ProfileBackupDocument, currentState: StoredRecommendationState,
+    currentProfiles: Map<string, RecommendationProfileRecord>, mode: ProfileBackupImportMode,
+  ): ProfileBackupImportPlan {
+    if (mode !== "merge" && mode !== "replace") throw new Error("Invalid profile backup import mode");
+    const imported = parseProfileBackup(JSON.stringify(backup));
+    const current = parseState(currentState, [RECOMMENDATION_STORAGE_VERSION]);
+    const localProfiles = parseProfiles(JSON.parse(encodeProfiles(currentProfiles)) as unknown, 5);
+    const importedPreferences = new Map(imported.state.preferences.map((item) => [item.nodeId, item]));
+    const currentPreferences = new Map(current.preferences.map((item) => [item.nodeId, item]));
+    const importedHistory = new Map((imported.state.history ?? []).map((item) => [historyIdentity(item), item]));
+    const currentHistory = new Map((current.history ?? []).map((item) => [historyIdentity(item), item]));
+    const importedProfiles = new Map(imported.profiles.map((profile) => [profile.name, profile]));
+    const overlap = <T>(left: Map<string, T>, right: Map<string, T>): number =>
+      [...left.keys()].filter((key) => right.has(key)).length;
+    const changed = <T>(left: Map<string, T>, right: Map<string, T>): number =>
+      [...left].filter(([key, value]) => right.has(key) && JSON.stringify(value) !== JSON.stringify(right.get(key))).length;
+    const counts = {
+      importedPreferences: importedPreferences.size,
+      addedPreferences: importedPreferences.size - overlap(importedPreferences, currentPreferences),
+      keptPreferences: mode === "merge" ? overlap(importedPreferences, currentPreferences) : 0,
+      replacedPreferences: mode === "replace" ? changed(importedPreferences, currentPreferences) : 0,
+      removedPreferences: mode === "replace" ? currentPreferences.size - overlap(currentPreferences, importedPreferences) : 0,
+      importedHistory: importedHistory.size,
+      addedHistory: importedHistory.size - overlap(importedHistory, currentHistory),
+      keptHistory: mode === "merge" ? overlap(importedHistory, currentHistory) : 0,
+      replacedHistory: mode === "replace" ? changed(importedHistory, currentHistory) : 0,
+      removedHistory: mode === "replace" ? currentHistory.size - overlap(currentHistory, importedHistory) : 0,
+      importedProfiles: importedProfiles.size,
+      addedProfiles: importedProfiles.size - overlap(importedProfiles, localProfiles),
+      keptProfiles: mode === "merge" ? overlap(importedProfiles, localProfiles) : 0,
+      replacedProfiles: mode === "replace" ? changed(importedProfiles, localProfiles) : 0,
+      removedProfiles: mode === "replace" ? localProfiles.size - overlap(localProfiles, importedProfiles) : 0,
+    };
+    if (mode === "replace") {
+      return { mode, state: imported.state, profiles: importedProfiles, counts };
+    }
+    const preferences = [...current.preferences];
+    for (const item of imported.state.preferences) {
+      if (!currentPreferences.has(item.nodeId)) preferences.push(item);
+    }
+    const history = [...(current.history ?? [])];
+    for (const item of imported.state.history ?? []) {
+      if (!currentHistory.has(historyIdentity(item))) history.push(item);
+    }
+    const addMissing = (local: string[], incoming: string[]): string[] => {
+      const next = [...local];
+      const seen = new Set(next);
+      for (const item of incoming) if (!seen.has(item)) { next.push(item); seen.add(item); }
+      return next;
+    };
+    const profiles = new Map(localProfiles);
+    for (const [name, profile] of importedProfiles) if (!profiles.has(name)) profiles.set(name, profile);
+    const state = parseState({
+      ...current,
+      preferences,
+      history,
+      includeCandidates: addMissing(current.includeCandidates ?? [], imported.state.includeCandidates ?? []),
+      excludeCandidates: addMissing(current.excludeCandidates ?? [], imported.state.excludeCandidates ?? []),
+    }, [RECOMMENDATION_STORAGE_VERSION]);
+    return { mode, state, profiles, counts };
+  }
+
+  function getProfileStorageRevision(): string | null {
+    try {
+      return JSON.stringify([runtime.storage.getItem(STATE_KEY), runtime.storage.getItem(PROFILES_KEY)]);
+    } catch {
+      storageWarnings.set("recovery", "Browser storage could not read profile data. Import and reset are blocked.");
+      return null;
+    }
+  }
+
+  function commitProfileCollection(
+    state: StoredRecommendationState, profiles: Map<string, RecommendationProfileRecord>,
+    expectedRevision: string,
+  ): boolean {
+    try {
+      const checkedState = parseState(state, [RECOMMENDATION_STORAGE_VERSION]);
+      const checkedProfiles = parseProfiles(JSON.parse(encodeProfiles(profiles)) as unknown, 5);
+      if (!recoverInterruptedProfileWrite() || getProfileStorageRevision() !== expectedRevision) {
+        storageWarnings.set("recovery", "Profile data changed since preview or needs recovery. Review it again before applying.");
+        return false;
+      }
+      const journal: ProfileWriteJournal = {
+        version: 1,
+        originals: Object.fromEntries(PROFILE_WRITE_KEYS.map((key) => [key, runtime.storage.getItem(key)])),
+      };
+      runtime.storage.setItem(PROFILE_WRITE_JOURNAL_KEY, JSON.stringify(journal));
+      pendingProfileWrite = journal;
+      profileWriteInProgress = true;
+      if (!persistRecommendationState(checkedState) || !persistRecommendationProfiles(checkedProfiles)) {
+        throw new Error("Profile collection write rejected");
+      }
+      runtime.storage.removeItem(PROFILE_WRITE_JOURNAL_KEY);
+      pendingProfileWrite = null;
+      storageWarnings.delete("recovery");
+      return true;
+    } catch {
+      recoverInterruptedProfileWrite();
+      storageWarnings.set("recovery", "Profile change was not applied. Original browser data was retained or is available for recovery.");
+      return false;
+    } finally {
+      profileWriteInProgress = false;
+    }
+  }
+
+  function resetProfileCollection(expectedRevision: string): boolean {
+    let archivedInvalidJournal: string | null = null;
+    if (invalidProfileWriteJournal) {
+      try {
+        const raw = runtime.storage.getItem(PROFILE_WRITE_JOURNAL_KEY);
+        if (raw !== null) {
+          const corruptKey = `${PROFILE_WRITE_JOURNAL_KEY}.corrupt`;
+          const preserved = runtime.storage.getItem(corruptKey);
+          if (preserved !== null && preserved !== raw) throw new Error("Different recovery journal already archived");
+          if (preserved === null) runtime.storage.setItem(corruptKey, raw);
+          runtime.storage.removeItem(PROFILE_WRITE_JOURNAL_KEY);
+          archivedInvalidJournal = raw;
+        }
+        invalidProfileWriteJournal = false;
+      } catch {
+        storageWarnings.set("recovery", "Unreadable recovery data could not be preserved. Local reset was not applied.");
+        return false;
+      }
+    }
+    const saved = commitProfileCollection(emptyRecommendationState(), new Map(), expectedRevision);
+    if (!saved && archivedInvalidJournal !== null) {
+      try {
+        if (runtime.storage.getItem(PROFILE_WRITE_JOURNAL_KEY) === null) {
+          runtime.storage.setItem(PROFILE_WRITE_JOURNAL_KEY, archivedInvalidJournal);
+          invalidProfileWriteJournal = true;
+        }
+      } catch {
+        storageWarnings.set("recovery", "Reset failed; the unreadable journal remains in its exact corrupt archive.");
+      }
+    }
+    return saved;
+  }
+
   function getStorageWarnings(): string[] {
     return [...storageWarnings.values()];
   }
@@ -469,6 +818,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
   function getMigrationNotice(): string | null {
     return migrationNotice;
   }
+
+  recoverInterruptedProfileWrite();
 
   return {
     parseRecommendationMode,
@@ -486,6 +837,13 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     persistRecommendationState,
     loadRecommendationProfiles,
     persistRecommendationProfiles,
+    createProfileBackup,
+    parseProfileBackup,
+    planProfileBackupImport,
+    getProfileStorageRevision,
+    commitProfileCollection,
+    resetProfileCollection,
+    recoverInterruptedProfileWrite,
     getStorageWarnings,
     getMigrationNotice,
   };
