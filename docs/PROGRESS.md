@@ -940,3 +940,13 @@
 **Plan revisions and reason:** The v3 variant preserves v2 semantics and existing readers while representing selected source ratings separately from retained public user edges. M8.3 stays unchecked because the published artifact and authorization criteria are not met.
 
 **Single next task:** Build a synthetic audited data-only publication package that rejects undeclared files and binds provenance, redistribution basis, changes, compatibility, and quality evidence before any future release upload.
+
+## Session 2026-09-28 — M8.3 aggregate graph CI review
+
+**Reviewed implementation:** Draft [PR #44](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/44), `codex/m8-aggregate-graph` implementation commit `845cf93b6e250c0871fea29f31f66ad4c1d472dd`, stacked on PR #43. Reviewed the graph projector/parser, explorer and manifest linkage, installer integration, browser ranking/discovery behavior, and unit/browser regressions; `git diff --check codex/m8-publication-audit...HEAD` passed.
+
+**Clean-checkout evidence:** [CI run 36423310601](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36423310601) and GitGuardian passed on the exact implementation SHA. The run completed fixture and evaluation checks, typecheck, 73 pipeline tests, 107 web unit tests, 68 ML tests, 10 workflow tests, web build, and 66 mocked browser tests.
+
+**Unrun / remaining:** No public asset, provider history, real release, deployment, or model promotion was read or changed. The v3 projection has no per-user rows but its aggregate pairs and dataset identity still need reviewed redistribution and privacy decisions. M8.3 and the M8 exit gate remain open.
+
+**Single next task:** Build and test a synthetic publication package with a strict asset inventory and an audit record bound to the v3 manifest, then separately wire a reviewed immutable release route.
