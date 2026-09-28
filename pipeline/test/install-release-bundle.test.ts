@@ -5,8 +5,9 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import { spawnSync } from "node:child_process";
 import { createGitHubReleaseTransport } from "../src/github-release-transport.js";
-import { installReleaseBundle, RELEASE_DOWNLOAD_LIMITS,
+import { installReleaseBundle, restorePreviousRelease, RELEASE_DOWNLOAD_LIMITS,
   readReleaseResponse,
   type ReleaseAssetTransport } from "../src/install-release-bundle.js";
 import { buildReleaseManifest, RELEASE_FILES, releaseSha256,
@@ -84,6 +85,95 @@ async function install(storeDir: string, bundle: ReturnType<typeof genesis>,
   return installReleaseBundle({ storeDir, tag: bundle.tag, transport: bundle.transport,
     fixtureBootstrap: true, beforeActivate });
 }
+
+function identity(bundle: { tag: string; manifest: ReleaseManifestV1; manifestBytes: Buffer }) {
+  return { tag: bundle.tag, bundleId: bundle.manifest.bundleId,
+    manifestSha256: releaseSha256(bundle.manifestBytes) };
+}
+
+test("local staging restores the exact previous bundle and can reapply the candidate", async (t) => {
+  const storeDir = directory(t);
+  const first = genesis();
+  const second = successor(first, "rollback-candidate");
+  await install(storeDir, first);
+  await install(storeDir, second);
+  const originalCandidate = fs.readFileSync(path.join(storeDir, "bundles",
+    second.manifest.bundleId, RELEASE_FILES.manifest));
+  const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
+    "../src/restore-release-bundle.ts");
+  const run = spawnSync(process.execPath, ["--import", "tsx", cli,
+    "--store", storeDir,
+    "--current-tag", second.tag,
+    "--current-bundle-id", second.manifest.bundleId,
+    "--current-manifest-sha256", identity(second).manifestSha256,
+    "--previous-tag", first.tag,
+    "--previous-bundle-id", first.manifest.bundleId,
+    "--previous-manifest-sha256", identity(first).manifestSha256],
+  { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /Restored verified local release/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(storeDir, "active.json"), "utf8")),
+    { format: "active-release-bundle-v1", ...identity(first) });
+  assert.deepEqual(fs.readFileSync(path.join(storeDir, "bundles",
+    second.manifest.bundleId, RELEASE_FILES.manifest)), originalCandidate);
+  assert.equal((await install(storeDir, second)).changed, true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(storeDir, "active.json"), "utf8")).bundleId,
+    second.manifest.bundleId);
+});
+
+test("stale, corrupt, undeclared, locked, and interrupted rollback leaves the active pointer intact", async (t) => {
+  const storeDir = directory(t);
+  const first = genesis();
+  const second = successor(first, "rollback-guard");
+  await install(storeDir, first);
+  await install(storeDir, second);
+  const activePath = path.join(storeDir, "active.json");
+  const before = fs.readFileSync(activePath);
+  const restore = (overrides: Partial<Parameters<typeof restorePreviousRelease>[0]> = {}) =>
+    restorePreviousRelease({ storeDir, expectedCurrent: identity(second),
+      expectedPrevious: identity(first), ...overrides });
+  assert.throws(() => restore({ expectedCurrent: { ...identity(second), tag: first.tag } }),
+    /expectedCurrent/);
+  assert.throws(() => restore({ expectedPrevious: { ...identity(first), manifestSha256: "a".repeat(64) } }),
+    /expectedPrevious/);
+  const extra = path.join(storeDir, "bundles", first.manifest.bundleId, "private-ratings.sqlite");
+  fs.writeFileSync(extra, "invented-only");
+  assert.throws(() => restore(), /undeclared files/);
+  fs.unlinkSync(extra);
+  const modelPath = path.join(storeDir, "bundles", first.manifest.bundleId, RELEASE_FILES.model);
+  const originalModel = fs.readFileSync(modelPath);
+  fs.writeFileSync(modelPath, "{}\n");
+  assert.throws(() => restore(), /model-mf-web.compact.json|release-manifest.json/);
+  fs.writeFileSync(modelPath, originalModel);
+  const lockPath = path.join(storeDir, ".install.lock");
+  fs.writeFileSync(lockPath, "invented lock");
+  assert.throws(() => restore(), /lock.*stale lock/);
+  fs.unlinkSync(lockPath);
+  assert.throws(() => restore({ beforeActivate: () => { throw new Error("invented interruption"); } }),
+    /invented interruption/);
+  assert.throws(() => restore({ beforeActivate: () => { fs.writeFileSync(modelPath, "{}\n"); } }),
+    /model-mf-web.compact.json|release-manifest.json/);
+  fs.writeFileSync(modelPath, originalModel);
+  assert.deepEqual(fs.readFileSync(activePath), before);
+  assert.equal(fs.existsSync(lockPath), false);
+});
+
+test("rollback refuses a predecessor whose own required prior was not retained", async (t) => {
+  const storeDir = directory(t);
+  const first = genesis();
+  const second = successor(first, "rollback-middle");
+  const third = successor(second, "rollback-latest");
+  await install(storeDir, first);
+  await install(storeDir, second);
+  await install(storeDir, third);
+  const activePath = path.join(storeDir, "active.json");
+  const before = fs.readFileSync(activePath);
+  fs.renameSync(path.join(storeDir, "bundles", first.manifest.bundleId),
+    path.join(storeDir, "held-out-prior"));
+  assert.throws(() => restorePreviousRelease({ storeDir, expectedCurrent: identity(third),
+    expectedPrevious: identity(second) }), /expectedPrevious.lastKnownGood.*missing/);
+  assert.deepEqual(fs.readFileSync(activePath), before);
+});
 
 test("complete gzip or plain bundles install through one pointer and preserve the prior", async (t) => {
   const storeDir = directory(t);
