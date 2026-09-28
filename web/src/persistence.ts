@@ -83,8 +83,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       return parsed
         .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
         .slice(0, COMMAND_PINNED_LIMIT);
-    } catch (error) {
-      console.warn("Unable to load pinned commands.", error);
+    } catch {
+      console.warn("Unable to load pinned commands.");
       return [];
     }
   }
@@ -92,8 +92,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
   function persistCommandPinnedIds(ids: string[]): void {
     try {
       runtime.storage.setItem(COMMAND_PINNED_STORAGE_KEY, JSON.stringify(ids));
-    } catch (error) {
-      console.warn("Unable to persist pinned commands.", error);
+    } catch {
+      console.warn("Unable to persist pinned commands.");
     }
   }
 
@@ -110,8 +110,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       return parsed
         .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
         .slice(0, COMMAND_HISTORY_LIMIT);
-    } catch (error) {
-      console.warn("Unable to load command history.", error);
+    } catch {
+      console.warn("Unable to load command history.");
       return [];
     }
   }
@@ -119,8 +119,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
   function persistCommandHistoryIds(history: string[]): void {
     try {
       runtime.storage.setItem(COMMAND_HISTORY_STORAGE_KEY, JSON.stringify(history));
-    } catch (error) {
-      console.warn("Unable to persist command history.", error);
+    } catch {
+      console.warn("Unable to persist command history.");
     }
   }
 
@@ -130,8 +130,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       if (raw === "dark" || raw === "light") {
         return raw;
       }
-    } catch (error) {
-      console.warn("Unable to read saved theme preference.", error);
+    } catch {
+      console.warn("Unable to read saved theme preference.");
     }
 
     if (prefersLight()) {
@@ -146,8 +146,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       if (raw === "normal" || raw === "high") {
         return raw;
       }
-    } catch (error) {
-      console.warn("Unable to read saved contrast preference.", error);
+    } catch {
+      console.warn("Unable to read saved contrast preference.");
     }
     return "normal";
   }
@@ -155,16 +155,16 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
   function persistThemeModePreference(theme: ThemeMode): void {
     try {
       runtime.storage.setItem(THEME_STORAGE_KEY, theme);
-    } catch (error) {
-      console.warn("Unable to persist theme preference.", error);
+    } catch {
+      console.warn("Unable to persist theme preference.");
     }
   }
 
   function persistContrastModePreference(contrast: ContrastMode): void {
     try {
       runtime.storage.setItem(CONTRAST_STORAGE_KEY, contrast);
-    } catch (error) {
-      console.warn("Unable to persist contrast preference.", error);
+    } catch {
+      console.warn("Unable to persist contrast preference.");
     }
   }
 
@@ -183,8 +183,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       ) {
         return parsed.dismissed;
       }
-    } catch (error) {
-      console.warn("Unable to load help tips preference.", error);
+    } catch {
+      console.warn("Unable to load help tips preference.");
     }
     return false;
   }
@@ -196,8 +196,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
         dismissed,
       };
       runtime.storage.setItem(HELP_TIPS_STORAGE_KEY, JSON.stringify(payload));
-    } catch (error) {
-      console.warn("Unable to persist help tips preference.", error);
+    } catch {
+      console.warn("Unable to persist help tips preference.");
     }
   }
 

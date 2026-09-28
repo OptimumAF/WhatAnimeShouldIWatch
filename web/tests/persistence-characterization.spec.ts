@@ -122,6 +122,7 @@ test("a rejected profile write reports failure instead of claiming it was saved"
   await page.locator("#profile-save-submit").click();
   await expect(page.locator("#rec-message")).toContainText("Could not save profile");
   await expect(page.locator("#storage-status")).toContainText("storage rejected changes");
+  await expect(page.locator("#diagnostic-code")).toContainText("STORAGE-001");
   await expect(page.locator("#profile-select")).toBeDisabled();
 });
 

@@ -6,6 +6,9 @@ import { buildExplorerGraph } from "../../pipeline/src/core/explorer-graph";
 import { buildReleaseManifest } from "../../pipeline/src/release-manifest";
 
 const base = "/WhatAnimeShouldIWatch/";
+const appVersion = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
+const sourceRevision = /^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA ?? "")
+  ? process.env.GITHUB_SHA!.slice(0, 12) : "local build";
 const fixture = (name: string): Buffer =>
   readFileSync(new URL(`../public/demo-data/${name}`, import.meta.url));
 const encoded = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
@@ -48,6 +51,9 @@ test("direct project-path navigation loads a pinned data-only release and graph 
     return route.continue();
   });
   await page.goto("http://127.0.0.1:5175/WhatAnimeShouldIWatch/deep/link/");
+  await expect(page.locator("#diagnostic-app")).toHaveText(`${appVersion} · source ${sourceRevision}`);
+  await expect(page.locator("#diagnostic-data")).toContainText(manifest.tag);
+  await expect(page.locator("#diagnostic-model")).toHaveText("Not included in this data release");
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", `${base}favicon.svg`);
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href",
     `${base}manifest.webmanifest`);

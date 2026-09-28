@@ -126,8 +126,7 @@ export function createProviderAdapter(
     }, signal);
 
     if (payload.errors && payload.errors.length > 0) {
-      const message = payload.errors[0]?.message ?? "AniList API returned an error.";
-      throw new Error(message);
+      throw new Error("AniList API returned an error; import was not applied.");
     }
 
     const lists = payload.data?.MediaListCollection?.lists;
@@ -277,9 +276,9 @@ export function createProviderAdapter(
       return payload;
     }
     if (response.status === 403 || response.status === 404) {
-      throw new ProviderUnavailableError(`Request unavailable (${response.status}) for ${url}`);
+      throw new ProviderUnavailableError(`${provider} request unavailable (${response.status}).`);
     }
-    throw new Error(`Request failed (${response.status}) for ${url}`);
+    throw new Error(`${provider} request failed (${response.status}).`);
   }
 
   async function fetchAnimeMetadataFromJikan(

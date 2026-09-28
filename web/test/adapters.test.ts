@@ -393,6 +393,22 @@ test("AniList distinguishes a returned empty list from an unavailable collection
   );
 });
 
+test("provider error text and username are not reflected in import errors", async () => {
+  const privateText = "private-user raw-history 1,2,3";
+  const failed = fakeRuntime(() => jsonResponse({ errors: [{ message: privateText }] }));
+  await assert.rejects(
+    createProviderAdapter(failed.runtime).fetchAniListUsernameImport(privateText, index),
+    (error: unknown) => error instanceof Error &&
+      error.message === "AniList API returned an error; import was not applied.",
+  );
+  const blocked = fakeRuntime(() => jsonResponse({}, 403));
+  await assert.rejects(
+    createProviderAdapter(blocked.runtime).fetchAniListUsernameImport(privateText, index),
+    (error: unknown) => error instanceof Error &&
+      error.message === "anilist request unavailable (403).",
+  );
+});
+
 test("artifact loader validates synthetic files through injected local transport", async () => {
   const data = new Map<string, unknown>([
     ["./demo-data/graph.compact.json", fixture("graph.compact.json")],
@@ -411,6 +427,8 @@ test("artifact loader validates synthetic files through injected local transport
   assert.notEqual(explorer, graph);
   assert.equal(explorer.edgeCount < graph.edgeCount, true);
   assert.equal((await loader.fetchModelRecommendationIndex())?.factors, 2);
+  assert.equal(loader.getLoadedModelFormat(), "model-mf-compact-v1");
+  assert.equal(await loader.getActiveReleaseManifest(), null);
   assert.equal((await loader.fetchDemoCatalog()).length, 8);
   assert.deepEqual(fake.requests.map((request) => request.url), [
     "./demo-data/graph.compact.json",

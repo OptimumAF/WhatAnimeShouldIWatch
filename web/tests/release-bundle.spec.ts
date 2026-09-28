@@ -6,6 +6,9 @@ import { buildExplorerGraph } from "../../pipeline/src/core/explorer-graph";
 import { buildReleaseManifest } from "../../pipeline/src/release-manifest";
 
 const normalAppUrl = "http://127.0.0.1:5174/";
+const appVersion = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
+const sourceRevision = /^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA ?? "")
+  ? process.env.GITHUB_SHA!.slice(0, 12) : "local build";
 const fixture = (name: string): Buffer =>
   readFileSync(new URL(`../public/demo-data/${name}`, import.meta.url));
 const manifestBytes = fixture("release-manifest.json");
@@ -127,11 +130,16 @@ async function routeAggregateBundle(page: Page, options: { withModel?: boolean }
 test("normal mode pins one verified bundle for graph, model, and explorer", async ({ page }) => {
   const requests = await routeBundle(page);
   await page.goto(normalAppUrl);
+  await expect(page.locator("#diagnostic-app")).toHaveText(`${appVersion} · source ${sourceRevision}`);
+  await expect(page.locator("#diagnostic-data")).toContainText(manifest.tag);
+  await expect(page.locator("#diagnostic-data")).toContainText(manifest.bundleId.slice(0, 12));
+  await expect(page.locator("#diagnostic-model")).toContainText("declared; not loaded");
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations (2 factors)");
+  await expect(page.locator("#diagnostic-model")).toContainText("loaded");
   await page.getByRole("button", { name: "Open network explorer page" }).click();
   await expect(page.locator("#network-render-status")).toContainText("nodes");
   expect(requests.filter((name) => name === "/data/active.json")).toHaveLength(1);
@@ -148,8 +156,26 @@ test("a present corrupt bundle graph fails without reading a legacy graph", asyn
   await expect(page.locator("#rec-message")).toContainText(
     "graph.compact.json: byte length or SHA-256 differs from release-manifest.json",
   );
+  await expect(page.locator("#diagnostic-code")).toContainText("DATA-002");
+  await expect(page.locator("#diagnostic-action")).toContainText("last verified data release");
   expect(requests.some((name) => name === "/data/graph.json" ||
     name === "/data/graph.compact.json.gz")).toBe(false);
+});
+
+test("a transport exception cannot echo invented private text from a required data read", async ({ page }) => {
+  const privateText = "invented-private-user raw-history-1-2-3";
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript((message) => {
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => String(input).endsWith("/data/active.json")
+      ? Promise.reject(new Error(message)) : nativeFetch(input, init);
+  }, privateText);
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#diagnostic-code")).toContainText("DATA-001");
+  await expect(page.locator("#rec-message")).toContainText("unable to load or verify the required asset");
+  const visibleFailure = await page.locator("#rec-message, #local-diagnostics").allTextContents();
+  expect([...visibleFailure, ...pageErrors].join(" ")).not.toContain(privateText);
 });
 
 test("a present malformed active pointer fails closed", async ({ page }) => {
@@ -179,11 +205,29 @@ test("a stale explorer cache is rejected inside the pinned bundle", async ({ pag
   await expect(page.locator("#network-render-status")).toContainText(
     "graph-explorer.compact.json: byte length or SHA-256 differs from release-manifest.json",
   );
+  await expect(page.locator("#diagnostic-code")).toContainText("EXPLORER-001");
+});
+
+test("an explorer transport exception stays out of local status and diagnostics", async ({ page }) => {
+  const privateText = "invented-private-user raw-history-4-5-6";
+  await page.addInitScript((message) => {
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => String(input).includes("/graph-explorer.compact.json")
+      ? Promise.reject(new Error(message)) : nativeFetch(input, init);
+  }, privateText);
+  await routeBundle(page);
+  await page.goto(normalAppUrl);
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#diagnostic-code")).toContainText("EXPLORER-001");
+  await expect(page.locator("#network-render-status")).toContainText("unable to load or verify the optional asset");
+  const visibleFailure = await page.locator("#network-render-status, #local-diagnostics").allTextContents();
+  expect(visibleFailure.join(" ")).not.toContain(privateText);
 });
 
 test("a data-only bundle does not borrow a legacy model", async ({ page }) => {
   const requests = await routeBundle(page, { withoutModel: true });
   await page.goto(normalAppUrl);
+  await expect(page.locator("#diagnostic-model")).toHaveText("Not included in this data release");
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
