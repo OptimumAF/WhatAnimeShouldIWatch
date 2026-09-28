@@ -82,6 +82,24 @@ test("compact index and graph scoring keep the synthetic rank, weight, and watch
     results.map((item) => [item.anime.label, item.score]));
 });
 
+test("aggregate-only graph keeps pair ranking while withholding sampled popularity", () => {
+  const aggregate = fixture("graph.compact.json") as Record<string, any>;
+  aggregate.format = "graph-compact-v3";
+  aggregate.projection = { policy: "omit-user-anime-v1" };
+  aggregate.userIds = [];
+  aggregate.ua = [];
+  aggregate.userCount = 0;
+  aggregate.nodeCount = aggregate.anime.length;
+  aggregate.edgeCount = aggregate.aa.length;
+  const aggregateIndex = buildRecommendationIndexFromCompact(
+    parseCompactGraph(aggregate, "aggregate graph", "recommendation"));
+  assert.deepEqual(buildGraphRecommendations(watched, weights, aggregateIndex)
+    .map((item) => [item.anime.animeId, item.score]),
+  buildGraphRecommendations(watched, weights, index)
+    .map((item) => [item.anime.animeId, item.score]));
+  assert.ok([...aggregateIndex.sampledRatingCountByNodeId.values()].every((count) => count === 0));
+});
+
 test("model ranking retains fixture scores; rank fusion keeps full component endpoints", () => {
   const graphResults = buildGraphRecommendations(watched, weights, index);
   const modelResults = buildModelRecommendations(watched, weights, index, modelIndex);

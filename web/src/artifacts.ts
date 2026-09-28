@@ -108,7 +108,12 @@ export interface CompactGraphDataV2 extends Omit<CompactGraphDataV1, "format" | 
   aa: [leftAnimeIndex: number, rightAnimeIndex: number, weight: number, support: number][];
 }
 
-export type CompactGraphData = CompactGraphDataV1 | CompactGraphDataV2;
+export interface CompactGraphDataV3 extends Omit<CompactGraphDataV2, "format"> {
+  format: "graph-compact-v3";
+  projection: { policy: "omit-user-anime-v1" };
+}
+
+export type CompactGraphData = CompactGraphDataV1 | CompactGraphDataV2 | CompactGraphDataV3;
 
 export type LoadedGraphData = GraphData | CompactGraphData;
 
@@ -286,7 +291,7 @@ function expectLegacyFormat(value: Record<string, unknown>, label: string): void
 }
 
 function rejectV2MetadataOnV1(value: Record<string, unknown>, label: string): void {
-  for (const field of ["role", "graphId", "sourceGraphId", "dataset", "semantics", "config", "truncation", "visualization"]) {
+  for (const field of ["role", "graphId", "sourceGraphId", "dataset", "semantics", "config", "truncation", "visualization", "projection"]) {
     if (Object.hasOwn(value, field)) {
       invalid(label, field, "requires a v2 graph format");
     }
@@ -422,20 +427,50 @@ function validateV2Metadata(
 
 function validateV2EdgeCounts(
   graph: Record<string, unknown>, label: string, role: "recommendation" | "visualization",
-  userAnimeCount: number, animeAnimeCount: number,
+  userAnimeCount: number, animeAnimeCount: number, aggregateOnly = false,
 ): void {
   const truncation = graph.truncation as Record<string, number>;
   if (role === "recommendation") {
-    if (truncation.selectedRatings !== userAnimeCount || truncation.selectedPairs !== animeAnimeCount) {
+    if ((!aggregateOnly && truncation.selectedRatings !== userAnimeCount) ||
+        truncation.selectedPairs !== animeAnimeCount) {
       invalid(label, "truncation", "must match recommendation edge counts");
     }
   } else {
     const visualization = graph.visualization as Record<string, number>;
     if (userAnimeCount > visualization.maxUserAnimeEdges || animeAnimeCount > visualization.maxAnimeAnimeEdges ||
-        truncation.selectedRatings - userAnimeCount !== visualization.excludedUserAnimeEdges ||
+        (aggregateOnly ? visualization.excludedUserAnimeEdges !== 0
+          : truncation.selectedRatings - userAnimeCount !== visualization.excludedUserAnimeEdges) ||
         truncation.selectedPairs - animeAnimeCount !== visualization.excludedAnimeAnimeEdges) {
       invalid(label, "visualization", "must match its sampled edge counts");
     }
+  }
+}
+
+function validateAggregateOnlyFields(graph: Record<string, unknown>, label: string): void {
+  const fields = ["format", "role", "graphId", "dataset", "semantics", "config", "truncation",
+    "projection", "generatedAt", "userIds", "anime", "ua", "aa", "userCount", "animeCount",
+    "nodeCount", "edgeCount"];
+  if (graph.role === "visualization") fields.push("sourceGraphId", "visualization");
+  exactFields(graph, fields, label, "root");
+  const projection = record(graph.projection, label, "projection");
+  exactFields(projection, ["policy"], label, "projection");
+  if (projection.policy !== "omit-user-anime-v1") {
+    invalid(label, "projection.policy", "must be omit-user-anime-v1");
+  }
+  exactFields(record(graph.dataset, label, "dataset"), ["sha256", "scope", "source"], label, "dataset");
+  exactFields(record(graph.semantics, label, "semantics"),
+    ["pairWeight", "support", "recommendationUse"], label, "semantics");
+  exactFields(record(graph.config, label, "config"), ["ratingSelectionPolicy", "seed",
+    "maxRatingsPerUser", "maxAnimeAnimeEdges", "maxPairVisits", "maxPairCandidates",
+    "minPairSupport", "maxNeighborsPerAnime"], label, "config");
+  exactFields(record(graph.truncation, label, "truncation"), ["inputRatings", "selectedRatings",
+    "ratingsSkipped", "potentialPairVisits", "pairVisits", "pairVisitsSkipped", "candidatePairs",
+    "eligiblePairs", "selectedPairs", "excludedBySupport", "excludedByNeighborLimit",
+    "excludedByOutputLimit"], label, "truncation");
+  if (graph.role === "visualization") {
+    exactFields(record(graph.visualization, label, "visualization"), ["policy",
+      "maxUserAnimeEdges", "maxAnimeAnimeEdges", "excludedUserAnimeEdges",
+      "excludedAnimeAnimeEdges"], label, "visualization");
   }
 }
 
@@ -443,20 +478,25 @@ export function parseCompactGraph(
   value: unknown, label: string, expectedRole?: "recommendation" | "visualization",
 ): CompactGraphData {
   const graph = record(value, label, "root");
-  if (graph.format !== "graph-compact-v1" && graph.format !== "graph-compact-v2") {
-    invalid(label, "format", "is unsupported; expected graph-compact-v1 or graph-compact-v2");
+  if (graph.format !== "graph-compact-v1" && graph.format !== "graph-compact-v2" &&
+      graph.format !== "graph-compact-v3") {
+    invalid(label, "format", "is unsupported; expected graph-compact-v1, v2, or v3");
   }
   if (Object.hasOwn(graph, "version")) {
     invalid(label, "version", "is unsupported; use the declared format version");
   }
   if (graph.format === "graph-compact-v1") rejectV2MetadataOnV1(graph, label);
-  const role = graph.format === "graph-compact-v2"
+  const role = graph.format !== "graph-compact-v1"
     ? validateV2Metadata(graph, label, expectedRole) : null;
+  if (graph.format === "graph-compact-v3") validateAggregateOnlyFields(graph, label);
   generatedAt(graph.generatedAt, label);
   const userIds = list(graph.userIds, label, "userIds");
   const anime = list(graph.anime, label, "anime");
   const ua = list(graph.ua, label, "ua");
   const aa = list(graph.aa, label, "aa");
+  if (graph.format === "graph-compact-v3" && (userIds.length !== 0 || ua.length !== 0)) {
+    invalid(label, "userIds/ua", "must be empty for aggregate-only v3");
+  }
   const userSet = new Set<string | number>();
   const animeSet = new Set<string | number>();
   userIds.forEach((value, i) => {
@@ -482,8 +522,8 @@ export function parseCompactGraph(
   const aaSet = new Set<string | number>();
   aa.forEach((value, i) => {
     const entry = list(value, label, `aa[${i}]`);
-    if (graph.format === "graph-compact-v2" ? entry.length !== 4 : entry.length !== 3 && entry.length !== 4) {
-      invalid(label, `aa[${i}]`, graph.format === "graph-compact-v2"
+    if (graph.format !== "graph-compact-v1" ? entry.length !== 4 : entry.length !== 3 && entry.length !== 4) {
+      invalid(label, `aa[${i}]`, graph.format !== "graph-compact-v1"
         ? "must have exactly 4 values with support" : "must have 3 values or 4 with support");
     }
     const left = index(entry[0], anime.length, label, `aa[${i}][0]`);
@@ -497,7 +537,8 @@ export function parseCompactGraph(
     );
   });
   checkCounts(graph, label, userIds.length, anime.length, ua.length + aa.length);
-  if (role) validateV2EdgeCounts(graph, label, role, ua.length, aa.length);
+  if (role) validateV2EdgeCounts(graph, label, role, ua.length, aa.length,
+    graph.format === "graph-compact-v3");
   return value as CompactGraphData;
 }
 
@@ -574,7 +615,8 @@ export function parseLegacyGraph(value: unknown, label: string): GraphData {
 }
 
 export function isCompactGraphData(value: LoadedGraphData): value is CompactGraphData {
-  return "format" in value && (value.format === "graph-compact-v1" || value.format === "graph-compact-v2");
+  return "format" in value && (value.format === "graph-compact-v1" ||
+    value.format === "graph-compact-v2" || value.format === "graph-compact-v3");
 }
 
 export function parseDemoCatalog(value: unknown, label: string): DemoCatalogItem[] {
@@ -658,9 +700,13 @@ export function parseReleaseManifest(value: unknown, label: string): ReleaseMani
     ["animeCount", "itemMapSha256"]);
   safeInteger(catalog.animeCount, label, "catalog.animeCount", 1);
   sha256(catalog.itemMapSha256, label, "catalog.itemMapSha256");
-  const neighborhood = asset("neighborhood", "graph.compact.json", "graph-compact-v2", ["graphId"]);
+  const declaredGraphFormat = record(manifest.neighborhood, label, "neighborhood").format;
+  if (declaredGraphFormat !== "graph-compact-v2" && declaredGraphFormat !== "graph-compact-v3") {
+    invalid(label, "neighborhood.format", "must be graph-compact-v2 or graph-compact-v3");
+  }
+  const neighborhood = asset("neighborhood", "graph.compact.json", declaredGraphFormat, ["graphId"]);
   sha256(neighborhood.graphId, label, "neighborhood.graphId");
-  const explorer = asset("explorer", "graph-explorer.compact.json", "graph-compact-v2",
+  const explorer = asset("explorer", "graph-explorer.compact.json", declaredGraphFormat,
     ["graphId", "sourceGraphId"]);
   sha256(explorer.graphId, label, "explorer.graphId");
   sha256(explorer.sourceGraphId, label, "explorer.sourceGraphId");

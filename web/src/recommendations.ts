@@ -93,7 +93,7 @@ export function buildRecommendationIndex(graphDataValue: GraphData): Recommendat
 export function buildRecommendationIndexFromCompact(
   graphDataValue: CompactGraphData,
 ): RecommendationIndex {
-  if (graphDataValue.format === "graph-compact-v2" && graphDataValue.role !== "recommendation") {
+  if (graphDataValue.format !== "graph-compact-v1" && graphDataValue.role !== "recommendation") {
     throw new Error("A visualization graph cannot be used as a recommendation neighborhood.");
   }
   const animeList: AnimeInfo[] = [];

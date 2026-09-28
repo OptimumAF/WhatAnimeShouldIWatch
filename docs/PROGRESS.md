@@ -926,3 +926,17 @@
 **Checks / blockers:** Protocol only; no graph code or tests changed yet. M8.3 and M8 remain unchecked. Source/use rights, audit packaging, quality review, and deployment remain held.
 
 **Single next task:** Implement and test the v3 projector, strict parser, linked explorer, manifest and browser path with invented data and mocked transport.
+
+## Session 2026-09-28 — M8.3 aggregate-only graph implementation
+
+**Branch / starting commit:** `codex/m8-aggregate-graph` after protocol commit `b44e066`, based on clean final-head CI-passing PR #43. The v3 contract in decision 0029 was recorded before code changes.
+
+**Implementation and affected files:** `pipeline/src/core/aggregate-projection.ts` copies a validated v2 recommendation graph's anime pairs, dataset identity, config and exact selection counts into v3 while omitting all user IDs/edges; `graph-contract.ts`, `explorer-graph.ts`, `types.ts`, and `release-manifest.ts` compute separate v3 IDs and verify linked explorer and catalog bytes. `web/src/artifacts.ts` requires exact v3 fields, empty `userIds`/`ua`, zero retained user counts, and truthful pair counts; v1/v2 formats still parse. `artifact-loader.ts` accepts a manifest-declared v3 pair only when graph and explorer formats match the manifest and each other. `recommendations.ts` uses v3 pair edges for the same ranking path. `main.ts` labels sample popularity unavailable and uses community-score exploration for automatic no-signal v3 mode. New pipeline and web unit/browser tests cover pairs, strict fields, installer integration, and normal-mode behavior; the old browser unsupported-version fixture now uses v4.
+
+**Commands and actual results:** `npm run data:fixture:check` passed with 7 invented users/8 anime/11 pairs. `npm run typecheck` passed. Pipeline focused v3 tests passed 3/3, and the full pipeline suite passed 73/73; web unit tests passed 107/107. `npm run test:python` passed 68 tests; `python -m unittest discover -s scripts/tests` passed 10 tests. `npm run build:web` passed. The focused release-bundle browser suite passed 7/7; a first full browser run found an old test using v3 as its unsupported format, which was changed to v4; the targeted artifact suite passed 8/8 and the rerun full browser suite passed 66/66. `git diff --check` passed before the final documentation edits. No real provider or release response was used.
+
+**Unrun / blockers:** Clean-checkout PR CI and final stacked-diff review remain. The v3 dataset digest and pair weights still derive from restricted ratings; this projection does not establish redistribution rights, prove a permitted source, or set a release quality threshold. M8.3's publication audit, exact whitelist, approved source/use decision, immutable upload route, hosted check, and M8 exit gate remain open. No private Crunchyroll history was accessed.
+
+**Plan revisions and reason:** The v3 variant preserves v2 semantics and existing readers while representing selected source ratings separately from retained public user edges. M8.3 stays unchecked because the published artifact and authorization criteria are not met.
+
+**Single next task:** Build a synthetic audited data-only publication package that rejects undeclared files and binds provenance, redistribution basis, changes, compatibility, and quality evidence before any future release upload.

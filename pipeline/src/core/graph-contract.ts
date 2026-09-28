@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { PAIR_CAP_POLICY, type PairSelectionStats } from "./pair-aggregation.js";
-import type { AnonymizedDataset, CompactGraphDataV2, GraphV2Metadata } from "../types.js";
+import type { AnonymizedDataset, CompactGraphDataV2, CompactGraphDataV3,
+  GraphV2Metadata } from "../types.js";
 
 export const GRAPH_SEMANTICS: GraphV2Metadata["semantics"] = {
   pairWeight: "centered-pair-preference-mean-v1",
@@ -66,5 +67,24 @@ export function visualizationGraphId(
   const { sourceGraphId, visualization, userIds, anime, ua, aa } = graph;
   return createHash("sha256")
     .update(JSON.stringify({ sourceGraphId, visualization, userIds, anime, ua, aa }))
+    .digest("hex");
+}
+
+/** V3 hashes only public aggregate evidence, never removed per-user arrays. */
+export function aggregateRecommendationGraphId(
+  graph: Omit<CompactGraphDataV3, "graphId">,
+): string {
+  const { dataset, semantics, config, truncation, projection, anime, aa } = graph;
+  return createHash("sha256")
+    .update(JSON.stringify({ dataset, semantics, config, truncation, projection, anime, aa }))
+    .digest("hex");
+}
+
+export function aggregateVisualizationGraphId(
+  graph: Omit<CompactGraphDataV3, "graphId">,
+): string {
+  const { sourceGraphId, projection, visualization, anime, aa } = graph;
+  return createHash("sha256")
+    .update(JSON.stringify({ sourceGraphId, projection, visualization, anime, aa }))
     .digest("hex");
 }
