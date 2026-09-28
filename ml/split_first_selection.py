@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validation-only MF selection followed by one frozen synthetic test report."""
+"""Validation-only MF selection followed by one frozen warm-user report."""
 
 from __future__ import annotations
 
@@ -335,7 +335,7 @@ def report_frozen_test(snapshot: RawSnapshot, manifest: object, metadata: Metada
               "selectedCandidateId": candidate.candidate_id,
               "modelSha256": model_fingerprint(trained.model),
               "test": metric,
-              "status": "single synthetic warm-user report; no release claim"}
+              "status": "single warm-user report; no release claim"}
     _write_new(report_path, report)
     # Bind the exact write-once report bytes for later refit provenance checks.
     _write_new(digest_path, {"format": "split-first-final-test-digest-v1",
@@ -378,7 +378,7 @@ def main() -> None:
             report_frozen_test(snapshot, manifest, metadata, args.selection)
             record = _load_json(args.selection)
             report_path = Path(record["testReportPath"])
-            print(f"Wrote one frozen synthetic test report to {report_path}.")
+            print(f"Wrote one frozen warm-user report to {report_path}.")
     except (OSError, UnicodeError, ValueError, KeyError, TypeError, IndexError) as exc:
         parser.exit(1, f"Split-first selection failed: {exc}\n")
 

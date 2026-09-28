@@ -96,50 +96,61 @@ function setup(t: TestContext, synthetic = true) {
   for (const name of [RELEASE_FILES.neighborhood, RELEASE_FILES.explorer, RELEASE_FILES.catalog]) {
     fs.copyFileSync(path.join(baseDir, name), path.join(candidateDir, name));
   }
-  const generated = spawnSync("python", [path.join(repoRoot, "ml/synthetic_promotion_archive.py"),
+  const generated = spawnSync("python", [path.join(repoRoot, synthetic
+    ? "ml/synthetic_promotion_archive.py" : "ml/synthetic_promotion_refit.py"),
     "--candidate-dir", candidateDir, "--evidence-dir", evidenceDir,
-    ...(!synthetic ? ["--bridge-source-dir", sourceDir,
+    ...(!synthetic ? ["--source-dir", sourceDir,
       "--dataset-sha256", graph.dataset.sha256] : [])],
   { cwd: repoRoot, encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
+  const refitFromFit = synthetic ? null : JSON.parse(fs.readFileSync(path.join(evidenceDir,
+    "refit-record.json"), "utf8"));
   const archiveEvidence = JSON.parse(generated.stdout);
-  const { numericArchiveSha256, numericMetadataSha256, refitModelSha256 } = archiveEvidence;
+  const { numericArchiveSha256, numericMetadataSha256, refitModelSha256 } =
+    refitFromFit ?? archiveEvidence;
   const model = JSON.parse(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.model), "utf8"));
+  if (synthetic) fs.copyFileSync(path.join(candidateDir, RELEASE_FILES.model),
+    path.join(evidenceDir, RELEASE_FILES.model));
   const modelSha256 = releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.model)));
   const manifest = writeReleaseManifest(candidateDir, "data-vinvented-model", baseDir);
   const rawContentSha256 = prepared?.rawContentSha256 ?? H("a");
-  const selectionSha256 = H("b");
-  const selectionFileSha256 = write(evidenceDir, "selection.json", {
+  const selectionSha256 = refitFromFit
+    ? JSON.parse(fs.readFileSync(path.join(evidenceDir, "selection.json"), "utf8")).selectionSha256
+    : H("b");
+  const selectionFileSha256 = refitFromFit
+    ? releaseSha256(fs.readFileSync(path.join(evidenceDir, "selection.json")))
+    : write(evidenceDir, "selection.json", {
     format: "split-first-selection-v1", rawContentSha256, selectionSha256,
-    ...(!synthetic ? { trainSha256: prepared!.originalTrainSha256 } : {}),
     selectedCandidate: { id: "invented-mf" },
   });
-  const finalReportSha256 = write(evidenceDir, "final-report.json", {
+  const finalReportSha256 = refitFromFit
+    ? releaseSha256(fs.readFileSync(path.join(evidenceDir, "final-report.json")))
+    : write(evidenceDir, "final-report.json", {
     format: "split-first-final-test-v1", selectionSha256,
-    selectedCandidateId: "invented-mf", status: synthetic
-      ? "single synthetic warm-user report; no release claim"
-      : "reviewed permitted serving-path report",
+    selectedCandidateId: "invented-mf", status: "single synthetic warm-user report; no release claim",
     test: { ndcgAtK: 0.4 },
   });
-  write(evidenceDir, "final-report.sha256.json", {
-    format: "split-first-final-test-digest-v1", selectionSha256,
-    reportSha256: finalReportSha256,
-  });
-  write(evidenceDir, "selection.test-used.json", {
-    format: "split-first-test-used-v1", selectionSha256,
-  });
-  const refitRecordSha256 = write(evidenceDir, "refit-record.json", {
+  if (synthetic) {
+    write(evidenceDir, "final-report.json.sha256.json", {
+      format: "split-first-final-test-digest-v1", selectionSha256,
+      reportSha256: finalReportSha256,
+    });
+    write(evidenceDir, "selection.json.test-used", {
+      format: "split-first-test-used-v1", selectionSha256,
+    });
+  }
+  const refitRecordSha256 = refitFromFit
+    ? releaseSha256(fs.readFileSync(path.join(evidenceDir, "refit-record.json")))
+    : write(evidenceDir, "refit-record.json", {
     format: "split-first-final-refit-v1", releaseStatus: "unapproved experiment artifact",
     fitMembership: "train-plus-validation", selectionSha256, finalReportSha256,
     selectedCandidateId: "invented-mf", rawContentSha256,
-    candidateSpecSha256: H("c"), splitIdentitySha256: prepared?.splitIdentitySha256 ?? H("d"),
-    metadataSha256: prepared?.metadataSha256 ?? H("e"),
-    originalTrainSha256: prepared?.originalTrainSha256 ?? H("f"),
-    refitTrainSha256: prepared?.refitTrainSha256 ?? H("1"),
-    refitFitSha256: prepared?.refitFitSha256 ?? H("2"), refitModelSha256,
+    candidateSpecSha256: H("c"), splitIdentitySha256: H("d"),
+    metadataSha256: H("e"), originalTrainSha256: H("f"),
+    refitTrainSha256: H("1"), refitFitSha256: H("2"), refitModelSha256,
     numericArchiveSha256, numericMetadataSha256, webModelSha256: modelSha256,
-    trainRows: prepared?.trainRows ?? 7, validationRows: prepared?.validationRows ?? 3,
-    testRowsExcluded: prepared?.testRowsExcluded ?? 3, refitRows: prepared?.rows.length ?? 10,
+    trainRows: 7, validationRows: 3,
+    testRowsExcluded: 3, refitRows: 10,
     evaluation: "none; this record contains no held-out quality metric",
   });
   const bridgeRecord = {
@@ -176,7 +187,7 @@ function setup(t: TestContext, synthetic = true) {
     baselineValidation: Array.from({ length: 4 }, (_, index) =>
       caseFor(`invented-promo-validation-${index + 1}`, 102)),
     finalTest: Array.from({ length: 4 }, (_, index) =>
-      caseFor(`invented-promo-final-${index + 1}`, 106)),
+      caseFor(`invented-promo-final-${index + 1}`, synthetic ? 106 : 105)),
   };
   const servingCohortSha256 = write(evidenceDir, "serving-cohort.json", cohort);
   const policy = {
@@ -354,7 +365,7 @@ test("a rehashed private sidecar cannot change the archive fit-user set", (t) =>
   const refitRecordSha256 = write(fixture.evidenceDir, "refit-record.json", refit);
   updateReview(fixture, { numericMetadataSha256, refitRecordSha256 });
   assert.throws(() => packageModelRelease({ ...fixture, syntheticFixture: true }),
-    /model.npz: safe archive, refit fingerprint, membership, or item export check failed/);
+    /model.npz: safe archive or frozen split-first refit reproduction failed/);
 });
 
 test("nonfixture packaging requires the exact private split and recomputed bridge", (t) => {
@@ -382,6 +393,17 @@ test("nonfixture packaging requires the exact private split and recomputed bridg
   fs.writeFileSync(rawPath, encode(raw));
   assert.throws(() => packageModelRelease(stale),
     /Graph dataset bridge private inputs: raw snapshot, split manifest, or metadata failed validation/);
+});
+
+test("nonfixture package rejects an altered selection after its review hash is refreshed", (t) => {
+  const fixture = setup(t, false);
+  const selection = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir,
+    "selection.json"), "utf8"));
+  selection.selectionSpec.modelSeed += 1;
+  updateReview(fixture, { selectionFileSha256: write(fixture.evidenceDir,
+    "selection.json", selection) });
+  assert.throws(() => packageModelRelease(fixture),
+    /model.npz: safe archive or frozen split-first refit reproduction failed/);
 });
 
 test("a generated report must meet the frozen coverage and fresh latency gates", (t) => {

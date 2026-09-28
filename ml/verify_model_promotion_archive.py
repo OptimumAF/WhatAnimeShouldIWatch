@@ -12,6 +12,7 @@ from export_model_web import build_payload
 from model_artifact import load_numeric_model, metadata_path
 from prepare_graph_dataset_bridge import prepare
 from split_first_graph_mf import model_fingerprint
+from verify_split_first_refit import verify_refit
 
 
 def _sha256(path: Path) -> str:
@@ -35,7 +36,9 @@ def _read(path: Path) -> dict[str, object]:
 
 
 def verify_private_archive(evidence_dir: Path, web_model_path: Path,
-                           source_dir: Path | None = None) -> None:
+                           source_dir: Path | None = None,
+                           selection_path: Path | None = None,
+                           dataset_sha256: str | None = None) -> None:
     """Require a safe NPZ whose fitted bytes and item export match private records."""
     archive_path = evidence_dir / "model.npz"
     loaded = load_numeric_model(archive_path)
@@ -82,6 +85,15 @@ def verify_private_archive(evidence_dir: Path, web_model_path: Path,
                   "factors", "animeCount", "animeIds", "titles", "biases", "embeddings"):
         if web.get(field) != expected[field]:
             raise ValueError(f"model-mf-web.compact.json.{field} differs from the numeric export.")
+    if selection_path is not None:
+        if source_dir is None or dataset_sha256 is None:
+            raise ValueError("Frozen refit reproduction requires source rows and dataset digest.")
+        private_web = evidence_dir / "model-mf-web.compact.json"
+        if private_web.read_bytes() != web_model_path.read_bytes():
+            raise ValueError("Private refit item export differs from the public candidate model.")
+        verify_refit(source_dir / "raw-ratings.json", source_dir / "split-manifest.json",
+                     source_dir / "anime-metadata.json", selection_path, evidence_dir,
+                     dataset_sha256)
 
 
 def main() -> None:
@@ -89,9 +101,12 @@ def main() -> None:
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--web-model", type=Path, required=True)
     parser.add_argument("--source-dir", type=Path)
+    parser.add_argument("--selection", type=Path)
+    parser.add_argument("--dataset-sha256")
     args = parser.parse_args()
     try:
-        verify_private_archive(args.evidence_dir, args.web_model, args.source_dir)
+        verify_private_archive(args.evidence_dir, args.web_model, args.source_dir,
+                               args.selection, args.dataset_sha256)
     except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
         parser.exit(1, f"Promotion archive verification failed: {exc}\n")
     print("Verified private numeric archive and item model.")

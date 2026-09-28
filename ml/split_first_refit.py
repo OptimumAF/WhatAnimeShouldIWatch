@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private final MF fit from train+validation after frozen synthetic selection."""
+"""Private final MF fit from train+validation after frozen selection."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -26,7 +27,8 @@ _TEST_REPORT_FIELDS = {
     "format", "selectionSha256", "selectedCandidateId", "modelSha256", "test", "status",
 }
 _TEST_METRIC_FIELDS = {"eligibleUsers", "positiveLabels", "hitsAtK", "ndcgAtK", "recallAtK"}
-_TEST_STATUS = "single synthetic warm-user report; no release claim"
+_TEST_STATUSES = {"single synthetic warm-user report; no release claim",
+                  "single warm-user report; no release claim"}
 
 
 def _read_json(path: Path) -> object:
@@ -69,7 +71,7 @@ def _checked_final_report(selection: dict, report_path: Path,
         raise ValueError("Final report bytes do not match their recorded digest.")
     if not isinstance(report, dict) or set(report) != _TEST_REPORT_FIELDS or (
         report["format"] != "split-first-final-test-v1" or
-        report["status"] != _TEST_STATUS or
+        report["status"] not in _TEST_STATUSES or
         report["selectionSha256"] != selection["selectionSha256"] or
         report["selectedCandidateId"] != selection["selectedCandidate"]["id"]
     ):
@@ -103,8 +105,13 @@ def _checked_final_report(selection: dict, report_path: Path,
 
 def refit_frozen_selection(snapshot: RawSnapshot, manifest: object,
                            metadata: MetadataSnapshot, selection_path: Path,
-                           out_dir: Path) -> dict[str, object]:
+                           out_dir: Path, dataset_sha256: str | None = None) -> dict[str, object]:
     """Validate selection/report, then fit only the immutable train+validation rows."""
+    if dataset_sha256 is not None and (
+        not isinstance(dataset_sha256, str) or
+        re.fullmatch(r"[a-f0-9]{64}", dataset_sha256) is None
+    ):
+        raise ValueError("Final refit dataset SHA-256 must be a lowercase digest.")
     selection_path = _private_output(selection_path)
     output = _private_unused_output(out_dir)
     selection = _read_json(selection_path)
@@ -159,6 +166,9 @@ def refit_frozen_selection(snapshot: RawSnapshot, manifest: object,
     loaded = load_numeric_model(archive_path)
     web_path = output / "model-mf-web.compact.json"
     web = export_model(archive_path, web_path, "compact", 8)
+    if dataset_sha256 is not None:
+        web["datasetSha256"] = dataset_sha256
+        web_path.write_text(json.dumps(web, separators=(",", ":"), allow_nan=False), encoding="utf-8")
     if web["sourceModelSha256"] != loaded.archive_sha256:
         raise ValueError("Final refit web model digest disagrees with numeric model.")
     record: dict[str, object] = {
@@ -228,6 +238,7 @@ def main() -> None:
     parser.add_argument("--selection", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--training-approval-ref")
+    parser.add_argument("--dataset-sha256", help="Bound aggregate graph dataset digest for a release candidate")
     args = parser.parse_args()
     try:
         _allow_cli_source(args.raw_ratings, args.split_manifest, args.metadata,
@@ -236,7 +247,7 @@ def main() -> None:
         manifest = _read_json(args.split_manifest)
         metadata = load_metadata_snapshot(args.metadata)
         record = refit_frozen_selection(snapshot, manifest, metadata,
-                                        args.selection, args.out_dir)
+                                        args.selection, args.out_dir, args.dataset_sha256)
     except (OSError, UnicodeError, ValueError, KeyError, TypeError, IndexError) as exc:
         parser.exit(1, f"Final refit blocked: {exc}\n")
     print(json.dumps(record, sort_keys=True, allow_nan=False))

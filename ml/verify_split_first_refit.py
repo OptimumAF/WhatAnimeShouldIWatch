@@ -41,7 +41,8 @@ def _same(actual: object, expected: object, field: str) -> None:
 
 
 def verify_refit(raw: Path, split: Path, metadata_file: Path,
-                 selection_path: Path, evidence_dir: Path) -> dict[str, object]:
+                 selection_path: Path, evidence_dir: Path,
+                 dataset_sha256: str | None = None) -> dict[str, object]:
     """Retrain in memory and compare every fitted array; emit only aggregate digests."""
     for name, source in (("raw-ratings.json", raw), ("split-manifest.json", split),
                          ("anime-metadata.json", metadata_file)):
@@ -112,6 +113,8 @@ def verify_refit(raw: Path, split: Path, metadata_file: Path,
         raise ValueError("model-mf-web.compact.json must be an object.")
     expected_web = build_payload(archive_path, "compact", 8)
     expected_web["generatedAt"] = web.get("generatedAt")
+    if dataset_sha256 is not None:
+        expected_web["datasetSha256"] = dataset_sha256
     _same(web, expected_web, "model-mf-web.compact.json")
 
     record = _read_json(evidence_dir / "refit-record.json")
@@ -162,6 +165,7 @@ def main() -> None:
     parser.add_argument("--selection", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--training-approval-ref")
+    parser.add_argument("--dataset-sha256")
     args = parser.parse_args()
     try:
         _allow_cli_source(args.raw_ratings, args.split_manifest, args.metadata,
@@ -170,7 +174,7 @@ def main() -> None:
         parser.exit(1, f"Refit reproduction blocked: source/use approval missing or invalid ({type(exc).__name__}).\n")
     try:
         report = verify_refit(args.raw_ratings, args.split_manifest, args.metadata,
-                              args.selection, args.evidence_dir)
+                              args.selection, args.evidence_dir, args.dataset_sha256)
     except (OSError, UnicodeError, ValueError, KeyError, TypeError, IndexError,
             StopIteration):
         parser.exit(1, "Refit reproduction blocked: private input or evidence mismatch.\n")

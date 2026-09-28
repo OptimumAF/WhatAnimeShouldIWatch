@@ -11,8 +11,9 @@ import { RELEASE_FILES, releaseSha256, verifyReleaseBundle } from "./release-man
 export const MODEL_SOURCE_FILES = [RELEASE_FILES.manifest, RELEASE_FILES.neighborhood,
   RELEASE_FILES.explorer, RELEASE_FILES.catalog, RELEASE_FILES.model] as const;
 export const MODEL_PRIVATE_FILES = ["model-promotion-review.json", "selection.json",
-  "final-report.json", "final-report.sha256.json", "selection.test-used.json",
-  "refit-record.json", "model.npz", "model.metadata.json", "dataset-bridge.json", "quality-policy.json",
+  "final-report.json", "final-report.json.sha256.json", "selection.json.test-used",
+  "refit-record.json", "model.npz", "model.metadata.json", "model-mf-web.compact.json",
+  "dataset-bridge.json", "quality-policy.json",
   "serving-cohort.json", "serving-report.json"] as const;
 export const MODEL_OUTPUT_FILES = [...MODEL_SOURCE_FILES, "model-promotion-audit.json"] as const;
 export const MODEL_BRIDGE_SOURCE_FILES = ["raw-ratings.json", "split-manifest.json",
@@ -161,6 +162,7 @@ function inventory(directory: string, names: readonly string[], field: string): 
     const item = fs.lstatSync(path.join(directory, filename));
     const maximum = filename === RELEASE_FILES.manifest ? RELEASE_BUNDLE_LIMITS.manifestBytes
       : filename === "model.npz" ? NUMERIC_ARCHIVE_LIMIT
+      : filename === RELEASE_FILES.model ? RELEASE_BUNDLE_LIMITS.plainAssetBytes
       : field === "source" ? filename === "raw-ratings.json" ? 128 * 1024 * 1024
         : 16 * 1024 * 1024
       : (MODEL_PRIVATE_FILES as readonly string[]).includes(filename) ? PRIVATE_JSON_LIMIT
@@ -240,10 +242,10 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
 
   const selection = readEvidence(privateBytes, "selection.json");
   const finalReport = readEvidence(privateBytes, "final-report.json");
-  const reportDigest = fields(readEvidence(privateBytes, "final-report.sha256.json"),
-    ["format", "selectionSha256", "reportSha256"], "final-report.sha256.json");
-  const marker = fields(readEvidence(privateBytes, "selection.test-used.json"),
-    ["format", "selectionSha256"], "selection.test-used.json");
+  const reportDigest = fields(readEvidence(privateBytes, "final-report.json.sha256.json"),
+    ["format", "selectionSha256", "reportSha256"], "final-report.json.sha256.json");
+  const marker = fields(readEvidence(privateBytes, "selection.json.test-used"),
+    ["format", "selectionSha256"], "selection.json.test-used");
   const refit = fields(readEvidence(privateBytes, "refit-record.json"),
     ["format", "selectionSha256", "finalReportSha256", "selectedCandidateId",
       "candidateSpecSha256", "rawContentSha256", "splitIdentitySha256", "metadataSha256",
@@ -281,16 +283,18 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
     "review.finalReportSha256");
   same(finalReport.format, "split-first-final-test-v1", "final-report.format");
   const finalStatus = text(finalReport.status, "final-report.status");
-  if (syntheticFixture !== (finalStatus === "single synthetic warm-user report; no release claim")) {
-    fail("final-report.status", "synthetic warm-user report cannot support a reviewed model package");
-  }
+  // This frozen warm-user report proves the one-use refit boundary only. The
+  // separate serving report and owner review carry release-quality evidence.
+  same(finalStatus, syntheticFixture
+    ? "single synthetic warm-user report; no release claim"
+    : "single warm-user report; no release claim", "final-report.status");
   same(finalReport.selectionSha256, review.selectionSha256, "final-report.selectionSha256");
   same(finalReport.selectedCandidateId, selectedId, "final-report.selectedCandidateId");
-  same(reportDigest.format, "split-first-final-test-digest-v1", "final-report.sha256.json.format");
-  same(reportDigest.selectionSha256, review.selectionSha256, "final-report.sha256.json.selectionSha256");
-  same(reportDigest.reportSha256, review.finalReportSha256, "final-report.sha256.json.reportSha256");
-  same(marker.format, "split-first-test-used-v1", "selection.test-used.json.format");
-  same(marker.selectionSha256, review.selectionSha256, "selection.test-used.json.selectionSha256");
+  same(reportDigest.format, "split-first-final-test-digest-v1", "final-report.json.sha256.json.format");
+  same(reportDigest.selectionSha256, review.selectionSha256, "final-report.json.sha256.json.selectionSha256");
+  same(reportDigest.reportSha256, review.finalReportSha256, "final-report.json.sha256.json.reportSha256");
+  same(marker.format, "split-first-test-used-v1", "selection.json.test-used.format");
+  same(marker.selectionSha256, review.selectionSha256, "selection.json.test-used.selectionSha256");
 
   same(review.refitRecordSha256, releaseSha256(privateBytes.get("refit-record.json")!),
     "review.refitRecordSha256");
@@ -489,11 +493,13 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
     execFileSync("python", [fileURLToPath(new URL("../../ml/verify_model_promotion_archive.py",
       import.meta.url)), "--evidence-dir", path.resolve(options.evidenceDir),
       "--web-model", path.resolve(options.candidateDir, RELEASE_FILES.model),
-      ...(!options.syntheticFixture ? ["--source-dir", path.resolve(options.sourceDir!)] : [])],
+      ...(!options.syntheticFixture ? ["--source-dir", path.resolve(options.sourceDir!),
+        "--selection", path.resolve(options.evidenceDir, "selection.json"),
+        "--dataset-sha256", manifest.dataset.sha256] : [])],
     { cwd: path.resolve(import.meta.dirname, "../.."), encoding: "utf8",
       maxBuffer: 1024 * 1024, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
   } catch {
-    fail("model.npz", "safe archive, refit fingerprint, membership, or item export check failed");
+    fail("model.npz", "safe archive or frozen split-first refit reproduction failed");
   }
   try {
     execFileSync(process.execPath, ["--import", "tsx",
