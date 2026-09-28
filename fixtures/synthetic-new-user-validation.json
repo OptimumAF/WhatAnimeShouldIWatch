@@ -1,0 +1,70 @@
+{
+  "format": "new-user-validation-fixture-v1",
+  "seed": 42,
+  "positiveRawScoreMin": 7,
+  "topK": 10,
+  "candidateMetadata": [
+    {"animeId": 201, "year": 2020, "score": 7.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 202, "year": 2021, "score": 7.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 203, "year": 2022, "score": 8.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 204, "year": 2023, "score": 8.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 205, "year": 2020, "score": 7.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 206, "year": 2021, "score": 7.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 207, "year": 2022, "score": 8.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 208, "year": 2023, "score": 8.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 209, "year": 2020, "score": 7.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 210, "year": 2021, "score": 7.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 211, "year": 2022, "score": 8.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 212, "year": 2023, "score": 8.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 213, "year": 2020, "score": 7.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 214, "year": 2021, "score": 7.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 215, "year": 2022, "score": 8.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 216, "year": 2023, "score": 8.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 217, "year": 2020, "score": 7.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 218, "year": 2021, "score": 7.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 219, "year": 2022, "score": 8.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 220, "year": 2023, "score": 8.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 221, "year": 2020, "score": 7.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 222, "year": 2021, "score": 7.5, "genres": ["Invented", "Mystery"]},
+    {"animeId": 223, "year": 2022, "score": 8.0, "genres": ["Invented", "Adventure"]},
+    {"animeId": 224, "year": 2023, "score": 8.5, "genres": ["Invented", "Mystery"]}
+  ],
+  "users": [
+    {
+      "userId": "invented-new-01",
+      "observed": [{"animeId": 201, "rawScore": 9}, {"animeId": 206, "rawScore": 8}, {"animeId": 211, "rawScore": 3}, {"animeId": 216, "rawScore": 7}, {"animeId": 221, "rawScore": 6}, {"animeId": 202, "rawScore": 2}, {"animeId": 207, "rawScore": 10}, {"animeId": 212, "rawScore": 4}, {"animeId": 217, "rawScore": 8}, {"animeId": 222, "rawScore": 5}],
+      "validation": [{"animeId": 203, "rawScore": 9}, {"animeId": 208, "rawScore": 8}],
+      "historySeen": [213],
+      "exclude": [218],
+      "includeOnly": [],
+      "filters": {"genre": "", "minYear": null, "maxYear": null, "minScore": null}
+    },
+    {
+      "userId": "invented-new-02",
+      "observed": [{"animeId": 204, "rawScore": 8}, {"animeId": 209, "rawScore": 2}, {"animeId": 214, "rawScore": 9}, {"animeId": 219, "rawScore": 3}, {"animeId": 224, "rawScore": 7}, {"animeId": 205, "rawScore": 10}, {"animeId": 210, "rawScore": 4}, {"animeId": 215, "rawScore": 6}, {"animeId": 220, "rawScore": 9}, {"animeId": 201, "rawScore": 5}],
+      "validation": [{"animeId": 206, "rawScore": 9}, {"animeId": 211, "rawScore": 8}],
+      "historySeen": [216],
+      "exclude": [221],
+      "includeOnly": [],
+      "filters": {"genre": "", "minYear": null, "maxYear": null, "minScore": null}
+    },
+    {
+      "userId": "invented-new-03",
+      "observed": [{"animeId": 207, "rawScore": 7}, {"animeId": 212, "rawScore": 9}, {"animeId": 217, "rawScore": 2}, {"animeId": 222, "rawScore": 8}, {"animeId": 203, "rawScore": 4}, {"animeId": 208, "rawScore": 10}, {"animeId": 213, "rawScore": 3}, {"animeId": 218, "rawScore": 6}, {"animeId": 223, "rawScore": 8}, {"animeId": 204, "rawScore": 5}],
+      "validation": [{"animeId": 209, "rawScore": 9}, {"animeId": 214, "rawScore": 8}],
+      "historySeen": [219],
+      "exclude": [224],
+      "includeOnly": [],
+      "filters": {"genre": "", "minYear": null, "maxYear": null, "minScore": null}
+    },
+    {
+      "userId": "invented-new-04",
+      "observed": [{"animeId": 210, "rawScore": 10}, {"animeId": 215, "rawScore": 3}, {"animeId": 220, "rawScore": 8}, {"animeId": 201, "rawScore": 7}, {"animeId": 206, "rawScore": 2}, {"animeId": 211, "rawScore": 9}, {"animeId": 216, "rawScore": 4}, {"animeId": 221, "rawScore": 6}, {"animeId": 202, "rawScore": 8}, {"animeId": 207, "rawScore": 5}],
+      "validation": [{"animeId": 212, "rawScore": 9}, {"animeId": 217, "rawScore": 8}],
+      "historySeen": [222],
+      "exclude": [203],
+      "includeOnly": [201, 202, 203, 204, 205, 206, 207, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224],
+      "filters": {"genre": "Invented", "minYear": 2020, "maxYear": 2025, "minScore": 7}
+    }
+  ]
+}

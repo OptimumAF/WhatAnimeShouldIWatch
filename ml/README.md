@@ -37,6 +37,14 @@ python ml/split_first_selection.py report-test --raw-ratings fixtures/synthetic-
 
 The second command refuses a repeat using a one-use marker beside the selection file. These ignored local reports are restricted evaluation records, and their tiny warm-user metrics do not establish ranking quality. [Decision 0017](../docs/decisions/0017-validation-test-boundary.md) defines the read boundary. M5.4 remains open while Optuna, hybrid blend, and other tuners are not yet connected to it.
 
+M5.5's [separate new-user fixture](../docs/decisions/0018-new-user-split-first-evaluation.md) has an invented fit-only raw snapshot with a pinned 72/24/24 split and four disjoint evaluation users. The local Python adapter exports only train-fitted item factors/biases, a train-present catalog, and positive train pairs to the TypeScript evaluator; it never exports fitted user factors or evaluation ratings. The TypeScript runner calls the browser's native-score mapper, signed preference-to-vector scorer, candidate eligibility policy, and final-list selector. It reports 1/3/5/10 supplied-rating model validation separately from the fit users' warm validation metric and labels any graph/catalog fallback:
+
+```bash
+npm run eval:new-user:fixture
+```
+
+The command uses only invented files and writes no model or report artifact. The fit-user test IDs remain unscored here. These small authored results are an isolation and serving-path check, not a release-quality estimate.
+
 ## Install
 
 ```bash
