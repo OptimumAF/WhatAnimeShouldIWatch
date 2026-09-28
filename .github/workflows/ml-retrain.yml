@@ -94,6 +94,7 @@ jobs:
           name: ml-retrain-${{ env.RUN_TIMESTAMP }}
           path: |
             models/graph_mf_ci/model.npz
+            models/graph_mf_ci/model.metadata.json
             models/graph_mf_ci/metrics.json
             models/graph_mf_ci/metrics-report.json
             models/graph_mf_ci/model-mf-web.compact.json

@@ -1,0 +1,11 @@
+{
+  "format": "synthetic-model-parity-spec-v1",
+  "inputSha256": "015273e273c5beb6198f4ceecd2353318be9a117d00cfc0d7c1f8f2f9e8a4ac6",
+  "numericArchiveFormat": "model-numeric-npz-v1",
+  "metadataFormat": "model-numeric-sidecar-v1",
+  "webFormat": "model-mf-compact-v1",
+  "exportRoundDigits": 8,
+  "scoreAbsoluteTolerance": 0.00001,
+  "tieBreak": "score-support-strongest-source-order",
+  "cases": ["signed-and-excluded", "metadata-and-allowlist", "seen-only"]
+}

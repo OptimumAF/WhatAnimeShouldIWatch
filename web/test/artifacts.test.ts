@@ -196,6 +196,20 @@ test("rejects mismatched model arrays, factor dimensions, duplicate IDs, and non
   assert.throws(() => parseLegacyModel(legacy, "legacy model"), /embedding.*dimension/);
 });
 
+test("optional numeric source digest is validated in compact and legacy models", () => {
+  const compact = fixture("model-mf-web.compact.json");
+  compact.sourceModelSha256 = "a".repeat(64);
+  assert.equal(parseCompactModel(compact, "compact model").sourceModelSha256,
+    "a".repeat(64));
+  compact.sourceModelSha256 = "A".repeat(64);
+  assert.throws(() => parseCompactModel(compact, "compact model"),
+    /sourceModelSha256.*lowercase SHA-256/);
+  const legacy = legacyModel();
+  legacy.sourceModelSha256 = "invalid";
+  assert.throws(() => parseLegacyModel(legacy, "legacy model"),
+    /sourceModelSha256.*lowercase SHA-256/);
+});
+
 test("validation errors identify the artifact and field without echoing content", () => {
   const model = fixture("model-mf-web.compact.json");
   model.embeddings[0].pop();

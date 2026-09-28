@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import numpy as np
+from model_artifact import load_numeric_model
 from provider_scheduler import JikanRequestScheduler, RequestBudgetExceeded, RequestCancelled
 
 
@@ -54,12 +54,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_model_anime(path: Path) -> List[Tuple[int, str]]:
-    if not path.exists():
-        raise FileNotFoundError(f"Model file not found: {path}")
-    raw = np.load(path, allow_pickle=True)
-    anime_ids = [int(x) for x in raw["anime_ids"].tolist()]
-    anime_titles = [str(x) for x in raw["anime_titles"].tolist()]
-    return list(zip(anime_ids, anime_titles))
+    loaded = load_numeric_model(path)
+    return list(zip(loaded.anime_ids, loaded.anime_titles))
 
 
 _default_scheduler = JikanRequestScheduler()
