@@ -1,39 +1,17 @@
-name: Publish Data Release Assets
+name: Publish Data Release Assets (held)
 
 on:
   workflow_dispatch:
-    inputs:
-      source_mode:
-        description: "Source for release payload: repo, artifact, or release"
-        required: true
-        default: "release"
-      artifact_run_id:
-        description: "Workflow run ID to download artifacts from when source_mode=artifact"
-        required: false
-        default: ""
-      artifact_name:
-        description: "Artifact name to download when source_mode=artifact"
-        required: false
-        default: "data-release-input"
-      tag_name:
-        description: "Release tag for data assets"
-        required: false
-        default: "data-latest"
-      release_name:
-        description: "Release title"
-        required: false
-        default: "Data Assets (latest)"
 
 permissions:
-  actions: read
-  contents: write
+  contents: read
 
 jobs:
   publish:
-    # Unset repository variables skip the entire publication job.
+    # Unset use-specific variables skip this job; a recorded approval still
+    # cannot reactivate the legacy ratings and mutable-tag upload path.
     if: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,105 +21,8 @@ jobs:
           PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
         run: python3 scripts/verify_provider_data_approval.py publication
 
-      - name: Stage release payload
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_MODE: ${{ github.event.inputs.source_mode || 'release' }}
-          ARTIFACT_NAME: ${{ github.event.inputs.artifact_name || 'data-release-input' }}
-          ARTIFACT_RUN_ID: ${{ github.event.inputs.artifact_run_id || '' }}
-          TAG_NAME: ${{ github.event.inputs.tag_name || 'data-latest' }}
+      - name: Refuse legacy data release publication
         run: |
-          set -euo pipefail
-          mkdir -p release-data
-
-          case "${SOURCE_MODE}" in
-            repo)
-              test -f data/graph.compact.json
-              test -f data/anonymized-ratings.compact.json
-              gzip -c data/graph.compact.json > release-data/graph.compact.json.gz
-              gzip -c data/anonymized-ratings.compact.json > release-data/anonymized-ratings.compact.json.gz
-              if [ -f data/model-mf-web.compact.json ]; then
-                gzip -c data/model-mf-web.compact.json > release-data/model-mf-web.compact.json.gz
-              fi
-              ;;
-            artifact)
-              test -n "${ARTIFACT_RUN_ID}"
-              gh run download "${ARTIFACT_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name "${ARTIFACT_NAME}" --dir artifact-input
-              if [ -f artifact-input/graph.compact.json ]; then
-                gzip -c artifact-input/graph.compact.json > release-data/graph.compact.json.gz
-              elif [ -f artifact-input/graph.compact.json.gz ]; then
-                cp artifact-input/graph.compact.json.gz release-data/graph.compact.json.gz
-              fi
-
-              if [ -f artifact-input/anonymized-ratings.compact.json ]; then
-                gzip -c artifact-input/anonymized-ratings.compact.json > release-data/anonymized-ratings.compact.json.gz
-              elif [ -f artifact-input/anonymized-ratings.compact.json.gz ]; then
-                cp artifact-input/anonymized-ratings.compact.json.gz release-data/anonymized-ratings.compact.json.gz
-              fi
-
-              if [ -f artifact-input/model-mf-web.compact.json ]; then
-                gzip -c artifact-input/model-mf-web.compact.json > release-data/model-mf-web.compact.json.gz
-              elif [ -f artifact-input/model-mf-web.compact.json.gz ]; then
-                cp artifact-input/model-mf-web.compact.json.gz release-data/model-mf-web.compact.json.gz
-              fi
-              ;;
-            release)
-              gh release download "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" --dir release-data --pattern "*.gz"
-              ;;
-            *)
-              echo "Unsupported source_mode: ${SOURCE_MODE}" >&2
-              exit 1
-              ;;
-          esac
-
-          test -f release-data/graph.compact.json.gz
-          test -f release-data/anonymized-ratings.compact.json.gz
-          python3 scripts/verify_data_release_payload.py release-data
-
-          (
-            cd release-data
-            sha256sum *.gz > SHA256SUMS.txt
-          )
-          node <<'NODE'
-            const fs = require("fs");
-            const path = require("path");
-            const dir = path.resolve("release-data");
-            const files = fs
-              .readdirSync(dir)
-              .filter((name) => name.endsWith(".gz"))
-              .sort();
-            const manifest = {
-              generatedAt: new Date().toISOString(),
-              files: files.map((name) => {
-                const stat = fs.statSync(path.join(dir, name));
-                return { name, bytes: stat.size };
-              }),
-            };
-            fs.writeFileSync(
-              path.join(dir, "data-manifest.json"),
-              JSON.stringify(manifest, null, 2),
-              "utf8",
-            );
-          NODE
-
-      - name: Verify target release contains no model
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ github.event.inputs.tag_name || 'data-latest' }}
-        run: python3 scripts/verify_data_release_target.py "${GITHUB_REPOSITORY}" "${TAG_NAME}"
-
-      - name: Publish/Update GitHub release
-        uses: ncipollo/release-action@v1
-        with:
-          allowUpdates: true
-          artifactErrorsFailBuild: true
-          artifacts: |
-            release-data/*.gz
-            release-data/data-manifest.json
-            release-data/SHA256SUMS.txt
-          draft: false
-          generateReleaseNotes: false
-          name: ${{ github.event.inputs.release_name || 'Data Assets (latest)' }}
-          prerelease: false
-          replacesArtifacts: true
-          tag: ${{ github.event.inputs.tag_name || 'data-latest' }}
+          echo "Legacy data-latest publication is disabled by decision 0028." >&2
+          echo "M8.3 requires an audited aggregate-only immutable bundle." >&2
+          exit 1

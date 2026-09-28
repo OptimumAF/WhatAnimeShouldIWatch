@@ -62,24 +62,19 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         self.assertIn("npm run data:fixture:check", runs)
         self.assertNotIn("data:fetch:release", runs)
 
-    def test_data_release_rejects_staged_models_before_publication(self):
+    def test_legacy_data_release_cannot_mutate_a_release(self):
         workflow = yaml.safe_load((WORKFLOWS / "publish-data-release.yml").read_text(
             encoding="utf-8"
         ))
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
         steps = workflow["jobs"]["publish"]["steps"]
-        stage = next(index for index, step in enumerate(steps)
-                     if step.get("name") == "Stage release payload")
-        publish = next(index for index, step in enumerate(steps)
-                       if step.get("name") == "Publish/Update GitHub release")
-        self.assertLess(stage, publish)
-        self.assertIn("python3 scripts/verify_data_release_payload.py release-data",
-                      steps[stage]["run"])
-        self.assertIn("release-data/model-mf-web.compact.json.gz", steps[stage]["run"])
-        target = next(index for index, step in enumerate(steps)
-                      if step.get("name") == "Verify target release contains no model")
-        self.assertLess(stage, target)
-        self.assertLess(target, publish)
-        self.assertIn("scripts/verify_data_release_target.py", steps[target]["run"])
+        self.assertEqual(len(steps), 3)
+        self.assertEqual(steps[2]["name"], "Refuse legacy data release publication")
+        self.assertIn("decision 0028", steps[2]["run"])
+        self.assertIn("exit 1", steps[2]["run"])
+        self.assertNotIn("gh release", str(workflow))
+        self.assertNotIn("ncipollo/release-action", str(workflow))
+        self.assertNotIn("anonymized-ratings", str(workflow))
 
 
 if __name__ == "__main__":

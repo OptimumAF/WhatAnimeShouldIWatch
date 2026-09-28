@@ -880,3 +880,39 @@
 **Plan revisions and reasons:** M8.2 is checked after its exact-head CI and review. Decision 0027's scope continues to separate local atomic activation from publication and hosted deployment; no acceptance criterion or task ID was lowered.
 
 **Single next task:** M8.3 — make release-data publication auditable using an invented asset inventory and approval-gated workflow checks, without publishing or collecting data.
+
+## Session 2026-09-28 — M8.3 publication boundary
+
+**Branch / starting commit:** `codex/m8-publication-audit` from clean `1aaac778c7d2ada7c2b0b310f0dd7c196e850f9c` (PR #42 final-head CI passing). Read the root `AGENTS.md`, M8.3 plan and latest handoff, decisions 0001/0002/0024/0026, both local and Actions publishers, data-release guards, M8.1 graph contract, and applicable tests. No nested agent instructions or local changes were present.
+
+**Finding and affected files:** The legacy `publish-data-release.yml` and `pipeline/src/publish-release-data.ts` both stage `anonymized-ratings.compact.json.gz`. The workflow can also source from a mutable release; the current v2 graph carries `userIds` and `ua` per-user edges. This violates M8.3's public-history boundary even if a filename allowlist blocks SQLite or salts. Added [decision 0028](decisions/0028-publication-audit-boundary.md), merged its guidance into `AGENTS.md`, and recorded the dependency in the plan. Decision 0009's v2 truncation semantics mean dropping user rows without a new version would misstate pair provenance.
+
+**Checks / blockers:** Protocol and source inspection only at this stage; no publisher or graph code changed yet. No real release, provider data, private history, publication, or deployment was accessed. M8.3 remains unchecked until legacy upload routes fail closed, a truthful aggregate-only graph and audited immutable package exist, synthetic privacy/quality/workflow tests and clean-checkout CI pass, and source/use approval is recorded for any real release. The M8 exit gate stays open.
+
+**Plan revision and reason:** Added the aggregate-only graph contract as an explicit M8.3 dependency rather than treating pseudonymous per-user edges as public-safe; task ID and acceptance criteria are unchanged.
+
+**Single next task:** Disable the two legacy upload routes before release mutation and verify with invented inputs and mocked command/network seams that ratings and model files cannot reach publication.
+
+## Session 2026-09-28 — M8.3 legacy publication containment
+
+**Branch / start:** `codex/m8-publication-audit` after protocol commit `5062526`, based on final-head CI-passing M8.2. The source/use holds and decision 0028 remain in force.
+
+**Implementation and affected files:** Replaced `pipeline/src/publish-release-data.ts` with a fail-closed CLI that cannot stage files or call GitHub. Replaced `.github/workflows/publish-data-release.yml` with a read-only, approval-gated job that explicitly refuses the retired route; it has no source modes, release action, or write permission. Retired `scripts/verify_data_release_payload.py` so its former graph-plus-ratings input cannot be called a verified data-only payload. Updated the corresponding pipeline and workflow tests. The separate target-release metadata guard remains read-only and is not a publication route. No public asset was changed or removed.
+
+**Commands and results:** `npm run data:fixture:check` passed with 7 invented users, 8 anime, and 11 pairs. `npm run typecheck` passed. `npm run test --workspace pipeline` passed 70 tests, including the CLI refusal before a workdir exists with absent or invented ratings/model inputs; `npm test` passed the same pipeline suite plus 105 web unit tests. `python -m unittest discover -s scripts/tests` passed 10 tests, including structural checks that the publication workflow has no `gh release` or release action and only `contents: read`. `npm run build:web` passed. The complete browser CI gate and stacked diff review remain to run.
+
+**Checks not run / blockers:** No real release, provider, private watchlist, publication, deployment, or model promotion was invoked. A positive M8.3 package is not yet possible under the current graph contract without either exposing per-user edges or misrepresenting `truncation.selectedRatings`. The aggregate-only graph contract, auditable immutable package with provenance/rights/changes/compatibility/quality evidence, privacy adversarial cases, reviewed source-use decision, and clean-checkout CI remain. M8.3 and the M8 exit gate stay unchecked.
+
+**Plan revision and reason:** Record containment as a partial M8.3 slice. Replacing the held legacy publisher is a safety change; it does not lower M8.3's acceptance criteria or assert that real publication is approved.
+
+**Single next task:** Define and implement the aggregate-only graph/export contract against invented ratings so the future public package can retain truthful pair statistics without per-user IDs or edges.
+
+## Session 2026-09-28 — M8.3 containment CI review
+
+**Reviewed head:** `codex/m8-publication-audit` implementation commit `8b2f7e18936ce06eb407e2943c85b7ee0b5fe955`, draft [PR #43](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/43) stacked on M8.2. The 10-file stacked diff and `git diff --check codex/m8-atomic-installer...HEAD` passed review.
+
+**Clean-checkout evidence:** [CI run 36417045255](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36417045255) and GitGuardian passed on the exact implementation SHA. It ran clean install, fixture/evaluation checks, typecheck, 70 pipeline tests, 105 web unit tests, 68 ML tests, 10 workflow tests, web build, and 65 mocked browser cases. No publishing job was dispatched; the release workflow remains gated and read-only.
+
+**Unrun / remaining:** Real source rights, privacy-safe graph export, an audited immutable release, hosted deployment, and rollback remain unverified. M8.3 remains unchecked, and the M8 exit gate remains open.
+
+**Single next task:** Implement the separately versioned aggregate-only graph/export contract and its synthetic runtime and manifest checks.
