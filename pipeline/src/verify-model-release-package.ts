@@ -192,7 +192,7 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
       ["promotionId", "tag", "bundleId", "manifestSha256", "auditSha256", "baseTag",
         "baseBundleId", "baseManifestSha256", "sourceRunId", "artifactName", "decisionRef",
         "datasetBridgeSha256", "datasetBridgeReviewRef", "qualityPolicySha256",
-        "servingReportSha256", "owner", "ownerApprovalRef", "trainingApprovalRef",
+        "servingCohortSha256", "servingReportSha256", "owner", "ownerApprovalRef", "trainingApprovalRef",
         "publicationApprovalRef", "deploymentApprovalRef"],
       `modelApprovals.promotions[${index}]`));
     const seen = new Set<string>();
@@ -200,7 +200,7 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
       match(entry.tag, TAG, `modelApprovals.promotions[${index}].tag`);
       for (const key of ["bundleId", "manifestSha256", "auditSha256", "baseBundleId",
         "baseManifestSha256", "datasetBridgeSha256", "qualityPolicySha256",
-        "servingReportSha256"] as const) {
+        "servingCohortSha256", "servingReportSha256"] as const) {
         match(entry[key], DIGEST, `modelApprovals.promotions[${index}].${key}`);
       }
       decisionRef(entry.decisionRef, `modelApprovals.promotions[${index}].decisionRef`);
@@ -224,6 +224,7 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
         entry.datasetBridgeSha256 !== audit.evidence.datasetBridgeSha256 ||
         entry.datasetBridgeReviewRef !== bridge.reviewRef ||
         entry.qualityPolicySha256 !== audit.evidence.qualityPolicySha256 ||
+        entry.servingCohortSha256 !== audit.evidence.servingCohortSha256 ||
         entry.servingReportSha256 !== audit.evidence.servingReportSha256 ||
         entry.owner !== audit.approvals.owner ||
         entry.ownerApprovalRef !== audit.approvals.ownerApprovalRef ||

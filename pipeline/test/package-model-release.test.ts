@@ -13,6 +13,8 @@ import { OUTPUT_FILES, packageDataRelease, PUBLIC_FIELDS,
   type PublicationReviewV1 } from "../src/package-data-release.js";
 import { RELEASE_FILES, releaseSha256, writeReleaseManifest } from "../src/release-manifest.js";
 import { verifyModelReleasePackage } from "../src/verify-model-release-package.js";
+import { generateServingReport, verifyServingReport } from
+  "../../web/bench/model-promotion-serving-evaluation.ts";
 import type { CompactGraphDataV2 } from "../src/types.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -114,21 +116,41 @@ function setup(t: TestContext, synthetic = true) {
     graphDatasetSha256: graph.dataset.sha256, decisionRef: promotionDecision,
     reviewRef: refs.bridge,
   });
-  const qualityPolicySha256 = write(evidenceDir, "quality-policy.json", {
+  const caseFor = (userId: string, labelId: number) => ({
+    userId, observed: [{ animeId: 101, rawScore: 10 }],
+    labels: [{ animeId: labelId, rawScore: 9 },
+      ...(labelId === 103 ? [] : [{ animeId: 103, rawScore: 3 }])],
+    historySeen: [], exclude: [], includeOnly: [],
+    filters: { genre: "", minYear: null, maxYear: null, minScore: null },
+  });
+  const cohort = { format: "model-promotion-cohort-v1", seed: 42, sourceName,
+    datasetSha256: graph.dataset.sha256,
+    trainingUsers: ["fixture-overlap-a", "fixture-overlap-b", "fixture-opposite",
+      "fixture-equal", "fixture-sparse", "fixture-empty", "fixture-duplicate-unknown"],
+    metadata: JSON.parse(fs.readFileSync(path.join(demo, "catalog.json"), "utf8")),
+    baselineValidation: Array.from({ length: 4 }, (_, index) =>
+      caseFor(`invented-promo-validation-${index + 1}`, 102)),
+    finalTest: Array.from({ length: 4 }, (_, index) =>
+      caseFor(`invented-promo-final-${index + 1}`, 106)),
+  };
+  const servingCohortSha256 = write(evidenceDir, "serving-cohort.json", cohort);
+  const policy = {
     format: "model-promotion-quality-policy-v1", decisionRef: promotionDecision,
-    baselineName: "invented genre baseline", topK: 10, minimumEligibleUsers: 4,
-    minimumPositiveLabels: 8, minimumModelCoverage: 0.9,
-    minimumNdcgLift: 0.05, maximumP95LatencyMs: 100,
-  });
-  const servingReportSha256 = write(evidenceDir, "serving-report.json", {
-    format: "model-serving-evaluation-v1", policySha256: qualityPolicySha256,
-    tag: manifest.tag, bundleId: manifest.bundleId,
-    rawContentSha256, graphDatasetSha256: graph.dataset.sha256,
-    selectionSha256, finalReportSha256, topK: 10, eligibleUsers: 4, positiveLabels: 8,
-    baselineName: "invented genre baseline",
-    baseline: { ndcgAtK: 0.25, coverage: 0.8, p95LatencyMs: 40 },
-    model: { ndcgAtK: 0.4, coverage: 1, p95LatencyMs: 80 },
-  });
+    candidateBundleId: manifest.bundleId, cohortSha256: servingCohortSha256,
+    baselineName: "graph", seed: 42, suppliedCount: 1,
+    positiveRawScoreMin: 7, topK: 5, minimumEligibleUsers: 4,
+    minimumPositiveLabels: 4, minimumServingCoverage: 0.5,
+    minimumNdcgLift: 0.05, maximumP95LatencyMs: 1000,
+    latencyWarmups: 1, latencySamples: 7,
+  };
+  const qualityPolicySha256 = write(evidenceDir, "quality-policy.json", policy);
+  const serving = generateServingReport({ graph, model,
+    catalog: JSON.parse(fs.readFileSync(path.join(demo, RELEASE_FILES.catalog), "utf8")),
+    cohort, policy, tag: manifest.tag, bundleId: manifest.bundleId,
+    rawContentSha256, selectionSha256, finalReportSha256,
+    graphSha256: releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.neighborhood))),
+    modelSha256, cohortSha256: servingCohortSha256, policySha256: qualityPolicySha256 });
+  const servingReportSha256 = write(evidenceDir, "serving-report.json", serving);
   const review = {
     format: "model-promotion-review-v2", promotionId: "invented-promotion-1",
     tag: manifest.tag, bundleId: manifest.bundleId,
@@ -138,7 +160,8 @@ function setup(t: TestContext, synthetic = true) {
     sourceName, sourceDecisionRef: decision, datasetBridgeDecisionRef: promotionDecision,
     graphDatasetSha256: graph.dataset.sha256, rawContentSha256, modelSha256,
     numericArchiveSha256, selectionFileSha256, selectionSha256, finalReportSha256,
-    refitRecordSha256, datasetBridgeSha256, qualityPolicySha256, servingReportSha256,
+    refitRecordSha256, datasetBridgeSha256, qualityPolicySha256,
+    servingCohortSha256, servingReportSha256,
     minimumModelCoverage: 0.9,
     owner: "Invented Reviewer", ownerApprovalRef: refs.owner,
     trainingApprovalRef: refs.training, publicationApprovalRef: refs.publication,
@@ -146,11 +169,32 @@ function setup(t: TestContext, synthetic = true) {
   };
   write(evidenceDir, "model-promotion-review.json", review);
   return { root, baseDir, candidateDir, evidenceDir, outputDir,
-    graph, baseManifest, manifest, review, sourceName };
+    graph, baseManifest, manifest, review, sourceName, serving };
 }
 
 function updateReview(fixture: ReturnType<typeof setup>, update: Record<string, unknown>): void {
   write(fixture.evidenceDir, "model-promotion-review.json", { ...fixture.review, ...update });
+}
+
+function servingInputs(fixture: ReturnType<typeof setup>) {
+  const read = (directory: string, name: string) => JSON.parse(fs.readFileSync(
+    path.join(directory, name), "utf8"));
+  return { graph: read(fixture.candidateDir, RELEASE_FILES.neighborhood),
+    model: read(fixture.candidateDir, RELEASE_FILES.model),
+    catalog: read(fixture.candidateDir, RELEASE_FILES.catalog),
+    cohort: read(fixture.evidenceDir, "serving-cohort.json"),
+    policy: read(fixture.evidenceDir, "quality-policy.json"),
+    tag: fixture.manifest.tag, bundleId: fixture.manifest.bundleId,
+    rawContentSha256: fixture.review.rawContentSha256,
+    selectionSha256: fixture.review.selectionSha256,
+    finalReportSha256: fixture.review.finalReportSha256,
+    graphSha256: releaseSha256(fs.readFileSync(path.join(fixture.candidateDir,
+      RELEASE_FILES.neighborhood))),
+    modelSha256: fixture.review.modelSha256,
+    cohortSha256: fixture.review.servingCohortSha256,
+    policySha256: fixture.review.qualityPolicySha256,
+    now: (() => { let tick = 0; return () => ++tick; })(),
+  };
 }
 
 test("invented v3 model package copies only item assets and records private hashes", (t) => {
@@ -161,13 +205,15 @@ test("invented v3 model package copies only item assets and records private hash
   assert.equal(audit.modelCoverage, 1);
   assert.equal(audit.base.bundleId, fixture.baseManifest.bundleId);
   assert.equal(audit.evidence.finalReportSha256, fixture.review.finalReportSha256);
+  assert.equal(audit.evidence.servingCohortSha256, fixture.review.servingCohortSha256);
   for (const name of [RELEASE_FILES.neighborhood, RELEASE_FILES.explorer, RELEASE_FILES.catalog,
     RELEASE_FILES.model, RELEASE_FILES.manifest]) {
     assert.deepEqual(fs.readFileSync(path.join(fixture.candidateDir, name)),
       fs.readFileSync(path.join(fixture.outputDir, name)));
   }
   for (const privateName of ["model.npz", "selection.json", "final-report.json",
-    "refit-record.json", "dataset-bridge.json", "serving-report.json"]) {
+    "refit-record.json", "dataset-bridge.json", "serving-cohort.json",
+    "serving-report.json"]) {
     assert.equal(fs.existsSync(path.join(fixture.outputDir, privateName)), false);
   }
   assert.equal(fs.readdirSync(fixture.root).some((name) => name.startsWith(".model-package-")), false);
@@ -219,7 +265,7 @@ test("private refit, final report, archive, and quality drift refuse packaging",
   const servingReportSha256 = write(lowQuality.evidenceDir, "serving-report.json", serving);
   updateReview(lowQuality, { servingReportSha256 });
   assert.throws(() => packageModelRelease({ ...lowQuality, syntheticFixture: true }),
-    /serving-report.*floors/);
+    /serving-report\.json: browser scorer recomputation or frozen quality gate failed/);
   const badBridge = setup(t);
   const bridgePath = path.join(badBridge.evidenceDir, "dataset-bridge.json");
   const bridge = JSON.parse(fs.readFileSync(bridgePath, "utf8"));
@@ -236,6 +282,78 @@ test("private refit, final report, archive, and quality drift refuse packaging",
     "quality-policy.json", policy) });
   assert.throws(() => packageModelRelease({ ...changedPolicy, syntheticFixture: true }),
     /serving-report.policySha256/);
+});
+
+test("a rehashed, passing-looking authored quality claim fails browser recomputation", (t) => {
+  const fixture = setup(t);
+  const report = { ...fixture.serving,
+    model: { ...fixture.serving.model, ndcgAtK: fixture.serving.model.ndcgAtK + 0.01 } };
+  assert.ok(report.model.ndcgAtK >= report.baseline.ndcgAtK + 0.05);
+  const servingReportSha256 = write(fixture.evidenceDir, "serving-report.json", report);
+  updateReview(fixture, { servingReportSha256 });
+  assert.throws(() => packageModelRelease({ ...fixture, syntheticFixture: true }),
+    /serving-report\.json: browser scorer recomputation or frozen quality gate failed/);
+});
+
+test("a generated report must meet the frozen coverage and fresh latency gates", (t) => {
+  const fixture = setup(t);
+  const inputs = servingInputs(fixture);
+  const policy = { ...inputs.policy, minimumServingCoverage: 0.95 };
+  const qualityPolicySha256 = write(fixture.evidenceDir, "quality-policy.json", policy);
+  const serving = generateServingReport({ ...inputs, policy,
+    policySha256: qualityPolicySha256 });
+  assert.ok(serving.model.coverage < policy.minimumServingCoverage);
+  const servingReportSha256 = write(fixture.evidenceDir, "serving-report.json", serving);
+  updateReview(fixture, { qualityPolicySha256, servingReportSha256 });
+  assert.throws(() => packageModelRelease({ ...fixture, syntheticFixture: true }),
+    /serving-report: does not meet the reviewed quality, coverage, and latency floors/);
+  const realPolicyInputs = servingInputs(fixture);
+  let tick = 0;
+  assert.throws(() => verifyServingReport({ ...realPolicyInputs,
+    now: () => (tick += policy.maximumP95LatencyMs + 1) }, serving),
+  /latency: fresh serving-path measurement exceeds the policy ceiling/);
+});
+
+test("serving evaluation isolates fit, baseline-selection, and final-test users", (t) => {
+  const fixture = setup(t);
+  const inputs = servingInputs(fixture);
+  const cohort = structuredClone(inputs.cohort);
+  cohort.finalTest[0].userId = cohort.baselineValidation[0].userId;
+  assert.throws(() => generateServingReport({ ...inputs, cohort }),
+    /cohort\.finalTest\[0\]\.userId: overlaps fit or another evaluation group/);
+  cohort.finalTest[0].userId = cohort.trainingUsers[0];
+  assert.throws(() => generateServingReport({ ...inputs, cohort }),
+    /cohort\.finalTest\[0\]\.userId: overlaps fit or another evaluation group/);
+  const noValidationPositives = structuredClone(inputs.cohort);
+  for (const user of noValidationPositives.baselineValidation) user.labels[0].rawScore = 3;
+  assert.throws(() => generateServingReport({ ...inputs, cohort: noValidationPositives }),
+    /baselineValidation: has too few eligible users or positive labels/);
+});
+
+test("serving report depends on held-out labels but not their input row order", (t) => {
+  const fixture = setup(t);
+  const inputs = servingInputs(fixture);
+  const base = generateServingReport(inputs);
+  const reordered = structuredClone(inputs.cohort);
+  for (const user of reordered.finalTest) user.labels.reverse();
+  const reorderedReport = generateServingReport({ ...inputs, cohort: reordered });
+  assert.deepEqual(reorderedReport.model, base.model);
+  assert.deepEqual(reorderedReport.baseline, base.baseline);
+  const changed = structuredClone(inputs.cohort);
+  for (const user of changed.finalTest) user.labels[0].animeId = 102;
+  const changedReport = generateServingReport({ ...inputs, cohort: changed });
+  assert.notEqual(changedReport.baseline.ndcgAtK, base.baseline.ndcgAtK);
+  const observedOrder = structuredClone(inputs.cohort);
+  for (const user of observedOrder.finalTest) {
+    user.observed.push({ animeId: 104, rawScore: 8 });
+  }
+  const prefixA = generateServingReport({ ...inputs, cohort: observedOrder });
+  for (const user of observedOrder.finalTest) user.observed.reverse();
+  const prefixB = generateServingReport({ ...inputs, cohort: observedOrder });
+  assert.deepEqual(prefixA.baseline, prefixB.baseline);
+  assert.deepEqual(prefixA.model, prefixB.model);
+  assert.equal(releaseSha256(fs.readFileSync(path.join(fixture.candidateDir,
+    RELEASE_FILES.model))), fixture.review.modelSha256);
 });
 
 test("failed staging leaves no output and the empty committed registry rejects synthetic packages", (t) => {
@@ -313,6 +431,7 @@ test("an invented reviewed package requires exact model, provider, and data-base
     datasetBridgeSha256: audit.evidence.datasetBridgeSha256,
     datasetBridgeReviewRef: refs.bridge,
     qualityPolicySha256: audit.evidence.qualityPolicySha256,
+    servingCohortSha256: audit.evidence.servingCohortSha256,
     servingReportSha256: audit.evidence.servingReportSha256,
     owner: audit.approvals.owner, ownerApprovalRef: refs.owner,
     trainingApprovalRef: refs.training, publicationApprovalRef: refs.publication,
