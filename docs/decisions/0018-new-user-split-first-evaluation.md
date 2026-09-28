@@ -1,6 +1,6 @@
 # 0018 — Split-first browser new-user evaluation
 
-**Status:** Protocol fixed on 2026-09-27 before inspecting the new fixture's validation metrics. M5.5 is checked only after the fixture, parity, isolation, and full synthetic/mock gates pass.
+**Status:** Protocol fixed on 2026-09-27 before inspecting the new fixture's validation metrics. The fixture, isolation, full synthetic/mock gate, and [fresh PR CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36380301799) passed; M5.5 is checked in the living plan.
 
 ## Separate people and labels
 
