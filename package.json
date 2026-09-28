@@ -31,6 +31,7 @@
     "eval:new-user:fixture": "npm run new-user:split:fixture:check && npm run eval:new-user:fixture --workspace web",
     "eval:hybrid:split:select": "npm run new-user:split:fixture:check && node --import tsx web/bench/split-first-hybrid-selection.ts select",
     "eval:baselines:fixture": "npm run new-user:split:fixture:check && node --import tsx web/bench/split-first-baseline-ablation.ts",
+    "eval:metrics:fixture": "npm run new-user:split:fixture:check && node --import tsx web/bench/split-first-metric-report.ts",
     "eval:hybrid-blend:fixture": "npm run data:fixture:check && npm run eval:hybrid-blend:fixture --workspace web",
     "eval:franchise-diversity:fixture": "npm run data:fixture:check && npm run eval:franchise-diversity:fixture --workspace web",
     "build:web": "npm run build --workspace web",

@@ -59,7 +59,8 @@ export type MethodCase = {
 };
 export type BaselineCase = {
   userNumber: number; suppliedCount: number; universeIds: number[];
-  universeSha256: string; eligiblePositiveIds: number[]; methods: MethodCase[];
+  universeSha256: string; eligiblePositiveIds: number[]; likedSourceIds: number[];
+  methods: MethodCase[];
 };
 
 function fail(field: string): never { throw new Error(`Invalid baseline ablation ${field}.`); }
@@ -376,7 +377,8 @@ export function evaluateBaselineCases(bundle: BaselineBundle, fixture: EvalFixtu
           hitAt10: metrics.hitAtK, recallAt10: metrics.recallAtK, ndcgAt10: metrics.ndcgAtK };
       });
       cases.push({ userNumber: userNumber + 1, suppliedCount, universeIds,
-        universeSha256: digest(JSON.stringify(universeIds)), eligiblePositiveIds, methods });
+        universeSha256: digest(JSON.stringify(universeIds)), eligiblePositiveIds,
+        likedSourceIds: liked.map((item) => item.id), methods });
     }
   }
   return cases;

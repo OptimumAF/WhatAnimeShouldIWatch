@@ -1,6 +1,6 @@
 # 0022 — Broader metrics for the restricted synthetic comparison
 
-**Status:** Protocol fixed on 2026-09-28 before running M5.7 metric or latency reports. M5.7 and the M5 exit gate remain open.
+**Status:** Protocol fixed on 2026-09-28 before running M5.7 metric or latency reports. Seven focused metric cases and the full local synthetic/mock gate passed; fresh PR CI and final review are pending. M5.7 and the M5 exit gate remain open.
 
 ## Inputs and unit of analysis
 
@@ -20,3 +20,5 @@ The unit for ranking averages is one measurable **user-prefix case**, weighted e
 - For latency, exclude Python fit/export, JSON/fixture I/O, and report serialization. Time one full 16-case ten-method `evaluateBaselineCases` call with a monotonic clock, after 5 warmups, for 31 repeated runs. Report median and nearest-rank p95 in milliseconds plus Node/runtime/CPU context. This is a local evaluator diagnostic, not browser request latency or a deployment SLO.
 
 Use hand-computed rank, coverage, genre-distance, count-bias, slice, and percentile examples in focused tests; reject duplicate/impossible displayed ranks and stale specifications. Show all ten methods without selecting a winner. Run the complete synthetic/mock gate and fresh PR CI before checking M5.7. M5.8 cross-language parity and M5.9 promotion remain separate.
+
+**Initial invented evidence:** The 4-user, 16-case validation report has 32 eligible positive labels. Of these, 20 have zero positive-pair evidence, 22 are in the low-or-missing (0–1) support slice, and 10 have support at least 2. Eligible sets contain 11–21 of the 24 train-present titles. Every method reaches Recall@20 of 1 on this small fixture; top-20 coverage is also 24/24 for every method, so these saturated measures do not distinguish methods. Top-ten coverage ranges from 21/24 to 24/24. Equal-case NDCG@20 ranges from 0.4089 to 0.5498. The authored genres alternate between Adventure and Mystery while sharing Invented, limiting what genre distance can say. The reported bootstrap intervals and local evaluator milliseconds describe this fixture and machine only.

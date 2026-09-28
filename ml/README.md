@@ -61,6 +61,14 @@ npm run eval:baselines:fixture
 
 The exporter derives popularity, support-shrunk adjusted cosine, pair edges, and four two-epoch MF variants from the validated training rows only. The browser evaluator gives missing method signal a neutral zero, applies the same candidate policy and final selector, and reports each method's NDCG@10 and signal coverage. Filling sparse lists makes this a common-candidate comparison; graph/content/hybrid rows are not a replay of the browser's usual candidate generation or fallback. The fixed metadata-score baseline uses authored fixture metadata; v1 pair-preference graph weights are not item similarity. The reserved final cohort stays unscored, and these authored validation numbers do not select a product model.
 
+[Decision 0022](../docs/decisions/0022-synthetic-metric-report.md) adds the broader descriptive report on those exact cases:
+
+```bash
+npm run eval:metrics:fixture
+```
+
+It reports Recall/NDCG@10/20, coverage of the restricted eligible validation catalog, fixed-genre Jaccard distance, train-only rating-count bias, 1/3/5/10-prefix and positive-pair support slices, user-cluster bootstrap intervals, and local 16-case evaluator timing. The tiny authored validation cohort and top-20 saturation do not establish production quality, uncertainty, or latency. Python fit/export and fixture I/O are excluded from the timing. The separate final cohort remains unscored.
+
 ## Install
 
 ```bash
