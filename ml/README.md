@@ -85,6 +85,8 @@ npm run ml:refit:fixture
 
 The standalone `ml/split_first_refit.py` command requires the original frozen selection, its completed one-use test report and digest, and an unused private output directory. It validates the raw split, reproduces the selected train-only model, then fits the unchanged configuration on train plus validation. The output is a numeric-only NPZ, sidecar, compact web JSON, and a refit record with hashes/counts but no test metric. The command accepts the checked-in invented fixture paths by default; other paths require the recorded training source/use approval. A refit is not a release or promotion.
 
+[Decision 0025](../docs/decisions/0025-synthetic-experiment-adapters.md) predeclares a separate invented LightGCN/content comparison. With PyTorch installed, run `npm run eval:experiments:fixture`. The Python exporter fits LightGCN only from the validated train partition and builds content vectors only from `fixtures/synthetic-experiment-content-metadata.json`. The TypeScript report adds those two candidates to the same centrally eligible 16 new-user validation cases as the ten M5.6 baselines. It uses the browser's signed preference scorer, neutral missing signal, and final selector. The report contains no reserved-final result; its authored metrics are an engineering check and cannot promote a model. The legacy full-graph LightGCN and Jikan content commands below remain outside M5 selection.
+
 ## Install
 
 ```bash

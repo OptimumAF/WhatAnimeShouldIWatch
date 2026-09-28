@@ -28,6 +28,7 @@ export const METHODS = [
   "shrunk-positive-pair-mf", "hybrid-default-0.5",
 ] as const;
 export type Method = typeof METHODS[number];
+export type ExperimentalMethod = "lightgcn-bpr" | "content-multihot";
 type BaseBundle = ReturnType<typeof parseEvalBundle>;
 type CompactModel = ReturnType<typeof parseCompactModel>;
 type Variant = { modelSha256: string; model: CompactModel };
@@ -53,7 +54,8 @@ export type BaselineSpec = {
   objective: "mean-displayed-ndcg-at-10"; methods: string[];
 };
 export type MethodCase = {
-  method: Method; eligibleCandidateIds: number[]; ranked: { animeId: number; score: number }[];
+  method: Method | ExperimentalMethod; eligibleCandidateIds: number[];
+  ranked: { animeId: number; score: number }[];
   displayedIds: number[]; signalCandidates: number; selectorRemoved: number;
   hitAt10: number; recallAt10: number; ndcgAt10: number;
 };
@@ -260,7 +262,9 @@ function sourceMap(items: readonly RecommendationResult[]): Map<number, Recommen
 }
 
 export function evaluateBaselineCases(bundle: BaselineBundle, fixture: EvalFixture,
-                                      spec: BaselineSpec): BaselineCase[] {
+                                      spec: BaselineSpec,
+                                      extraModels: readonly { method: ExperimentalMethod;
+                                        model: CompactModel }[] = []): BaselineCase[] {
   if (fixture.topK !== spec.topK || fixture.positiveRawScoreMin !== spec.positiveRawScoreMin) {
     fail("cohort protocol");
   }
@@ -284,6 +288,11 @@ export function evaluateBaselineCases(bundle: BaselineBundle, fixture: EvalFixtu
     unit: modelIndex(bundle.models.unitPositive.model),
     shrunk: modelIndex(bundle.models.shrunkPositive.model),
   };
+  if (new Set(extraModels.map((item) => item.method)).size !== extraModels.length) {
+    fail("duplicate experimental method");
+  }
+  const experimentalIndexes = extraModels.map((item) =>
+    ({ method: item.method, index: modelIndex(item.model) }));
   const sim = new Map<string, number>();
   for (const pair of bundle.similarityPairs) {
     sim.set(`${pair.leftAnimeId}:${pair.rightAnimeId}`, pair.weight);
@@ -341,19 +350,17 @@ export function evaluateBaselineCases(bundle: BaselineBundle, fixture: EvalFixtu
       const weightedComplete = asResults(universeIds, sourceMap(modelScores.weighted), index);
       const watchedIds = new Set([...ordered.slice(0, suppliedCount).map((item) => item.animeId),
         ...user.historySeen]);
-      const methods: MethodCase[] = METHODS.map((method) => {
-        const raw = method === "hybrid-default-0.5" ? [...graph, ...modelScores.weighted]
-          : rawSources[method];
+      const scoredCase = (method: Method | ExperimentalMethod,
+                          raw: RecommendationResult[], mode: "graph" | "model" | "fallback" |
+                          "hybrid"): MethodCase => {
         const signalCandidates = new Set(raw.filter((item) =>
           eligible.has(item.anime.animeId) && item.score !== 0).map((item) => item.anime.animeId)).size;
         let ranked: RecommendationResult[];
-        if (method === "hybrid-default-0.5") {
+        if (mode === "hybrid") {
           ranked = rankEligibleCandidates("hybrid", { graph: graphComplete,
             model: weightedComplete }, policy, metadata, spec.hybridModelWeight).recommendations;
         } else {
           const complete = asResults(universeIds, sourceMap(raw), index);
-          const mode = method === "v1-positive-pair-graph" ? "graph"
-            : method.endsWith("-mf") ? "model" : "fallback";
           ranked = rankEligibleCandidates(mode, { [mode]: complete },
             policy, metadata).recommendations;
         }
@@ -375,7 +382,20 @@ export function evaluateBaselineCases(bundle: BaselineBundle, fixture: EvalFixtu
           displayedIds: displayed.map((item) => item.anime.animeId),
           signalCandidates, selectorRemoved: ranked.length - displayed.length,
           hitAt10: metrics.hitAtK, recallAt10: metrics.recallAtK, ndcgAt10: metrics.ndcgAtK };
+      };
+      const methods: MethodCase[] = METHODS.map((method) => {
+        if (method === "hybrid-default-0.5") {
+          return scoredCase(method, [...graph, ...modelScores.weighted], "hybrid");
+        }
+        const mode = method === "v1-positive-pair-graph" ? "graph"
+          : method.endsWith("-mf") ? "model" : "fallback";
+        return scoredCase(method, rawSources[method], mode);
       });
+      for (const experimental of experimentalIndexes) {
+        const raw = buildModelRecommendationsForPreferences(preferences, index,
+          experimental.index);
+        methods.push(scoredCase(experimental.method, raw, "model"));
+      }
       cases.push({ userNumber: userNumber + 1, suppliedCount, universeIds,
         universeSha256: digest(JSON.stringify(universeIds)), eligiblePositiveIds,
         likedSourceIds: liked.map((item) => item.id), methods });
