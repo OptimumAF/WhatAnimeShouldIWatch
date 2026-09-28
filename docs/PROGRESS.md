@@ -1032,3 +1032,13 @@
 **Unrun / blockers:** Clean-checkout CI and final stacked-diff review remain. No real package or release, provider response, private Crunchyroll history, production dataset, repository setting, credential, or workflow dispatch was used. Source/use permission and per-bundle owner approvals are unresolved; immutable releases were last observed disabled and the administration-read secret is not provisioned. The installer still permits only fixture bootstrap for an empty store. M8.3 and the M8 exit gate stay unchecked.
 
 **Single next task:** Review and CI-check this first-bundle stack, then inspect M8.4's model promotion path using invented artifacts while the real publication holds remain.
+
+## Session 2026-09-28 — M8.3 first-bundle CI review
+
+**Reviewed implementation:** Draft [PR #47](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/47), `codex/m8-reviewed-bootstrap` implementation commit `72bf19b53af320e179955b92c19802ab3b4f47ac`, stacked on PR #46. Reviewed the manifest mode separation, strict publication and bootstrap approvals, exact predecessor registry link, synthetic prior rejection, conditional workflow prior download, Python dispatch syntax, invented adverse tests, and decision/plan guidance. `git diff --check codex/m8-publication-workflow...HEAD` and `actionlint` passed.
+
+**Clean-checkout evidence:** [CI run 36431146204](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36431146204) and GitGuardian passed on the exact implementation commit. CI completed synthetic fixture/evaluation checks, typecheck, pipeline and web unit tests, Python ML and workflow tests, web build, and mocked browser smoke tests.
+
+**Unrun / remaining:** No real candidate or hosted release, owner approval, provider response, private watchlist, publication dispatch, deployment, or setting change was used. `docs/approvals/provider-data.json` and `publication-bundles.json` remain empty; immutable releases were last observed disabled, and the administration-read secret is absent. The local installer still accepts only fixture bootstrap. M8.3 and M8 remain unchecked; a first real release and M8.5 installation need separate owner/source-use decisions and verification.
+
+**Single next task:** Inspect M8.4's current model promotion preflight and held retrain workflow, then design the smallest synthetic, approval-gated promotion and deployment trigger slice without touching production data or releases.
