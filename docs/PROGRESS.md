@@ -950,3 +950,13 @@
 **Unrun / remaining:** No public asset, provider history, real release, deployment, or model promotion was read or changed. The v3 projection has no per-user rows but its aggregate pairs and dataset identity still need reviewed redistribution and privacy decisions. M8.3 and the M8 exit gate remain open.
 
 **Single next task:** Build and test a synthetic publication package with a strict asset inventory and an audit record bound to the v3 manifest, then separately wire a reviewed immutable release route.
+
+## Session 2026-09-28 — M8.3 publication package protocol
+
+**Branch / start:** `codex/m8-publication-package` from clean `fcd274d061e0ccedad1bae029bddbaa648a8ca83`, draft PR #44's documentation head. Read the latest M8.3 handoff and current decision 0028/0029, manifest and installer contracts, empty provider approval record, and disabled publication route. PR #44's exact implementation CI passed on `845cf93`; final documentation-head CI was still running when this protocol was written.
+
+**Design and affected files:** Added [decision 0030](decisions/0030-publication-package-audit.md), merged its guidance into `AGENTS.md`, and logged the package dependency in the plan. The proposed packager strictly admits a verified v3 data-only source, copies only four named files, computes an audit from actual bytes plus a separately bound review, and emits a five-file package marked unpublishable for invented fixtures. A real review also needs a separately validated publication approval and prior bundle; the committed approval list is empty.
+
+**Checks / blockers:** Protocol only so far. No packager code, release mutation, provider call, or private data was used. M8.3 and the M8 exit gate remain unchecked.
+
+**Single next task:** Implement the local package validator/writer and invented adverse-input tests, then run the synthetic gate and review the diff.
