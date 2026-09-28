@@ -29,6 +29,7 @@ jobs:
           npm run data:fixture:check
           npm run split:fixture:check
           npm run ml:train:split:fixture
+          npm run ml:refit:fixture
           npm run eval:new-user:fixture
           npm run eval:baselines:fixture
           npm run eval:metrics:fixture

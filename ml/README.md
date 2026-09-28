@@ -77,6 +77,14 @@ npm run eval:model-parity:fixture
 
 The check compares pre-policy and eligible candidate IDs/scores, top-K, and exclusions at a pinned absolute tolerance. It is an implementation check, not a ranking-quality estimate. New NPZ files store numeric arrays only, with user IDs/titles, dimensions, and the NPZ SHA-256 in a sibling `model.metadata.json`. The web export carries the validated source digest. Default Python readers refuse pickle and object arrays; an older `model.npz` without this sidecar needs a newly authorized safe training/export path. Existing compact and legacy web JSON readers remain valid.
 
+[Decision 0024](../docs/decisions/0024-experiment-refit-promotion-boundary.md) keeps final fitting separate from validation selection and test metrics. Run the disposable invented warm-user check with:
+
+```bash
+npm run ml:refit:fixture
+```
+
+The standalone `ml/split_first_refit.py` command requires the original frozen selection, its completed one-use test report and digest, and an unused private output directory. It validates the raw split, reproduces the selected train-only model, then fits the unchanged configuration on train plus validation. The output is a numeric-only NPZ, sidecar, compact web JSON, and a refit record with hashes/counts but no test metric. The command accepts the checked-in invented fixture paths by default; other paths require the recorded training source/use approval. A refit is not a release or promotion.
+
 ## Install
 
 ```bash
