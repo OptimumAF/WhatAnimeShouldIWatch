@@ -740,3 +740,15 @@
 **Plan revisions and reasons:** Decision 0023 defines the safe sidecar and exact parity comparisons before results. The existing web JSON readers remain compatible; the older Python object-array model exchange deliberately fails closed instead of silently enabling pickle. The web export now records only the model basename, keeping local temporary paths out of parity output. No M5.8 acceptance criterion was lowered. Check M5.8 after fresh CI and final review; M5.9 and the M5 exit gate remain open.
 
 **Single next task:** M5.9 — separate LightGCN/content experimentation, approved release training, and compatible model promotion with rollback, without running a provider-dependent job or promoting this invented model.
+
+## Session 2026-09-28 — M5.9 experiment, refit, and promotion boundary
+
+**Branch / starting commit:** `codex/m5-promotion-boundary` from clean `fcbb28a`, the final CI-passing M5.8 head in draft PR #37. Read root `AGENTS.md`, the living plan/latest handoff, decisions 0001/0002, and the actual selection, LightGCN, content, retrain, data-release, fetch, and sync paths. The prior goal turn completed M5.8; this turn advances the next unchecked task.
+
+**Evidence and protocol before refit:** [Decision 0024](decisions/0024-experiment-refit-promotion-boundary.md) records that the old LightGCN evaluator uses a full-snapshot graph and the content builder fetches Jikan, so neither supplies M5 release evidence. The retrain workflow uploads artifacts but does not promote a compatible approved model; optional model paths in the data publisher lack a distinct promotion record. Start with an invented frozen-selection train-plus-validation refit whose provenance stays separate from test metrics. Later slices must add experimental adapters and a fail-closed promotion/rollback gate. M5.9 and the M5 exit gate remain unchecked.
+
+**Checks / status:** No new refit, provider request, LightGCN/content experiment, release publication, workflow dispatch, or deployment has run. The committed provider approval manifest is empty.
+
+**Files in this protocol slice:** New decision 0024; appended existing `AGENTS.md`, the living plan, and this progress record.
+
+**Single next task:** Implement and verify the private synthetic train-plus-validation refit from a frozen selection and linked one-use final report; keep test metrics out of the refit artifact.
