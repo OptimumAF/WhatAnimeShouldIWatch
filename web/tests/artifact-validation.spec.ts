@@ -84,6 +84,23 @@ test("a model with the wrong embedding width is named while eligible graph resul
   await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop", "星の航路"]);
 });
 
+test("a present malformed source model digest is named and graph fallback remains eligible", async ({ page }) => {
+  const model = demoArtifact("model-mf-web.compact.json");
+  model.sourceModelSha256 = "not-a-sha";
+  await page.route("**/demo-data/model-mf-web.compact.json", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify(model),
+  }));
+  await page.goto("/");
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText(
+    "synthetic demo model: sourceModelSha256 must be a lowercase SHA-256 digest",
+  );
+  await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
+});
+
 test("normal mode still loads valid unversioned legacy graph and model artifacts", async ({ page }) => {
   const graph = legacyGraph();
   const model = legacyModel();

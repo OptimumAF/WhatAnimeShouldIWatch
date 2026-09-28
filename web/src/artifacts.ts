@@ -144,6 +144,7 @@ export interface ModelRecommendationAnime {
 
 export interface ModelRecommendationData {
   generatedAt: string;
+  sourceModelSha256?: string;
   globalMean: number;
   factors: number;
   anime: ModelRecommendationAnime[];
@@ -152,6 +153,7 @@ export interface ModelRecommendationData {
 export interface CompactModelRecommendationData {
   format: "model-mf-compact-v1";
   generatedAt: string;
+  sourceModelSha256?: string;
   globalMean: number;
   factors: number;
   animeIds: number[];
@@ -555,6 +557,11 @@ function checkModelBase(model: Record<string, unknown>, label: string): number {
   finite(model.globalMean, label, "globalMean");
   const factors = safeInteger(model.factors, label, "factors", 1);
   if (Object.hasOwn(model, "sourceModel")) text(model.sourceModel, label, "sourceModel");
+  if (Object.hasOwn(model, "sourceModelSha256") &&
+      (typeof model.sourceModelSha256 !== "string" ||
+       !/^[a-f0-9]{64}$/.test(model.sourceModelSha256))) {
+    invalid(label, "sourceModelSha256", "must be a lowercase SHA-256 digest");
+  }
   return factors;
 }
 

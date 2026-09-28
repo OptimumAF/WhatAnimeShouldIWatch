@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Set, Tuple
 
 import numpy as np
+from model_artifact import load_numeric_model
 
 
 @dataclass
@@ -84,34 +85,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_model(path: Path) -> Model:
-    if not path.exists():
-        raise FileNotFoundError(f"Model file not found: {path}")
-    raw = np.load(path, allow_pickle=True)
-
-    p = raw["P"].astype(np.float32)
-    q = raw["Q"].astype(np.float32)
-    bu = raw["bu"].astype(np.float32)
-    bi = raw["bi"].astype(np.float32)
-    global_mean = float(raw["global_mean"][0])
-    user_ids = [str(x) for x in raw["user_ids"].tolist()]
-    anime_ids = [int(x) for x in raw["anime_ids"].tolist()]
-    anime_titles = [str(x) for x in raw["anime_titles"].tolist()]
-
-    train_user_items = []
-    for arr in raw["train_user_items"]:
-        arr = np.asarray(arr, dtype=np.int32)
-        train_user_items.append(set(int(x) for x in arr.tolist()))
-
+    loaded = load_numeric_model(path)
     return Model(
-        p=p,
-        q=q,
-        bu=bu,
-        bi=bi,
-        global_mean=global_mean,
-        user_ids=user_ids,
-        anime_ids=anime_ids,
-        anime_titles=anime_titles,
-        train_user_items=train_user_items,
+        p=loaded.p, q=loaded.q, bu=loaded.bu, bi=loaded.bi,
+        global_mean=loaded.global_mean, user_ids=loaded.user_ids,
+        anime_ids=loaded.anime_ids, anime_titles=loaded.anime_titles,
+        train_user_items=loaded.train_user_items,
     )
 
 

@@ -32,6 +32,7 @@ jobs:
           npm run eval:new-user:fixture
           npm run eval:baselines:fixture
           npm run eval:metrics:fixture
+          npm run eval:model-parity:fixture
       - name: Typecheck
         run: npm run typecheck
       - name: Pipeline tests

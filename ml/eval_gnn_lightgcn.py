@@ -11,6 +11,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 import numpy as np
 
 import train_graph_mf as trainer
+from model_artifact import save_numeric_model
 
 try:
     import torch
@@ -352,22 +353,17 @@ def save_outputs(
     q = embeddings[n_users:].numpy().astype(np.float32)
     zeros_u = np.zeros((p.shape[0],), dtype=np.float32)
     zeros_i = np.zeros((q.shape[0],), dtype=np.float32)
-    train_user_items_obj = np.array(
-        [np.array(sorted(items), dtype=np.int32) for items in split.train_user_items],
-        dtype=object,
-    )
-
-    np.savez_compressed(
+    sidecar_path = save_numeric_model(
         model_path,
-        P=p,
-        Q=q,
+        p=p,
+        q=q,
         bu=zeros_u,
         bi=zeros_i,
-        global_mean=np.array([0.0], dtype=np.float32),
-        user_ids=np.array(dataset.user_ids, dtype=object),
-        anime_ids=np.array(dataset.anime_ids, dtype=np.int64),
-        anime_titles=np.array(dataset.anime_titles, dtype=object),
-        train_user_items=train_user_items_obj,
+        global_mean=0.0,
+        user_ids=dataset.user_ids,
+        anime_ids=dataset.anime_ids,
+        anime_titles=dataset.anime_titles,
+        train_user_items=split.train_user_items,
     )
 
     report = {
@@ -412,6 +408,7 @@ def save_outputs(
     }
     metrics_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Saved LightGCN embeddings -> {model_path}")
+    print(f"Saved LightGCN metadata -> {sidecar_path}")
     print(f"Saved LightGCN report -> {metrics_path}")
 
 

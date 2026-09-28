@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
+from model_artifact import load_numeric_model
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,34 +43,24 @@ def quantize(value: float, digits: int) -> float:
     return round(float(value), digits)
 
 
-def main() -> None:
-    args = parse_args()
-    model_path = Path(args.model)
-    out_path = Path(args.out)
-
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model file not found: {model_path}")
-
-    raw = np.load(model_path, allow_pickle=True)
-    q = raw["Q"].astype(np.float32)
-    bi = raw["bi"].astype(np.float32)
-    anime_ids = raw["anime_ids"].astype(np.int64)
-    anime_titles = raw["anime_titles"].tolist()
-    global_mean = float(raw["global_mean"][0]) if "global_mean" in raw else 0.0
-
-    if q.shape[0] != bi.shape[0] or q.shape[0] != anime_ids.shape[0]:
-        raise ValueError(
-            "Model arrays are inconsistent: expected Q, bi, anime_ids to have equal length."
-        )
-
-    round_digits = max(0, args.round_digits)
+def build_payload(model_path: Path, output_format: str = "compact",
+                  round_digits: int = 5) -> dict[str, object]:
+    if output_format not in {"compact", "legacy"}:
+        raise ValueError("Web model format must be compact or legacy.")
+    loaded = load_numeric_model(model_path)
+    q = loaded.q
+    bi = loaded.bi
+    anime_ids = loaded.anime_ids
+    anime_titles = loaded.anime_titles
+    global_mean = loaded.global_mean
+    round_digits = max(0, round_digits)
     generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    if args.format == "legacy":
+    if output_format == "legacy":
         anime = []
         for idx in range(q.shape[0]):
             anime.append(
                 {
-                    "animeId": int(anime_ids[idx]),
+                    "animeId": anime_ids[idx],
                     "title": str(anime_titles[idx]),
                     "bias": quantize(float(bi[idx]), round_digits),
                     "embedding": [
@@ -80,7 +70,8 @@ def main() -> None:
             )
         payload = {
             "generatedAt": generated_at,
-            "sourceModel": str(model_path),
+            "sourceModel": model_path.name,
+            "sourceModelSha256": loaded.archive_sha256,
             "globalMean": quantize(global_mean, round_digits),
             "factors": int(q.shape[1]),
             "animeCount": int(q.shape[0]),
@@ -90,20 +81,35 @@ def main() -> None:
         payload = {
             "format": "model-mf-compact-v1",
             "generatedAt": generated_at,
-            "sourceModel": str(model_path),
+            "sourceModel": model_path.name,
+            "sourceModelSha256": loaded.archive_sha256,
             "globalMean": quantize(global_mean, round_digits),
             "factors": int(q.shape[1]),
             "animeCount": int(q.shape[0]),
-            "animeIds": [int(x) for x in anime_ids.tolist()],
+            "animeIds": anime_ids,
             "titles": [str(x) for x in anime_titles],
             "biases": [quantize(float(x), round_digits) for x in bi.tolist()],
             "embeddings": [
                 [quantize(float(v), round_digits) for v in row.tolist()] for row in q
             ],
         }
+    return payload
 
+
+def export_model(model_path: Path, out_path: Path, output_format: str = "compact",
+                 round_digits: int = 5) -> dict[str, object]:
+    payload = build_payload(model_path, output_format, round_digits)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    out_path.write_text(json.dumps(payload, separators=(",", ":"), allow_nan=False),
+                        encoding="utf-8")
+    return payload
+
+
+def main() -> None:
+    args = parse_args()
+    model_path = Path(args.model)
+    out_path = Path(args.out)
+    export_model(model_path, out_path, args.format, args.round_digits)
 
     size_mb = out_path.stat().st_size / (1024 * 1024)
     print(f"Exported web model -> {out_path} ({size_mb:.2f} MB)")

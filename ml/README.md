@@ -69,6 +69,14 @@ npm run eval:metrics:fixture
 
 It reports Recall/NDCG@10/20, coverage of the restricted eligible validation catalog, fixed-genre Jaccard distance, train-only rating-count bias, 1/3/5/10-prefix and positive-pair support slices, user-cluster bootstrap intervals, and local 16-case evaluator timing. The tiny authored validation cohort and top-20 saturation do not establish production quality, uncertainty, or latency. Python fit/export and fixture I/O are excluded from the timing. The separate final cohort remains unscored.
 
+[Decision 0023](../docs/decisions/0023-model-artifact-parity-and-safety.md) checks Python/browser item scoring and safe artifact exchange on an invented eight-title model:
+
+```bash
+npm run eval:model-parity:fixture
+```
+
+The check compares pre-policy and eligible candidate IDs/scores, top-K, and exclusions at a pinned absolute tolerance. It is an implementation check, not a ranking-quality estimate. New NPZ files store numeric arrays only, with user IDs/titles, dimensions, and the NPZ SHA-256 in a sibling `model.metadata.json`. The web export carries the validated source digest. Default Python readers refuse pickle and object arrays; an older `model.npz` without this sidecar needs a newly authorized safe training/export path. Existing compact and legacy web JSON readers remain valid.
+
 ## Install
 
 ```bash
@@ -96,6 +104,7 @@ python ml/train_graph_mf.py \
 Artifacts are written to `models/graph_mf/`:
 
 - `model.npz`
+- `model.metadata.json` (required numeric-array metadata and archive digest)
 - `metrics.json`
 
 ## Hyperparameter Search (Optuna)
@@ -130,7 +139,7 @@ Each run:
 1. Installs Node + Python dependencies
 2. Trains graph MF into `models/graph_mf_ci/`
 3. Exports web model JSON
-4. Uploads artifacts (`model.npz`, `metrics.json`, exported model JSON)
+4. Uploads artifacts (`model.npz`, `model.metadata.json`, `metrics.json`, exported model JSON)
 
 ## Export Model For Website
 
@@ -210,4 +219,5 @@ npm run ml:gnn:eval -- --epochs 12 --layers 3
 Outputs (default `models/gnn_lightgcn/`):
 
 - `model-lightgcn.npz`
+- `model-lightgcn.metadata.json`
 - `metrics-lightgcn.json`

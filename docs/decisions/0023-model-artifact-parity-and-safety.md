@@ -1,6 +1,6 @@
 # 0023 — Safe model exchange and Python/browser parity
 
-**Status:** M5.8 protocol fixed on 2026-09-28 before its synthetic export or parity run. M5.8 and the M5 exit gate remain open.
+**Status:** M5.8 protocol fixed on 2026-09-28 before its synthetic export or parity run. Eight focused Python and three focused parity TypeScript cases, the local synthetic/mock gate, and the browser artifact checks passed; fresh PR CI and final review are pending. M5.8 and the M5 exit gate remain open.
 
 ## Restricted parity contract
 
@@ -15,3 +15,5 @@ New MF and LightGCN NPZ archives contain only finite numeric arrays: `P`, `Q`, `
 The browser's existing compact and legacy JSON readers stay valid. A new optional `sourceModelSha256` field in exported JSON identifies the validated source archive; the runtime parser checks its syntax and still checks dimensions and finite values. The browser cannot verify source bytes it does not receive, so this field alone is not an integrity guarantee. The restricted parity harness checks that the digest matches the temporary NPZ. Fail present malformed web artifacts with their file/field named.
 
 Run hand-computed and tampered-artifact tests, the full synthetic/mock gate, and fresh PR CI before checking M5.8. The legacy full-graph training and LightGCN quality metrics remain invalid M5 evidence. The synthetic parity check establishes implementation agreement and artifact handling, not ranking quality or permission to train/release provider data.
+
+**Initial invented evidence:** The file-backed eight-title export has two factors and a numeric-only NPZ. All three cases agree on raw and eligible candidate IDs/scores, source and policy exclusions, and top-K; the maximum Python/browser score delta is 0 within the declared `1e-5` absolute tolerance. Tests reject missing sidecars, changed archive bytes, metadata dimension/length errors, duplicate metadata keys, object arrays even when rehashed, nonfinite values, duplicate IDs, invalid train indices, malformed browser digests, and score/candidate/exclusion drift. No default reader uses pickle. The sidecar SHA-256 binds the local NPZ pair, while the web digest is only a source identifier.

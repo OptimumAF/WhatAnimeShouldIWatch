@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
 import numpy as np
+from model_artifact import save_numeric_model
 
 
 @dataclass
@@ -635,22 +636,17 @@ def save_model(
     model_path = out_dir / "model.npz"
     metrics_path = out_dir / "metrics.json"
 
-    train_user_items_obj = np.array(
-        [np.array(sorted(items), dtype=np.int32) for items in split.train_user_items],
-        dtype=object,
-    )
-
-    np.savez_compressed(
+    sidecar_path = save_numeric_model(
         model_path,
-        P=np.asarray(model["P"], dtype=np.float32),
-        Q=np.asarray(model["Q"], dtype=np.float32),
+        p=np.asarray(model["P"], dtype=np.float32),
+        q=np.asarray(model["Q"], dtype=np.float32),
         bu=np.asarray(model["bu"], dtype=np.float32),
         bi=np.asarray(model["bi"], dtype=np.float32),
-        global_mean=np.array([float(model["global_mean"])], dtype=np.float32),
-        user_ids=np.array(dataset.user_ids, dtype=object),
-        anime_ids=np.array(dataset.anime_ids, dtype=np.int64),
-        anime_titles=np.array(dataset.anime_titles, dtype=object),
-        train_user_items=train_user_items_obj,
+        global_mean=float(model["global_mean"]),
+        user_ids=dataset.user_ids,
+        anime_ids=dataset.anime_ids,
+        anime_titles=dataset.anime_titles,
+        train_user_items=split.train_user_items,
     )
 
     report = {
@@ -691,6 +687,7 @@ def save_model(
     }
     metrics_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"Saved model -> {model_path}")
+    print(f"Saved metadata -> {sidecar_path}")
     print(f"Saved report -> {metrics_path}")
 
 
