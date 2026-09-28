@@ -4,6 +4,7 @@ import { datasetIdentity, recommendationGraphId, recommendationMetadata } from "
 import { buildExplorerGraph } from "./core/explorer-graph.js";
 import { aggregateAnimePairs } from "./core/pair-aggregation.js";
 import { getRepoRoot } from "./paths.js";
+import { buildReleaseManifest, releaseSha256 } from "./release-manifest.js";
 import type { CompactGraphDataV2 } from "./types.js";
 
 interface FixtureAnime {
@@ -146,6 +147,7 @@ const catalog = {
 const model = {
   format: "model-mf-compact-v1",
   generatedAt,
+  datasetSha256: graph.dataset.sha256,
   globalMean: 0,
   factors: 2,
   animeIds: input.anime.map((item) => item.animeId),
@@ -153,27 +155,43 @@ const model = {
   biases: input.anime.map((item) => item.bias),
   embeddings: input.anime.map((item) => item.embedding),
 };
+const identityCatalog = {
+  format: "anime-catalog-v1",
+  datasetSha256: graph.dataset.sha256,
+  anime: [...anime].sort(([left], [right]) => left - right),
+};
 
 const outputs = new Map<string, unknown>([
   ["graph.compact.json", graph],
   ["graph-explorer.compact.json", explorerGraph],
   ["catalog.json", catalog],
+  ["catalog.identity.json", identityCatalog],
   ["model-mf-web.compact.json", model],
 ]);
+const encoded = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+const releaseFiles = {
+  neighborhood: encoded(graph), explorer: encoded(explorerGraph),
+  catalog: encoded(identityCatalog), model: encoded(model),
+};
+const fixtureTag = `data-vsynthetic-${releaseSha256(JSON.stringify(
+  Object.values(releaseFiles).map(releaseSha256),
+))}`;
+outputs.set("release-manifest.json", buildReleaseManifest(releaseFiles,
+  { tag: fixtureTag, fixtureGenesis: true }));
 const check = process.argv.includes("--check");
 if (!check) fs.mkdirSync(outputDir, { recursive: true });
 for (const [filename, value] of outputs) {
   const filenamePath = path.join(outputDir, filename);
-  const expected = `${JSON.stringify(value, null, 2)}\n`;
+  const expected = encoded(value);
   if (check) {
-    if (!fs.existsSync(filenamePath) || fs.readFileSync(filenamePath, "utf8") !== expected) {
+    if (!fs.existsSync(filenamePath) || !fs.readFileSync(filenamePath).equals(expected)) {
       throw new Error(`Synthetic artifact missing or stale: ${filenamePath}. Run npm run data:fixture.`);
     }
   } else {
     fs.writeFileSync(filenamePath, expected);
   }
 }
-process.stdout.write(`${check ? "Verified" : "Generated"} synthetic graph/catalog/model: ` +
+process.stdout.write(`${check ? "Verified" : "Generated"} synthetic graph/catalog/model/manifest: ` +
   `${users.length} users, ${anime.length} anime, ${aa.length} pairs, ` +
   `${duplicateRatings} duplicate and ${unknownRatings} unknown input ratings handled.\n`);
 

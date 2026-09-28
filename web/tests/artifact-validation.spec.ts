@@ -101,6 +101,23 @@ test("a present malformed source model digest is named and graph fallback remain
   await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
 });
 
+test("a present malformed model dataset digest names the field and keeps graph fallback", async ({ page }) => {
+  const model = demoArtifact("model-mf-web.compact.json");
+  model.datasetSha256 = "not-a-sha";
+  await page.route("**/demo-data/model-mf-web.compact.json", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify(model),
+  }));
+  await page.goto("/");
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText(
+    "synthetic demo model: datasetSha256 must be a lowercase SHA-256 digest",
+  );
+  await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
+});
+
 test("normal mode still loads valid unversioned legacy graph and model artifacts", async ({ page }) => {
   const graph = legacyGraph();
   const model = legacyModel();

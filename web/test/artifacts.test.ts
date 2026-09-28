@@ -8,6 +8,8 @@ import {
   parseDemoCatalog,
   parseLegacyGraph,
   parseLegacyModel,
+  parseReleaseIdentityCatalog,
+  parseReleaseManifest,
 } from "../src/artifacts.ts";
 
 const fixtureRoot = new URL("../public/demo-data/", import.meta.url);
@@ -208,6 +210,42 @@ test("optional numeric source digest is validated in compact and legacy models",
   legacy.sourceModelSha256 = "invalid";
   assert.throws(() => parseLegacyModel(legacy, "legacy model"),
     /sourceModelSha256.*lowercase SHA-256/);
+});
+
+test("release identity and manifest contracts reject stale fields and mutable tags", () => {
+  const catalog = fixture("catalog.identity.json");
+  const manifest = fixture("release-manifest.json");
+  assert.equal(parseReleaseIdentityCatalog(catalog, "catalog.identity.json"), catalog);
+  assert.equal(parseReleaseManifest(manifest, "release-manifest.json"), manifest);
+  const wrongOrder = copy(catalog);
+  wrongOrder.anime.reverse();
+  assert.throws(() => parseReleaseIdentityCatalog(wrongOrder, "catalog.identity.json"),
+    /anime\[1\]\[0\].*sorted/);
+  const wrongDigest = copy(catalog);
+  wrongDigest.datasetSha256 = "invalid";
+  assert.throws(() => parseReleaseIdentityCatalog(wrongDigest, "catalog.identity.json"),
+    /datasetSha256.*SHA-256/);
+  const mutable = copy(manifest);
+  mutable.tag = "data-latest";
+  assert.throws(() => parseReleaseManifest(mutable, "release-manifest.json"), /tag.*versioned/);
+  const staleLink = copy(manifest);
+  staleLink.explorer.sourceGraphId = "a".repeat(64);
+  assert.throws(() => parseReleaseManifest(staleLink, "release-manifest.json"),
+    /explorer.sourceGraphId.*neighborhood.graphId/);
+  const staleModel = copy(manifest);
+  staleModel.model.datasetSha256 = "a".repeat(64);
+  assert.throws(() => parseReleaseManifest(staleModel, "release-manifest.json"),
+    /model.datasetSha256.*dataset.sha256/);
+  const unknown = copy(manifest);
+  unknown.extra = true;
+  assert.throws(() => parseReleaseManifest(unknown, "release-manifest.json"),
+    /root.extra.*unsupported/);
+  const malformedModel = fixture("model-mf-web.compact.json");
+  malformedModel.datasetSha256 = "bad";
+  assert.throws(() => parseCompactModel(malformedModel, "model-mf-web.compact.json"),
+    /datasetSha256.*SHA-256/);
+  delete malformedModel.datasetSha256;
+  assert.equal(parseCompactModel(malformedModel, "older compact model"), malformedModel);
 });
 
 test("validation errors identify the artifact and field without echoing content", () => {
