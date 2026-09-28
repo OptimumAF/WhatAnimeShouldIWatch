@@ -950,3 +950,37 @@
 **Unrun / remaining:** No public asset, provider history, real release, deployment, or model promotion was read or changed. The v3 projection has no per-user rows but its aggregate pairs and dataset identity still need reviewed redistribution and privacy decisions. M8.3 and the M8 exit gate remain open.
 
 **Single next task:** Build and test a synthetic publication package with a strict asset inventory and an audit record bound to the v3 manifest, then separately wire a reviewed immutable release route.
+
+## Session 2026-09-28 — M8.3 publication package protocol
+
+**Branch / start:** `codex/m8-publication-package` from clean `fcd274d061e0ccedad1bae029bddbaa648a8ca83`, draft PR #44's documentation head. Read the latest M8.3 handoff and current decision 0028/0029, manifest and installer contracts, empty provider approval record, and disabled publication route. PR #44's exact implementation CI passed on `845cf93`; final documentation-head CI was still running when this protocol was written.
+
+**Design and affected files:** Added [decision 0030](decisions/0030-publication-package-audit.md), merged its guidance into `AGENTS.md`, and logged the package dependency in the plan. The proposed packager strictly admits a verified v3 data-only source, copies only four named files, computes an audit from actual bytes plus a separately bound review, and emits a five-file package marked unpublishable for invented fixtures. A real review also needs a separately validated publication approval and prior bundle; the committed approval list is empty.
+
+**Checks / blockers:** Protocol only so far. No packager code, release mutation, provider call, or private data was used. M8.3 and the M8 exit gate remain unchecked.
+
+**Single next task:** Implement the local package validator/writer and invented adverse-input tests, then run the synthetic gate and review the diff.
+
+## Session 2026-09-28 — M8.3 local publication package
+
+**Branch / starting commit:** `codex/m8-publication-package` from protocol commit `b0a1ed2`, stacked on PR #44. PR #44's final documentation-head [CI run 36423728215](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36423728215) and GitGuardian passed before this implementation. No local changes were present at the protocol commit.
+
+**Implementation and affected files:** Added `pipeline/src/package-data-release.ts` and `pipeline/test/package-data-release.test.ts`, and reconciled [decision 0030](decisions/0030-publication-package-audit.md) and the plan. The local function accepts only four verified v3 data files, checks plain size limits before the manifest verifier reads candidate or prior, rechecks copied hashes, binds a strict source/use/change/quality review to the exact manifest and named prior, computes an audit from the graph and bytes, and activates a five-file output only at an unused path. Invented genesis packages are explicitly `publishable: false`; a mocked reviewed case checks the separately supplied approval fields. It has no GitHub mutation or provider request.
+
+**Commands / results:** `npm run data:fixture:check` passed; `npm run typecheck` passed; `npm test` passed with 80 pipeline and 107 web unit tests; `npm run test:python` passed 68; `python -m unittest discover -s scripts/tests` passed 10; `npm run build:web` passed; `npm run test:e2e` passed 66 mocked browser cases. `node --import tsx --test pipeline/test/package-data-release.test.ts` passed seven invented package cases after final changes. The new tests cover extra ratings/SQLite/salt/factor/model/hidden entries, nested and linked entries, changed or oversized graph bytes, malformed v3 user edges, stale review and prior, missing quality evidence, approval mismatch, exact hash/count audit, destination refusal, and staging retry. Clean-checkout CI and final stacked-diff review remain.
+
+**Checks not run / blockers:** No real release, provider history, private Crunchyroll watchlist, publication, deployment, or model promotion was accessed. Review text and a supplied approval record are auditable inputs, not proof of permission or quality. The committed provider-use approval remains empty, and the upload workflow remains disabled. M8.3 and the M8 exit gate remain unchecked until an immutable approval-gated workflow, approved real source/use decision, quality evidence, hosted checks, and clean-checkout gate pass.
+
+**Plan revision and reason:** Kept M8.3's publication criteria unchanged. The package is a local, synthetic-tested component of the larger publication task; the audit now explicitly records manifest and graph formats and model absence, and output is required outside its source directories.
+
+**Single next task:** Wire an immutable, approval-gated publication workflow to the audited data-only package, then verify only invented inputs and static workflow safety before considering any real source/use approval.
+
+## Session 2026-09-28 — M8.3 package CI review
+
+**Reviewed implementation:** Draft [PR #45](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/45), `codex/m8-publication-package` commit `76e2515`, stacked on PR #44. Reviewed the exact source and output inventories, v3 and prior verifier calls, review binding, computed audit, size/hash checks, failure cleanup, seven adversarial tests, and the six-file stacked diff. `git diff --check codex/m8-aggregate-graph...HEAD` passed.
+
+**Clean-checkout evidence:** [CI run 36425492935](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36425492935) and GitGuardian passed on the exact implementation SHA. The job ran synthetic fixture and evaluation checks, typecheck, 80 pipeline and 107 web unit tests, 68 ML tests, 10 workflow tests, web build, and 66 mocked browser cases.
+
+**Unrun / remaining:** No real candidate, release upload, provider data, private watchlist, deployment, or model promotion was read or changed. The packager has no upload caller; the approval manifest is empty. M8.3 remains unchecked because source/use and quality approval and an immutable publication workflow are unverified. M8's exit gate remains open.
+
+**Single next task:** Add and statically test an immutable, approval-gated publication workflow that consumes only the audited five-file package, while preserving the real publication hold.
