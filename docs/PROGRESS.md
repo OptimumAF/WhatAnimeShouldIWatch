@@ -1210,3 +1210,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI and stacked-diff review remain. The positive nonfixture case injects invented approvals and an authored final cohort; it proves gate consistency, not policy predeclaration, permitted source lineage, or production quality. The committed provider/source-use and owner registries remain empty. Immutable model publication, exact-tag Pages deployment, hosted checks, and rollback practice remain absent. M8.4 and M8 stay unchecked.
 
 **Single next task:** Freeze and independently verify the private serving cohort and quality policy before model scoring or final-label access, using invented inputs first and retaining all real approval holds.
+
+## Session 2026-09-28 — M8.4 bound refit package CI review
+
+**PR / exact implementation head:** Committed `e30367f22f8e630684fb7fb23c7c2996e20d373f`, corrected stale Python CLI-output assertions in `fb0898dbb073bd640564ad9146dca328315632db`, and opened draft [PR #55](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/55) against PR #54's branch. The 14-file stacked diff passed `git diff --check`; the checkout is clean. [Fixture CI run 36458489086](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36458489086) passed on `fb0898d`, as did GitGuardian. CI used a clean Node/Python install, generated and verified fixtures, typechecked, ran pipeline/Python/workflow tests, built web, and passed mocked browser smoke. The first CI run's two stale string assertions and their correction are recorded above.
+
+**Checks not run / blockers:** This documentation-only handoff commit still needs final-head CI. No real source, private Crunchyroll watchlist, production model, release, deployment, or hosted check was used. Policy/cohort predeclaration, permitted source/use and ranking-quality evidence, exact owner approval, immutable model publication, exact-tag deployment, hosted verification, and rollback remain absent. M8.4 and M8 stay unchecked.
+
+**Single next task:** Freeze the private serving cohort and quality policy before model scoring or final-label access, then verify that timing and identity independently with invented inputs; preserve every real approval hold.
