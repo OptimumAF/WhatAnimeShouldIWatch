@@ -1,6 +1,6 @@
 # 0024 — Experiment, final refit, and model promotion boundaries
 
-**Status:** M5.9 protocol fixed on 2026-09-28 before a final-refit run. The private invented MF refit, local synthetic/mock gate, and [PR #38 fixture CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36398190484) pass. A following local slice makes the old publishers data-only and adds a read-only invented promotion preflight; its fresh PR CI is pending. LightGCN/content adapters, an authorized model-release route, and practiced remote rollback are still absent, so M5.9 and the M5 exit gate remain open. Provider source/use holds remain active.
+**Status:** M5.9 protocol fixed on 2026-09-28 before a final-refit run. The private invented MF refit and [PR #38 fixture CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36398190484) pass. The old publishers are data-only, and the read-only invented promotion preflight passed local and [PR #39 fixture CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36400869797). LightGCN/content adapters, an authorized model-release route, and practiced remote rollback are still absent, so M5.9 and the M5 exit gate remain open. Provider source/use holds remain active.
 
 ## Separate stages
 
@@ -14,7 +14,7 @@ For the invented MF fixture, require fixed train and validation membership, test
 
 Retrain uploads and experimental outputs are not release candidates. Model promotion needs a predeclared quality/latency/coverage gate against the best simple baseline on a permitted, leakage-checked serving path; a frozen final report; a separately identified final refit; exact model/graph/catalog mapping and dataset compatibility; reviewed source/use and owner approval for publication and deployment; and an immutable previous compatible bundle for rollback. A web model's self-declared source digest cannot prove these requirements. The current `data-latest` release and full-snapshot retrain workflow do not satisfy them.
 
-Later M5.9 work must prevent the existing optional-model publication routes from bypassing a promotion record, then test approval, compatibility, corruption, and rollback cases on invented artifacts. M8.1–M8.4 and M8.7 still own the full immutable release manifest, atomic installation, deployment trigger, and practiced recovery. No job dispatch, release update, Pages deployment, or promotion is authorized by this decision.
+M5.9 requires the existing optional-model publication routes to stop bypassing promotion, plus invented approval, compatibility, corruption, and rollback checks. The data-only guards and structural preflight below address that local part. M8.1–M8.4 and M8.7 still own the full immutable release manifest, atomic installation, deployment trigger, and practiced recovery. No job dispatch, release update, Pages deployment, or promotion is authorized by this decision.
 
 ## Data-only containment and promotion preflight
 
