@@ -662,3 +662,15 @@
 **Plan revisions and reasons:** Added decision 0020 and a local M5.4 evidence/change-log entry while preserving M5.4's earlier partial history and M5.5 completion. The committed candidate list now pins newline-normalized validation/final fixture hashes for cross-platform stale-input refusal; that implementation clarification did not change the declared weights, objective, tie rule, or measured result. After fresh CI and a final audit of the supported MF-grid, Optuna, and browser hybrid selectors, checked M5.4 without changing its acceptance criteria. Legacy MF/LightGCN full-graph metrics remain invalid M5 evidence, and the authored blend weight was not promoted. Merged current hybrid guidance into existing `AGENTS.md`.
 
 **Single next task:** M5.6 - predeclare and run fair baseline and ablation comparisons on identical synthetic splits and eligible candidate sets, including an audit of absolute-value graph regularization.
+
+## Session 2026-09-27 — M5.6 fair synthetic baseline protocol
+
+**Branch / starting commit:** `codex/m5-baselines-ablations` from clean `c5ea544`, the final CI-passing head of stacked draft PR #34. Read root `AGENTS.md`, the living plan and latest handoff, decisions 0001, 0005, and 0018–0020, and the browser new-user, ranking, item-similarity, and split-first MF paths. No personal Crunchyroll history or live provider data was read.
+
+**Protocol fixed before comparison metrics:** [Decision 0021](decisions/0021-fair-synthetic-baselines.md) and `fixtures/synthetic-baseline-ablation-spec.json` pin newline-normalized hashes of the invented fit snapshot, manifest, fixed metadata, validation cohort, and MF candidate grid. Ten methods must rank the same centrally eligible title IDs per user/prefix case: train count, fixed metadata score, support-shrunk adjusted cosine, genre overlap, v1 positive pair graph, plain MF, three positive-only graph MF variants, and runtime-default 0.5 hybrid. Same seed and MF hyperparameters isolate graph regularization; missing method signal receives neutral zero. Mean displayed NDCG@10 is descriptive, with no winner promotion. The reserved final cohort remains unread.
+
+**Checks / status:** The starting worktree was clean on `c5ea544`. No M5.6 comparison was run before this protocol. M5.6 and the M5 exit gate remain unchecked; decision 0001 still holds provider-derived evaluation and public artifacts.
+
+**Files in this protocol slice:** New decision 0021 and baseline specification; appended the living plan, existing `AGENTS.md`, and this progress record.
+
+**Single next task:** Implement the train-only baseline/ablation export and common-candidate browser evaluation, then verify isolation, graph sign behavior, and the full synthetic/mock gate before checking M5.6.
