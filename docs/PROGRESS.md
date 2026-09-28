@@ -688,3 +688,15 @@
 **Plan revisions and reasons:** Kept the original M5.6 acceptance criteria and checked the task after the local and fresh PR gates passed. Decision 0021 clarifies that neutral completion creates a fair common-candidate comparison whose sparse method rows differ from current browser candidate generation; existing M5.5/M5.4 serving-path reports remain separate. Added M5.6 local evidence and change-log entries without rewriting the pre-metric protocol or promoting the authored leading method.
 
 **Single next task:** M5.7 - predeclare and report broader ranking metrics, sparse/low-support slices, coverage/diversity/popularity bias, uncertainty, and latency on the same restricted evaluation path, with hand-computed metric edge cases.
+
+## Session 2026-09-28 — M5.7 broader synthetic metric protocol
+
+**Branch / starting commit:** `codex/m5-metric-reporting` from clean `f06df5a`, the final CI-passing head of stacked draft PR #35. Read root `AGENTS.md`, the living plan/latest handoff, decision 0021, and the existing new-user and ten-method evaluation paths. No personal Crunchyroll history or live provider data was read.
+
+**Protocol fixed before M5.7 reports:** [Decision 0022](decisions/0022-synthetic-metric-report.md) and `fixtures/synthetic-metric-report-spec.json` pin the M5.6 specification hash, both cutoffs, prefix/support partitions, user-cluster bootstrap seed/replicates, and local evaluator timing repetitions. The new measures reuse the same restricted invented validation cohort and centrally eligible common candidate sets. Zero-positive cases are counted but excluded from ranking averages; the reserved final cohort stays unparsed.
+
+**Checks / status:** The starting checkout was clean on `f06df5a`. No M5.7 metric or latency report was run before this protocol. M5.7 and the M5 exit gate remain unchecked; decision 0001 still holds provider-derived evaluation and public artifacts.
+
+**Files in this protocol slice:** New decision 0022 and metric specification; appended the living plan, existing `AGENTS.md`, and this progress record.
+
+**Single next task:** Implement the pinned M5.7 metrics and hand-computed edge tests, then run the full synthetic/mock gate and review fresh CI.
