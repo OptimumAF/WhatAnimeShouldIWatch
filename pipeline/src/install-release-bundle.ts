@@ -37,6 +37,20 @@ export interface InstallReleaseResult {
   changed: boolean;
 }
 
+export interface ReleaseIdentity {
+  tag: string;
+  bundleId: string;
+  manifestSha256: string;
+}
+
+export interface RestorePreviousReleaseOptions {
+  storeDir: string;
+  expectedCurrent: ReleaseIdentity;
+  expectedPrevious: ReleaseIdentity;
+  /** Test seam for a failure after verification but before pointer activation. */
+  beforeActivate?: () => void;
+}
+
 function fail(field: string, reason: string): never {
   throw new Error(`Release install ${field}: ${reason}`);
 }
@@ -98,7 +112,28 @@ function verifyStored(directory: string, priorDirectory: string | undefined,
     assertDirectoryNotLink(priorDirectory, priorDirectory);
     assertStoredLimits(priorDirectory);
   }
-  return verifyReleaseBundle(directory, priorDirectory, fixtureBootstrap);
+  const manifest = verifyReleaseBundle(directory, priorDirectory, fixtureBootstrap);
+  assertExactStoredFiles(directory, manifest);
+  return manifest;
+}
+
+function assertExactStoredFiles(directory: string, manifest: ReleaseManifestV1): void {
+  const expected = [RELEASE_FILES.manifest, RELEASE_FILES.neighborhood,
+    RELEASE_FILES.explorer, RELEASE_FILES.catalog,
+    ...(manifest.model ? [RELEASE_FILES.model] : [])].sort();
+  if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(expected)) {
+    fail("bundle", "stored directory contains missing or undeclared files");
+  }
+  for (const name of expected) {
+    if (fs.lstatSync(path.join(directory, name)).isSymbolicLink()) {
+      fail(name, "stored file must not be a symbolic link");
+    }
+  }
+}
+
+function sameIdentity(left: ReleaseIdentity, right: ReleaseIdentity): boolean {
+  return left.tag === right.tag && left.bundleId === right.bundleId &&
+    left.manifestSha256 === right.manifestSha256;
 }
 
 function readActive(storeDir: string, fixtureBootstrap: boolean):
@@ -388,5 +423,71 @@ export async function installReleaseBundle(options: InstallReleaseOptions): Prom
       fs.closeSync(lock);
       fs.unlinkSync(lockPath);
     }
+  }
+}
+
+/** Recheck a local active bundle and its exact predecessor, then atomically point back to it. */
+export function restorePreviousRelease(options: RestorePreviousReleaseOptions): InstallReleaseResult {
+  const storeDir = path.resolve(options.storeDir);
+  if (!fs.existsSync(storeDir)) fail("storeDir", "an existing local store is required");
+  assertDirectoryNotLink(storeDir, "storeDir");
+  const expectedCurrent = parseActiveReleaseBundle({ format: "active-release-bundle-v1",
+    ...options.expectedCurrent }, "expectedCurrent");
+  const expectedPrevious = parseActiveReleaseBundle({ format: "active-release-bundle-v1",
+    ...options.expectedPrevious }, "expectedPrevious");
+  const lockPath = path.join(storeDir, ".install.lock");
+  let lock: number;
+  try {
+    lock = fs.openSync(lockPath, "wx");
+  } catch {
+    fail("lock", "another installation or stale lock is present");
+  }
+  try {
+    const pointerPath = path.join(storeDir, "active.json");
+    const originalPointerBytes = readSmall(pointerPath, RELEASE_DOWNLOAD_LIMITS.activePointerBytes,
+      "active.json");
+    const active = readActive(storeDir, true);
+    if (!active || !sameIdentity(active.pointer, expectedCurrent)) {
+      fail("expectedCurrent", "differs from the verified active release");
+    }
+    const previous = active.manifest.lastKnownGood;
+    if (!previous || !sameIdentity(previous, expectedPrevious)) {
+      fail("expectedPrevious", "must exactly identify the active release's predecessor");
+    }
+    const previousDirectory = bundlePath(storeDir, expectedPrevious.bundleId);
+    const previousBytes = readSmall(path.join(previousDirectory, RELEASE_FILES.manifest),
+      RELEASE_DOWNLOAD_LIMITS.manifestBytes, RELEASE_FILES.manifest);
+    if (releaseSha256(previousBytes) !== expectedPrevious.manifestSha256) {
+      fail("expectedPrevious.manifestSha256", "differs from stored predecessor bytes");
+    }
+    const draft = parseReleaseManifest(json(previousBytes, RELEASE_FILES.manifest),
+      RELEASE_FILES.manifest);
+    if (draft.lastKnownGood &&
+        !fs.existsSync(bundlePath(storeDir, draft.lastKnownGood.bundleId))) {
+      fail("expectedPrevious.lastKnownGood", "its retained predecessor is missing");
+    }
+    const olderDirectory = draft.lastKnownGood
+      ? bundlePath(storeDir, draft.lastKnownGood.bundleId) : undefined;
+    const restored = verifyStored(previousDirectory, olderDirectory, !olderDirectory);
+    if (olderDirectory) {
+      const olderManifest = parseReleaseManifest(json(readSmall(path.join(olderDirectory,
+        RELEASE_FILES.manifest), RELEASE_DOWNLOAD_LIMITS.manifestBytes, RELEASE_FILES.manifest),
+      RELEASE_FILES.manifest), RELEASE_FILES.manifest);
+      assertExactStoredFiles(olderDirectory, olderManifest);
+    }
+    if (restored.tag !== expectedPrevious.tag || restored.bundleId !== expectedPrevious.bundleId) {
+      fail("expectedPrevious", "differs from the verified predecessor manifest");
+    }
+    options.beforeActivate?.();
+    if (!fs.readFileSync(pointerPath).equals(originalPointerBytes)) {
+      fail("active.json", "changed during recovery verification");
+    }
+    readActive(storeDir, true);
+    verifyStored(previousDirectory, olderDirectory, !olderDirectory);
+    activate(storeDir, expectedPrevious);
+    return { manifest: restored, bundleDir: previousDirectory, changed: true };
+  } finally {
+    fs.closeSync(lock);
+    fs.unlinkSync(lockPath);
   }
 }
