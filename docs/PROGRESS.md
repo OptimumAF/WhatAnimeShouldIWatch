@@ -868,3 +868,15 @@
 **Plan revisions and reasons:** Decision 0027 separates atomic local activation from later approved deployment wiring. The browser fails closed on a present bad pointer to avoid silently combining a corrupt new release with old assets. The adapter accepts only an explicit versioned tag and does not forward the metadata token to asset URLs. No task ID or acceptance criterion was lowered.
 
 **Single next task:** Rerun the full synthetic gate on the final diff, review it, and verify PR CI before checking M8.2.
+
+## Session 2026-09-28 — M8.2 acceptance and next publication task
+
+**Branch / reviewed implementation:** `codex/m8-atomic-installer`, commit `1100d58adb7e60996e68171aa427fd1289ace2a2`, draft [PR #42](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/42) stacked on the clean M8.1 branch at `2c18397`. Reviewed the full 13-file stacked change, including decision 0027, installer/transport, browser loader, tests, ignore rules, and records; `git diff --check codex/m8-release-manifest...HEAD` passed.
+
+**Acceptance evidence:** [Fixture and fast checks run 36413680033](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36413680033) and GitGuardian passed on the exact implementation SHA. Clean checkout and install, synthetic fixture and evaluation commands, typecheck, 70 pipeline tests, 105 web unit tests, 68 ML tests, 12 approval/workflow tests, web build, and 65 mocked browser tests passed. The installer cases prove bounded plain/gzip downloads, exact hashes and full schema/count validation, unchanged prior pointer after partial/corrupt/missing/oversized files, and reuse of a verified directory after simulated pre-activation failure. Browser cases prove one pinned directory, malformed and stale file failure, and no legacy read after a present pointer. M8.2's stated atomic local installation acceptance criteria pass; the plan checkbox is updated in this record change.
+
+**Checks not run / remaining blockers:** No real GitHub release, provider request, private history, production dataset/model, data publication, Pages deployment, model promotion, or remote rollback was used. The old `data-latest` workflow and its file-by-file sync remain approval-gated; M8.5 must connect any approved deployment to this verified route. The synthetic route's size caps are provisional until measured against approved release payloads. Source/use decisions and owner approvals in decisions 0001/0002/0024 remain unresolved. The M8 exit gate remains open.
+
+**Plan revisions and reasons:** M8.2 is checked after its exact-head CI and review. Decision 0027's scope continues to separate local atomic activation from publication and hosted deployment; no acceptance criterion or task ID was lowered.
+
+**Single next task:** M8.3 — make release-data publication auditable using an invented asset inventory and approval-gated workflow checks, without publishing or collecting data.
