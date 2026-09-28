@@ -892,3 +892,17 @@
 **Plan revision and reason:** Added the aggregate-only graph contract as an explicit M8.3 dependency rather than treating pseudonymous per-user edges as public-safe; task ID and acceptance criteria are unchanged.
 
 **Single next task:** Disable the two legacy upload routes before release mutation and verify with invented inputs and mocked command/network seams that ratings and model files cannot reach publication.
+
+## Session 2026-09-28 — M8.3 legacy publication containment
+
+**Branch / start:** `codex/m8-publication-audit` after protocol commit `5062526`, based on final-head CI-passing M8.2. The source/use holds and decision 0028 remain in force.
+
+**Implementation and affected files:** Replaced `pipeline/src/publish-release-data.ts` with a fail-closed CLI that cannot stage files or call GitHub. Replaced `.github/workflows/publish-data-release.yml` with a read-only, approval-gated job that explicitly refuses the retired route; it has no source modes, release action, or write permission. Retired `scripts/verify_data_release_payload.py` so its former graph-plus-ratings input cannot be called a verified data-only payload. Updated the corresponding pipeline and workflow tests. The separate target-release metadata guard remains read-only and is not a publication route. No public asset was changed or removed.
+
+**Commands and results:** `npm run data:fixture:check` passed with 7 invented users, 8 anime, and 11 pairs. `npm run typecheck` passed. `npm run test --workspace pipeline` passed 70 tests, including the CLI refusal before a workdir exists with absent or invented ratings/model inputs; `npm test` passed the same pipeline suite plus 105 web unit tests. `python -m unittest discover -s scripts/tests` passed 10 tests, including structural checks that the publication workflow has no `gh release` or release action and only `contents: read`. `npm run build:web` passed. The complete browser CI gate and stacked diff review remain to run.
+
+**Checks not run / blockers:** No real release, provider, private watchlist, publication, deployment, or model promotion was invoked. A positive M8.3 package is not yet possible under the current graph contract without either exposing per-user edges or misrepresenting `truncation.selectedRatings`. The aggregate-only graph contract, auditable immutable package with provenance/rights/changes/compatibility/quality evidence, privacy adversarial cases, reviewed source-use decision, and clean-checkout CI remain. M8.3 and the M8 exit gate stay unchecked.
+
+**Plan revision and reason:** Record containment as a partial M8.3 slice. Replacing the held legacy publisher is a safety change; it does not lower M8.3's acceptance criteria or assert that real publication is approved.
+
+**Single next task:** Define and implement the aggregate-only graph/export contract against invented ratings so the future public package can retain truthful pair statistics without per-user IDs or edges.
