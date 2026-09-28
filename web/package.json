@@ -10,6 +10,7 @@
     "test:unit": "node --import tsx --test test/*.test.ts",
     "test:e2e": "playwright test",
     "eval:user-vector:fixture": "tsx bench/user-vector-eval.ts",
+    "eval:new-user:fixture": "tsx bench/split-first-new-user-eval.ts",
     "eval:hybrid-blend:fixture": "tsx bench/hybrid-blend-eval.ts",
     "eval:franchise-diversity:fixture": "tsx bench/franchise-diversity-eval.ts",
     "build": "tsc && vite build",

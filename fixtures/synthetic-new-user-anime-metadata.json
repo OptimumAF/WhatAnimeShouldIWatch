@@ -1,0 +1,31 @@
+{
+  "format": "anime-metadata-snapshot-v1",
+  "source": "invented-new-user-fixture",
+  "snapshotAt": "2026-01-01T00:00:00Z",
+  "anime": [
+    {"animeId": 201, "title": "Invented Amber"},
+    {"animeId": 202, "title": "Invented Beacon"},
+    {"animeId": 203, "title": "Invented Cedar"},
+    {"animeId": 204, "title": "Invented Delta"},
+    {"animeId": 205, "title": "Invented Ember"},
+    {"animeId": 206, "title": "Invented Fjord"},
+    {"animeId": 207, "title": "Invented Glade"},
+    {"animeId": 208, "title": "Invented Harbor"},
+    {"animeId": 209, "title": "Invented Iris"},
+    {"animeId": 210, "title": "Invented Juniper"},
+    {"animeId": 211, "title": "Invented Kestrel"},
+    {"animeId": 212, "title": "Invented Lagoon"},
+    {"animeId": 213, "title": "Invented Marble"},
+    {"animeId": 214, "title": "Invented Nimbus"},
+    {"animeId": 215, "title": "Invented Orchard"},
+    {"animeId": 216, "title": "Invented Prism"},
+    {"animeId": 217, "title": "Invented Quartz"},
+    {"animeId": 218, "title": "Invented Ridge"},
+    {"animeId": 219, "title": "Invented Solstice"},
+    {"animeId": 220, "title": "Invented Tide"},
+    {"animeId": 221, "title": "Invented Umber"},
+    {"animeId": 222, "title": "Invented Valley"},
+    {"animeId": 223, "title": "Invented Willow"},
+    {"animeId": 224, "title": "Invented Zenith"}
+  ]
+}

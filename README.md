@@ -41,6 +41,7 @@ Run the fast checks separately:
 npm run data:fixture
 npm run data:fixture:check
 npm run split:fixture:check
+npm run eval:new-user:fixture
 npm run typecheck
 npm test
 npm run test:python
@@ -56,6 +57,8 @@ npm run eval:franchise-diversity:fixture
 The Python smoke and workflow tests require NumPy and PyYAML (`python -m pip install "numpy>=2,<3" "PyYAML>=6,<7"`). The Playwright install is needed once per machine. Browser tests use the synthetic demo or a normal-mode app with mocked providers; no real usernames are queried. Pull-request CI runs these checks without fetching production data or using provider credentials. See `docs/DEVELOPMENT_PLAN.md` and `docs/PROGRESS.md` for acceptance criteria and evidence.
 
 The user-vector diagnostic calls the same new-user scorer used by the browser and compares it with an evaluation-only ridge fold-in reference on invented held-out ratings. It reports Hit@3, reciprocal rank, and local latency; it is not a production ranking-quality result. [Decision 0010](docs/decisions/0010-user-vector-evaluation.md) records the fixed protocol, results, and why the simpler browser average remains selected.
+
+The [split-first new-user fixture](docs/decisions/0018-new-user-split-first-evaluation.md) fits item factors from an invented training-only snapshot and scores four separate invented users with 1, 3, 5, and 10 supplied ratings through the browser preference mapper, model scorer, and eligibility policy. `npm run eval:new-user:fixture` checks its pinned split and prints validation-only model ranks, displayed fallback engines, and a separate warm-user validation report. It does not inspect the fit-user test partition or claim production ranking quality.
 
 The pinned [raw-interaction split protocol](docs/decisions/0014-raw-interaction-splits.md) creates train/validation/test IDs from invented raw scores before any centering or graph work. `npm run split:fixture:check` verifies its immutable 13-interaction manifest. The current exported ratings contain no verified rating/viewing times, so the fixture uses a seeded per-user holdout. Existing ML training/search/GNN scripts still use their older full-graph evaluation path; their metrics are not M5 release evidence until train-only preprocessing and leakage checks are wired in.
 
