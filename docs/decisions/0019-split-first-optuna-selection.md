@@ -1,6 +1,6 @@
 # 0019 — Split-first Optuna selection
 
-**Status:** Protocol fixed before implementation and Optuna trial results on 2026-09-27. Five focused tests, the full local synthetic/mock gate, and [fresh PR #33 fixture CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36383534149) passed. M5.4 remains open until the browser hybrid blend and other candidate choices use validation-only selection.
+**Status:** Protocol fixed before implementation and Optuna trial results on 2026-09-27. Five focused tests, the full local synthetic/mock gate, and [fresh PR #33 fixture CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36383534149) passed. M5.4 was checked after decision 0020's browser hybrid selection and fresh PR #34 synthetic CI passed. Legacy full-graph MF/LightGCN metrics remain invalid M5 evidence.
 
 ## Scope and boundary
 

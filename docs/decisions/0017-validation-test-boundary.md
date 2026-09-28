@@ -1,6 +1,6 @@
 # 0017 — Validation selection and final-test boundary
 
-**Status:** Initial split-first MF protocol implemented and synthetic checks passed on 2026-09-27. M5.4 remains unchecked until every M5 tuner that can affect the selected engine uses validation and the final-report boundary.
+**Status:** Initial split-first MF protocol implemented and synthetic checks passed on 2026-09-27. Decisions 0019 and 0020 subsequently routed the supported Optuna and browser hybrid selectors through validation and frozen one-use final-report boundaries. M5.4 was checked after fresh PR #34 synthetic CI passed; no final new-user test or production metric is claimed.
 
 ## Fixed synthetic experiment
 

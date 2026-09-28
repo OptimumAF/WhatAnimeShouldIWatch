@@ -1,6 +1,6 @@
 # 0020 — Split-first browser hybrid selection
 
-**Status:** Protocol fixed on 2026-09-27 before inspecting hybrid weight metrics. M5.4 may be checked only after implementation, isolation tests, and the full synthetic/mock gate pass; this fixture cannot establish production ranking quality.
+**Status:** Protocol fixed on 2026-09-27 before inspecting hybrid weight metrics. Seven focused tests, the full local synthetic/mock gate, and [fresh PR #34 CI](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36387540589) passed on `da4849e`. M5.4 is checked for the supported split-first selectors; this fixture cannot establish production ranking quality, and its chosen weight is not promoted.
 
 ## Fixed model, people, and choice
 
