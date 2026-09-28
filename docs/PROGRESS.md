@@ -984,3 +984,37 @@
 **Unrun / remaining:** No real candidate, release upload, provider data, private watchlist, deployment, or model promotion was read or changed. The packager has no upload caller; the approval manifest is empty. M8.3 remains unchecked because source/use and quality approval and an immutable publication workflow are unverified. M8's exit gate remains open.
 
 **Single next task:** Add and statically test an immutable, approval-gated publication workflow that consumes only the audited five-file package, while preserving the real publication hold.
+
+## Session 2026-09-28 — M8.3 immutable workflow protocol
+
+**Branch / starting state:** `codex/m8-publication-workflow` from clean `e026531c1f7c5bbc3be641b0c281da853a14d6f5`, draft PR #45's final documentation head. PR #45's [CI run 36425921606](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36425921606) and GitGuardian both passed on that exact head. Read the root `AGENTS.md`, M8.3 plan and latest handoff, decisions 0001/0002/0026/0028/0030, current held workflow, approval verifiers and workflow tests, and local GitHub CLI help. No nested instructions or local changes were present.
+
+**Finding and plan revision:** A package's own review text does not independently approve the exact bytes. A pinned Actions run can still have its artifact changed or removed, and the repository's read-only immutable-release setting endpoint reported `enabled:false`. Added [decision 0031](decisions/0031-immutable-publication-workflow.md), merged its guidance into `AGENTS.md`, and recorded the new exact-bundle approval, immutable setting, tag/release absence, and post-publication digest requirements in the plan. The first real bundle also has no permitted bootstrap under decision 0026; that needs a separate reviewed decision. Task ID and M8.3 acceptance criteria remain unchanged.
+
+**Checks / blockers:** Protocol and read-only GitHub setting inspection only. Official GitHub documentation confirms the immutable setting protects a release after publication. No repository setting, approval variable, release, provider data, or private history was changed or fetched. M8.3 and M8 remain unchecked.
+
+**Single next task:** Implement a strict five-file package verifier and committed exact-bundle approval check, then wire the held workflow to those checks with mocked and static tests before any release mutation.
+
+## Session 2026-09-28 — M8.3 verified immutable publication route
+
+**Branch / starting commit:** `codex/m8-publication-workflow` after protocol commit `994d840`, stacked on CI-passing PR #45. The committed `docs/approvals/provider-data.json` and new `publication-bundles.json` both have no publication approvals. No provider request, private watchlist, or release mutation was used.
+
+**Implementation and affected files:** Added `pipeline/src/verify-publication-package.ts` and its invented tests. It requires exactly five bounded regular files, recomputes all four source assets and the canonical audit against the named prior, matches the exact audit/manifest hashes and run/artifact identity to the separately committed package approval, and matches the use-specific source/decision/owner approval. The executable CLI fails against the committed empty records. Added `scripts/verify_immutable_data_release.py` and mocked tests for dispatch syntax, repository immutability setting, unused tag/release, and post-publication five-asset SHA-256 checks. Replaced the legacy refusal-only workflow with separate read-only verification and write-permission publication jobs, both restricted to `master` and the decision-0002 variables. The workflow checks before download and again before mutation, passes only five explicit assets between jobs, re-verifies before creating a new release, and checks remote immutable bytes after publication. Updated workflow condition tests and decisions 0002/0031.
+
+**Commands / results:** `npm run data:fixture:check`, `npm run typecheck`, `npm test` (85 pipeline, 107 web unit), `npm run test:python` (68), `python -m unittest discover -s scripts/tests` (14), `npm run build:web`, and `npm run test:e2e` (66 mocked browser) passed locally. The five new package-verifier cases and four new mocked GitHub preflight/post cases passed. The workflow was parsed and structurally checked by the 14 Python workflow tests; clean-checkout CI and final stacked-diff review remain.
+
+**Checks not run / blockers:** No publication workflow was dispatched and no real release, source package, provider response, or private history was fetched or changed. A real run still requires a reviewed source/use approval and exact per-bundle approval, a distinct approved prior bundle or separately reviewed first-real-bundle bootstrap, repository immutable releases enabled, and an owner-provisioned administration-read `RELEASE_IMMUTABILITY_READ_TOKEN`. The read-only setting check currently reports disabled. Post-publication and hosted behavior remain mocked or unverified. M8.3 and M8's exit gate remain unchecked.
+
+**Plan revision and reason:** Keep M8.3's criteria. Added the independent exact-bundle approval and owner immutability-read credential because the package's own audit and the ordinary Actions token cannot establish those conditions. Restricted dispatch to `master` so an unmerged branch cannot supply approval files or verifier code.
+
+**Single next task:** Review the stacked workflow diff and verify its exact head in clean-checkout CI; then continue with the first-real-bundle and source/use approval dependencies before any real publication.
+
+## Session 2026-09-28 — M8.3 immutable workflow CI review
+
+**Reviewed implementation:** Draft [PR #46](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/46), `codex/m8-publication-workflow` implementation commit `de98718`, stacked on PR #45. The 12-file stacked diff passed `git diff --check codex/m8-publication-package...HEAD`. Reviewed the exact approval binding, package recomputation, read-only/write job boundary, default-branch condition, remote immutability and target preflight, five explicit upload paths, post-publication digests, and invented negative cases. `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/publish-data-release.yml` passed.
+
+**Clean-checkout evidence:** [CI run 36428600447](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36428600447) and GitGuardian passed on the exact implementation SHA. The job ran synthetic fixture and evaluation checks, typecheck, 85 pipeline and 107 web unit tests, 68 ML tests, 14 workflow tests, web build, and 66 mocked browser cases.
+
+**Unrun / remaining:** No workflow dispatch, real package download, release creation, repository-setting change, or provider request was made. The approval records are empty and the read-only API reports immutable releases disabled. A separately reviewed source/use grant and exact package approval, owner-enabled immutable releases and admin-read credential, and a first-real-bundle bootstrap decision remain necessary. The postpublication path is supported only by mocked API cases; M8.3 and M8 stay unchecked.
+
+**Single next task:** Resolve the first-real-bundle bootstrap design against decision 0026 using an invented candidate and explicit owner approval boundary; keep provider-derived publication held while source/use review remains unresolved.

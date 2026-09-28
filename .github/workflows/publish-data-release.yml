@@ -1,28 +1,197 @@
-name: Publish Data Release Assets (held)
+name: Publish Audited Immutable Data Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Reviewed versioned data-v tag
+        required: true
+        type: string
+      source_run_id:
+        description: Same-repository run holding the reviewed package artifact
+        required: true
+        type: string
+      artifact_name:
+        description: Exact reviewed artifact name
+        required: true
+        type: string
+      previous_tag:
+        description: Separate versioned last-known-good release
+        required: true
+        type: string
+
+concurrency:
+  group: data-publication-${{ inputs.tag }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  publish:
-    # Unset use-specific variables skip this job; a recorded approval still
-    # cannot reactivate the legacy ratings and mutable-tag upload path.
-    if: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' }}
+  verify:
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Verify recorded publication approval
         env:
           PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
         run: python3 scripts/verify_provider_data_approval.py publication
 
-      - name: Refuse legacy data release publication
+      - name: Validate dispatch inputs
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PRIOR_TAG: ${{ inputs.previous_tag }}
+        run: python3 scripts/verify_immutable_data_release.py inputs "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$SOURCE_RUN_ID" "$ARTIFACT_NAME" "$PRIOR_TAG"
+
+      - name: Require immutable releases and unused tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_IMMUTABILITY_READ_TOKEN: ${{ secrets.RELEASE_IMMUTABILITY_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify_immutable_data_release.py preflight "$GITHUB_REPOSITORY" "$RELEASE_TAG"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned Node dependencies
+        run: npm ci
+
+      - name: Download exact candidate and named prior
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PRIOR_TAG: ${{ inputs.previous_tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Legacy data-latest publication is disabled by decision 0028." >&2
-          echo "M8.3 requires an audited aggregate-only immutable bundle." >&2
-          exit 1
+          mkdir candidate prior
+          gh run download "$SOURCE_RUN_ID" --name "$ARTIFACT_NAME" --dir candidate
+          gh release download "$PRIOR_TAG" --dir prior \
+            --pattern release-manifest.json \
+            --pattern graph.compact.json \
+            --pattern graph-explorer.compact.json \
+            --pattern catalog.identity.json
+
+      - name: Recompute audited package and exact approvals
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PRIOR_TAG: ${{ inputs.previous_tag }}
+          APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+        run: |
+          node --import tsx pipeline/src/verify-publication-package.ts \
+            --package candidate --previous prior --tag "$RELEASE_TAG" \
+            --run-id "$SOURCE_RUN_ID" --artifact-name "$ARTIFACT_NAME" \
+            --prior-tag "$PRIOR_TAG" --approval-ref "$APPROVAL_REF"
+
+      - name: Pass only five verified assets to publication job
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-publication-package
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            candidate/release-manifest.json
+            candidate/graph.compact.json
+            candidate/graph-explorer.compact.json
+            candidate/catalog.identity.json
+            candidate/publication-audit.json
+
+  publish:
+    needs: verify
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify recorded publication approval
+        env:
+          PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+        run: python3 scripts/verify_provider_data_approval.py publication
+
+      - name: Validate dispatch inputs
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PRIOR_TAG: ${{ inputs.previous_tag }}
+        run: python3 scripts/verify_immutable_data_release.py inputs "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$SOURCE_RUN_ID" "$ARTIFACT_NAME" "$PRIOR_TAG"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned Node dependencies
+        run: npm ci
+
+      - name: Download verified package from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: verified-publication-package
+          path: candidate
+
+      - name: Download exact named prior
+        env:
+          PRIOR_TAG: ${{ inputs.previous_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir prior
+          gh release download "$PRIOR_TAG" --dir prior \
+            --pattern release-manifest.json \
+            --pattern graph.compact.json \
+            --pattern graph-explorer.compact.json \
+            --pattern catalog.identity.json
+
+      - name: Reverify package before publication
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PRIOR_TAG: ${{ inputs.previous_tag }}
+          APPROVAL_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+        run: |
+          node --import tsx pipeline/src/verify-publication-package.ts \
+            --package candidate --previous prior --tag "$RELEASE_TAG" \
+            --run-id "$SOURCE_RUN_ID" --artifact-name "$ARTIFACT_NAME" \
+            --prior-tag "$PRIOR_TAG" --approval-ref "$APPROVAL_REF"
+
+      - name: Recheck immutable setting and absent target
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_IMMUTABILITY_READ_TOKEN: ${{ secrets.RELEASE_IMMUTABILITY_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify_immutable_data_release.py preflight "$GITHUB_REPOSITORY" "$RELEASE_TAG"
+
+      - name: Create new release with exact audited assets
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            candidate/release-manifest.json \
+            candidate/graph.compact.json \
+            candidate/graph-explorer.compact.json \
+            candidate/catalog.identity.json \
+            candidate/publication-audit.json \
+            --target "$GITHUB_SHA" --latest=false --title "$RELEASE_TAG" \
+            --notes "Audited aggregate-only data bundle; see publication-audit.json."
+
+      - name: Verify immutable published release and asset hashes
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify_immutable_data_release.py published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate

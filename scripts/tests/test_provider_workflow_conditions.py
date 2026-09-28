@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 GUARDED = {
     "ml-retrain.yml": ("training", {"retrain"}),
-    "publish-data-release.yml": ("publication", {"publish"}),
+    "publish-data-release.yml": ("publication", {"verify", "publish"}),
     "deploy-web.yml": ("deployment", {"build", "deploy"}),
 }
 
@@ -25,6 +25,11 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
             for job_name, job in jobs.items():
                 with self.subTest(workflow=filename, job=job_name):
                     expression = job.get("if", "")
+                    if filename == "publish-data-release.yml":
+                        self.assertIn("github.ref == 'refs/heads/master' &&", expression)
+                        expression = expression.replace(
+                            "github.ref == 'refs/heads/master' && ", ""
+                        )
                     match = re.fullmatch(
                         r"\$\{\{\s*vars\.([A-Z_]+)\s*==\s*'true'\s*&&\s*vars\.([A-Z_]+)\s*!=\s*''\s*\}\}",
                         expression,
@@ -62,19 +67,53 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         self.assertIn("npm run data:fixture:check", runs)
         self.assertNotIn("data:fetch:release", runs)
 
-    def test_legacy_data_release_cannot_mutate_a_release(self):
+    def test_immutable_data_release_is_exact_and_approval_gated(self):
         workflow = yaml.safe_load((WORKFLOWS / "publish-data-release.yml").read_text(
             encoding="utf-8"
         ))
         self.assertEqual(workflow["permissions"], {"contents": "read"})
-        steps = workflow["jobs"]["publish"]["steps"]
-        self.assertEqual(len(steps), 3)
-        self.assertEqual(steps[2]["name"], "Refuse legacy data release publication")
-        self.assertIn("decision 0028", steps[2]["run"])
-        self.assertIn("exit 1", steps[2]["run"])
-        self.assertNotIn("gh release", str(workflow))
-        self.assertNotIn("ncipollo/release-action", str(workflow))
+        self.assertEqual(workflow["concurrency"]["cancel-in-progress"], False)
+        verify = workflow["jobs"]["verify"]
+        publish = workflow["jobs"]["publish"]
+        self.assertEqual(verify["permissions"], {"contents": "read", "actions": "read"})
+        self.assertEqual(publish["permissions"], {"contents": "write", "actions": "read"})
+        self.assertEqual(publish["needs"], "verify")
+        verify_steps = verify["steps"]
+        publish_steps = publish["steps"]
+        verify_names = [step.get("name") for step in verify_steps]
+        publish_names = [step.get("name") for step in publish_steps]
+        self.assertLess(verify_names.index("Require immutable releases and unused tag"),
+                        verify_names.index("Download exact candidate and named prior"))
+        self.assertLess(verify_names.index("Recompute audited package and exact approvals"),
+                        verify_names.index("Pass only five verified assets to publication job"))
+        self.assertLess(publish_names.index("Reverify package before publication"),
+                        publish_names.index("Recheck immutable setting and absent target"))
+        self.assertLess(publish_names.index("Recheck immutable setting and absent target"),
+                        publish_names.index("Create new release with exact audited assets"))
+        self.assertLess(publish_names.index("Create new release with exact audited assets"),
+                        publish_names.index("Verify immutable published release and asset hashes"))
+        self.assertEqual(verify_steps[verify_names.index(
+            "Require immutable releases and unused tag")]["env"][
+                "RELEASE_IMMUTABILITY_READ_TOKEN"],
+            "${{ secrets.RELEASE_IMMUTABILITY_READ_TOKEN }}")
+        self.assertEqual(publish_steps[publish_names.index(
+            "Recheck immutable setting and absent target")]["env"][
+                "RELEASE_IMMUTABILITY_READ_TOKEN"],
+            "${{ secrets.RELEASE_IMMUTABILITY_READ_TOKEN }}")
+        upload = verify_steps[verify_names.index("Pass only five verified assets to publication job")]
+        release = publish_steps[publish_names.index("Create new release with exact audited assets")]
+        expected = {"release-manifest.json", "graph.compact.json",
+                    "graph-explorer.compact.json", "catalog.identity.json",
+                    "publication-audit.json"}
+        self.assertEqual({line.removeprefix("candidate/") for line in
+                          upload["with"]["path"].splitlines()}, expected)
+        self.assertEqual({name for name in expected if f"candidate/{name}" in release["run"]},
+                         expected)
+        self.assertIn("--target \"$GITHUB_SHA\"", release["run"])
+        self.assertNotIn("*", release["run"])
+        self.assertNotIn("--clobber", str(workflow))
         self.assertNotIn("anonymized-ratings", str(workflow))
+        self.assertNotIn("data-latest", str(workflow))
 
 
 if __name__ == "__main__":
