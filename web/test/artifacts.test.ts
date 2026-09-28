@@ -61,6 +61,8 @@ test("accepts current synthetic compact and legacy contracts, including three-va
   assert.equal(parseCompactGraph(explorer, "explorer fixture", "visualization"), explorer);
   const catalog = parseDemoCatalog(fixture("catalog.json"), "catalog fixture");
   assert.equal(catalog.length, 8);
+  assert.deepEqual(catalog.find((item) => item.animeId === 101)?.aliases, ["Galaxy Route"]);
+  assert.equal(catalog.find((item) => item.animeId === 102)?.mediaFormat, "Movie");
   assert.deepEqual(catalog.find((item) => item.animeId === 105)?.relations,
     [{ kind: "side-story", animeId: 108, title: "Quiet Satellite" }]);
   assert.equal(parseCompactModel(model, "model fixture"), model);
@@ -191,6 +193,9 @@ test("rejects invalid catalog IDs, metadata, and version", () => {
     ["duplicate ID", (v) => { v.anime[1].animeId = v.anime[0].animeId; }, /anime\[1\].animeId.*duplicates/],
     ["score", (v) => { v.anime[0].score = Number.NaN; }, /anime\[0\].score.*finite/],
     ["genres", (v) => { v.anime[0].genres = "action"; }, /genres.*array/],
+    ["aliases", (v) => { v.anime[0].aliases = "wrong"; }, /aliases.*array/],
+    ["alias title", (v) => { v.anime[0].aliases = [""]; }, /aliases\[0\].*nonempty/],
+    ["media format", (v) => { v.anime[0].mediaFormat = 5; }, /mediaFormat.*nonempty string/],
     ["relation kind", (v) => { v.anime[4].relations[0].kind = "unknown"; }, /relations\[0\].kind.*supported/],
     ["self relation", (v) => { v.anime[4].relations[0].animeId = 105; }, /relations\[0\].animeId.*itself/],
     ["relation title", (v) => { v.anime[4].relations[0].title = ""; }, /relations\[0\].title.*nonempty/],

@@ -327,6 +327,25 @@ export function createProviderAdapter(
     const genres = parseNameList(raw.genres);
     const studios = parseNameList(raw.studios);
     const relations = parseAnimeRelations(raw.relations, animeId);
+    const aliases = new Set<string>();
+    const addAlias = (value: unknown) => {
+      if (typeof value === "string" && value.trim() && value.length <= 200 && aliases.size < 20) {
+        aliases.add(value.trim());
+      }
+    };
+    if (Array.isArray(raw.titles)) {
+      for (const item of raw.titles) {
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          addAlias((item as Record<string, unknown>).title);
+        }
+      }
+    }
+    addAlias(raw.title);
+    addAlias(raw.title_english);
+    addAlias(raw.title_japanese);
+    if (Array.isArray(raw.title_synonyms)) raw.title_synonyms.forEach(addAlias);
+    const mediaFormat = typeof raw.type === "string" && raw.type.trim() && raw.type.length <= 80
+      ? raw.type.trim() : null;
 
     const images = raw.images as Record<string, unknown> | undefined;
     const webp = images?.webp as Record<string, unknown> | undefined;
@@ -348,6 +367,8 @@ export function createProviderAdapter(
       imageUrl: imageUrl ?? "",
       season,
       relations,
+      ...(aliases.size ? { aliases: [...aliases] } : {}),
+      ...(mediaFormat ? { mediaFormat } : {}),
     };
   }
 
