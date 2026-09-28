@@ -9,7 +9,7 @@ The model is matrix factorization with an extra graph regularization term on ani
 
 ## Evaluation status
 
-The training, Optuna, and LightGCN commands below are retained for existing research workflows. They currently load already normalized ratings and a graph built from the full ratings snapshot before splitting, so their reported metrics are **not** valid M5 release evidence. Provider-derived training and publication remain held by [decision 0001](../docs/decisions/0001-provider-data-permissions.md).
+The legacy MF training and LightGCN commands below remain research compatibility paths. They load already normalized ratings and a graph built from the full ratings snapshot before splitting, so their metrics are **not** valid M5 release evidence. The Optuna command now uses the restricted split-first validation route described below. Provider-derived training and publication remain held by [decision 0001](../docs/decisions/0001-provider-data-permissions.md).
 
 M5.1's restricted raw split manifest is reproducible with invented data:
 
@@ -26,7 +26,7 @@ M5.2's split-first fitting route uses a separate, invented metadata snapshot and
 npm run ml:train:split:fixture
 ```
 
-The metadata file allows only anime IDs and titles, a source label, and snapshot time; it cannot carry rating-derived fields. The pinned synthetic file is `fixtures/synthetic-anime-metadata.json`. [Decision 0015](../docs/decisions/0015-train-only-preprocessing.md) defines the isolation boundary. [Decision 0016](../docs/decisions/0016-fixed-split-leakage-regression.md) and `ml/tests/test_split_first_leakage.py` verify exact train graph, hash, and MF parameter invariance after held-out score and interaction-ID edits under fixed train membership. An added interaction changes the derived train split and requires a new experiment. The route still reports no quality metric; M5.4 must separate validation choices from final test reporting. The older commands below remain research compatibility paths and cannot supply M5 release metrics.
+The metadata file allows only anime IDs and titles, a source label, and snapshot time; it cannot carry rating-derived fields. The pinned synthetic file is `fixtures/synthetic-anime-metadata.json`. [Decision 0015](../docs/decisions/0015-train-only-preprocessing.md) defines the isolation boundary. [Decision 0016](../docs/decisions/0016-fixed-split-leakage-regression.md) and `ml/tests/test_split_first_leakage.py` verify exact train graph, hash, and MF parameter invariance after held-out score and interaction-ID edits under fixed train membership. An added interaction changes the derived train split and requires a new experiment. The fit-only command reports no quality metric; the legacy MF training and LightGCN commands below remain incompatible with M5 release metrics.
 
 The initial M5.4 selection path uses the fixed three-candidate invented grid in `fixtures/synthetic-mf-candidates.json`. Selection scores **validation only**, freezes one configuration in an ignored local file, then a separate command produces one final synthetic test report:
 
@@ -35,7 +35,7 @@ python ml/split_first_selection.py select --raw-ratings fixtures/synthetic-split
 python ml/split_first_selection.py report-test --raw-ratings fixtures/synthetic-split-input.json --split-manifest fixtures/synthetic-split-manifest.json --metadata fixtures/synthetic-anime-metadata.json --selection data/synthetic-selection-local.json
 ```
 
-The second command refuses a repeat using a one-use marker beside the selection file. These ignored local reports are restricted evaluation records, and their tiny warm-user metrics do not establish ranking quality. [Decision 0017](../docs/decisions/0017-validation-test-boundary.md) defines the read boundary. M5.4 remains open while Optuna, hybrid blend, and other tuners are not yet connected to it.
+The second command refuses a repeat using a one-use marker beside the selection file. These ignored local reports are restricted evaluation records, and their tiny warm-user metrics do not establish ranking quality. [Decision 0017](../docs/decisions/0017-validation-test-boundary.md) defines the read boundary. M5.4 remains open while hybrid blend and other candidate choices are not yet connected to it.
 
 M5.5's [separate new-user fixture](../docs/decisions/0018-new-user-split-first-evaluation.md) has an invented fit-only raw snapshot with a pinned 72/24/24 split and four disjoint evaluation users. The local Python adapter exports only train-fitted item factors/biases, a train-present catalog, and positive train pairs to the TypeScript evaluator; it never exports fitted user factors or evaluation ratings. The TypeScript runner calls the browser's native-score mapper, signed preference-to-vector scorer, candidate eligibility policy, and final-list selector. It reports 1/3/5/10 supplied-rating model validation separately from the fit users' warm validation metric and labels any graph/catalog fallback:
 
@@ -76,29 +76,23 @@ Artifacts are written to `models/graph_mf/`:
 
 ## Hyperparameter Search (Optuna)
 
-Run Optuna search against the same train/test split and graph data:
+`npm run ml:search` visits each predeclared candidate in `fixtures/synthetic-mf-candidates.json`
+once with an in-memory Optuna grid. The default inputs are the invented raw
+snapshot, validated split manifest, and fixed metadata snapshot. It scores only
+validation rows, freezes one ignored local selection file, and emits no test
+metric. See [decision 0019](../docs/decisions/0019-split-first-optuna-selection.md).
 
 ```bash
-python ml/search_graph_mf_optuna.py --trials 40 --metric ndcg_at_k --top-k 20
+npm run ml:search
+python ml/split_first_selection.py report-test --raw-ratings fixtures/synthetic-split-input.json --split-manifest fixtures/synthetic-split-manifest.json --metadata fixtures/synthetic-anime-metadata.json --selection data/synthetic-optuna-selection-local.json
 ```
 
-Or through npm:
-
-```bash
-npm run ml:search -- --trials 40 --metric ndcg_at_k
-```
-
-Search artifacts are written to `models/graph_mf_search/` by default:
-
-- `<study-name>.sqlite3` (Optuna study DB)
-- `<study-name>.best.json` (best params + best metrics)
-- `<study-name>.trials.json` (top completed trials)
-
-Use the best parameters to run a full training pass:
-
-```bash
-python ml/train_graph_mf.py --factors 96 --epochs 14 --lr 0.012 --reg 0.008 --reg-bias 0.004 --graph-lambda 0.02 --graph-sample-rate 0.7 --graph-min-abs-weight 0.35
-```
+The separate report command checks the exact frozen snapshot and model, then
+creates a one-use marker before scoring test. A broader search requires a
+predeclared candidate JSON and private output paths via
+`--candidates`, `--out-selection`, and `--out-test-report`. The legacy
+`ml/train_graph_mf.py` training/evaluation route is still outside the M5
+validation boundary.
 
 ## Periodic Retraining Workflow
 

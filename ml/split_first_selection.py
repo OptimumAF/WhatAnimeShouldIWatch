@@ -10,7 +10,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -180,25 +180,47 @@ def score_holdout(result: SplitFirstTraining, rows: tuple[RawInteraction, ...], 
             "recallAtK": float(np.mean(recalls))}
 
 
-def select_on_validation(snapshot: RawSnapshot, manifest: object, metadata: MetadataSnapshot,
-                         spec: SelectionSpec, selection_path: Path,
-                         report_path: Path) -> dict[str, Any]:
-    """No access to the test partition's labels or scores while choosing a candidate."""
-    partitions = partition_snapshot(snapshot, manifest)
-    trials: list[dict[str, Any]] = []
-    train_sha: str | None = None
-    fit_sha: str | None = None
-    for candidate in spec.candidates:
-        trained = candidate.train(snapshot, manifest, metadata, spec.model_seed)
-        if train_sha is None:
-            train_sha, fit_sha = trained.fit.train_sha256, trained.fit.fit_sha256
-        elif (trained.fit.train_sha256, trained.fit.fit_sha256) != (train_sha, fit_sha):
-            raise ValueError("Candidate training inputs or preprocessing changed during validation selection.")
-        metric = score_holdout(trained, partitions.validation, top_k=spec.top_k,
-                               positive_raw_score_min=spec.positive_raw_score_min,
-                               model_score_floor=candidate.model_score_floor)
-        trials.append({"candidateId": candidate.candidate_id, "validation": metric,
-                       "modelSha256": model_fingerprint(trained.model)})
+def score_validation_candidate(snapshot: RawSnapshot, manifest: object, metadata: MetadataSnapshot,
+                               spec: SelectionSpec, candidate: Candidate,
+                               validation_rows: tuple[RawInteraction, ...]
+                               ) -> tuple[str, str, dict[str, Any]]:
+    """Fit one declared candidate on train and score only supplied validation rows."""
+    if candidate not in spec.candidates:
+        raise ValueError("Validation candidate is absent from the predeclared set.")
+    trained = candidate.train(snapshot, manifest, metadata, spec.model_seed)
+    metric = score_holdout(trained, validation_rows, top_k=spec.top_k,
+                           positive_raw_score_min=spec.positive_raw_score_min,
+                           model_score_floor=candidate.model_score_floor)
+    trial = {"candidateId": candidate.candidate_id, "validation": metric,
+             "modelSha256": model_fingerprint(trained.model)}
+    return trained.fit.train_sha256, trained.fit.fit_sha256, trial
+
+
+def freeze_validation_trials(manifest: object, metadata: MetadataSnapshot, spec: SelectionSpec,
+                             selection_path: Path, report_path: Path,
+                             trials: Sequence[dict[str, Any]], train_sha: str,
+                             fit_sha: str) -> dict[str, Any]:
+    """Bind a complete predeclared validation search to the one-use report boundary."""
+    def valid_trial(trial: object) -> bool:
+        if not isinstance(trial, dict) or set(trial) != {
+            "candidateId", "validation", "modelSha256"
+        } or not isinstance(trial["validation"], dict):
+            return False
+        score = trial["validation"].get("ndcgAtK")
+        return (isinstance(score, (int, float)) and not isinstance(score, bool) and
+                math.isfinite(score) and 0 <= score <= 1 and
+                isinstance(trial["modelSha256"], str) and
+                re.fullmatch(r"[a-f0-9]{64}", trial["modelSha256"]) is not None)
+
+    if not all(valid_trial(trial) for trial in trials):
+        raise ValueError("Validation trials must contain finite metrics and model fingerprints.")
+    if [trial.get("candidateId") for trial in trials] != [
+        candidate.candidate_id for candidate in spec.candidates
+    ]:
+        raise ValueError("Validation trials must cover each declared candidate exactly once.")
+    if not all(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value)
+               for value in (train_sha, fit_sha)):
+        raise ValueError("Validation training fingerprints are missing.")
     best = sorted(trials, key=lambda trial: (-trial["validation"]["ndcgAtK"], trial["candidateId"]))[0]
     selected = next(candidate for candidate in spec.candidates if candidate.candidate_id == best["candidateId"])
     # Bind the exact snapshot only for final reporting; it is never a selection score.
@@ -209,9 +231,29 @@ def select_on_validation(snapshot: RawSnapshot, manifest: object, metadata: Meta
               "metadataSha256": metadata.sha256, "trainSha256": train_sha,
               "fitSha256": fit_sha, "candidateSpecSha256": _sha(spec.as_record()),
               "selectionSpec": spec.as_record(), "selectedCandidate": selected.as_record(),
-              "validationTrials": trials, "objective": "ndcg-at-k",
+              "validationTrials": list(trials), "objective": "ndcg-at-k",
               "selectedValidation": best["validation"]}
     return {**record, "selectionSha256": _sha(record)}
+
+
+def select_on_validation(snapshot: RawSnapshot, manifest: object, metadata: MetadataSnapshot,
+                         spec: SelectionSpec, selection_path: Path,
+                         report_path: Path) -> dict[str, Any]:
+    """No access to the test partition's labels or scores while choosing a candidate."""
+    partitions = partition_snapshot(snapshot, manifest)
+    trials: list[dict[str, Any]] = []
+    train_sha: str | None = None
+    fit_sha: str | None = None
+    for candidate in spec.candidates:
+        candidate_train_sha, candidate_fit_sha, trial = score_validation_candidate(
+            snapshot, manifest, metadata, spec, candidate, partitions.validation)
+        if train_sha is None:
+            train_sha, fit_sha = candidate_train_sha, candidate_fit_sha
+        elif (candidate_train_sha, candidate_fit_sha) != (train_sha, fit_sha):
+            raise ValueError("Candidate training inputs or preprocessing changed during validation selection.")
+        trials.append(trial)
+    return freeze_validation_trials(manifest, metadata, spec, selection_path, report_path,
+                                    trials, train_sha, fit_sha)
 
 
 def _checked_selection(record: object, selection_path: Path, report_path: Path,
