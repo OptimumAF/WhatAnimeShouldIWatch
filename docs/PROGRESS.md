@@ -1164,3 +1164,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI and stacked-diff review remain. The archive fixture's parameters are constructed from demo values, not fitted from the raw rows, so graph and membership checks do not establish actual model training lineage. The serving cohort and policy timing are not independently evidenced. Source/use and owner approvals remain empty, and immutable model publication, exact-tag Pages deployment, hosted checks, and practiced rollback are absent. M8.4 and M8 remain unchecked.
 
 **Single next task:** Bind a real split-first refit archive's fitted parameters to the reviewed selection and validated train-plus-validation rows in a private reproducibility check, using invented fixtures first; retain the source/use hold for any permitted real input.
+
+## Session 2026-09-28 — M8.4 bridge package CI review
+
+**PR / exact head:** Committed `ab38df307fc1b5696df205a75a23e2ff95ffdbb6` and opened draft [PR #53](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/53) against PR #52's branch. The 15-file stacked diff passed `git diff --check`; the checkout was clean. [Fixture CI run 36453724217](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36453724217) and GitGuardian passed on that implementation SHA. CI used clean Node/Python dependencies, generated and verified synthetic artifacts, typechecked, ran pipeline/Python/workflow tests, built web, and passed mocked browser smoke. No provider, release, deployment, or private watchlist input was used.
+
+**Checks not run / blockers:** A real permitted split-first refit archive and reproducible fitted-parameter check, predeclared cohort/policy timing, source/use and owner approvals, immutable model publication, exact-tag Pages trigger, hosted checks, and rollback are absent. M8.4 and M8 remain unchecked. This documentation-only handoff commit needs final-head CI.
+
+**Single next task:** Verify an invented split-first refit archive against the exact validated fit rows, selected candidate, and recorded seed/configuration so fitted parameters, not just graph and packed membership, are reproducible before any permitted real evaluation.
