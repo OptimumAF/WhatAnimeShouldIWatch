@@ -1,0 +1,23 @@
+# 0018 — Split-first browser new-user evaluation
+
+**Status:** Protocol fixed on 2026-09-27 before inspecting the new fixture's validation metrics. M5.5 is checked only after the fixture, parity, isolation, and full synthetic/mock gates pass.
+
+## Separate people and labels
+
+Fit a compact MF model from a validated decision-0014 manifest over an invented *fit-user-only* raw snapshot. The fit receives only the manifest's training rows through decision 0015. Four separately invented evaluation users are absent from that raw snapshot and from every model, baseline, popularity, and graph-fitting input. Their ten observed ratings simulate a new user's supplied history; two separate validation ratings per person are relevance labels. There is no new-user test report in this slice. The prior M5.4 final-test report and the fit-user test partition cannot select or revise this evaluator. Keep all later test decisions behind decision 0017's one-use boundary.
+
+Use the previously validation-selected `graph-two-epochs` candidate from `fixtures/synthetic-mf-candidates.json` with seed 42. Do not choose epochs, regularization, thresholds, cohort membership, supplied-title order, or filters after reading these validation results. A new candidate choice requires a fresh predeclared validation protocol; these invented numbers never establish production quality.
+
+## Serving path and measurements
+
+The local adapter serializes only the train-fitted item factors, item biases, global mean, train-present catalog IDs/titles, and positive train pair edges. It does not export users, ratings, held-out labels, or trained user factors. Parse its model with `parseCompactModel`, build the recommendation index from the train-present catalog, convert each supplied native ten-point rating with `preferenceFromHistory`, and call `buildModelRecommendationsForPreferences`. Then call `createCandidateEligibilityPolicy` and `rankEligibleCandidates("model", ...)` with the fixture's already-watched history, Include Only, explicit exclusions, and genre/year/score filters. This is the browser's mapping, vector, candidate-intersection, and eligibility code, not a separate Python approximation. Do not infer a rating or viewing time.
+
+For each evaluation user, order the ten observed anime IDs by SHA-256 of `wasiw-new-user-observed-v1\n` plus compact JSON `[42, userId, animeId]`. Take nested prefixes of 1, 3, 5, and 10 supplied ratings. The held-out validation IDs and scores never enter a preference, history entry, exclusion, filter, model fit, or candidate score. Count a positive label only at raw score ≥7. Report per slice: users, supplied signals and mapped signals, catalog and eligible candidate counts, eligible positive labels, label exclusions by reason, Hit@10, Recall@10, NDCG@10, reciprocal rank, and per-user held-out ranks. A missing model signal or no eligible positive must be explicit rather than silently removed. Rank ties use the browser scorer's order. Do not treat unlabelled titles as negatives.
+
+Report warm-user validation performance separately, using the fitted training-user factors and decision-0017 `score_holdout` on the fit snapshot's validation rows at the same top K and positive threshold. That warm scorer masks each fit user's training titles but does not apply new-user preference filters; label these candidate policies separately and do not infer that the warm metric validates the new-user route.
+
+## Acceptance and limits
+
+Pin the invented fit snapshot, its exact split manifest, fixed metadata, and disjoint evaluation cohort. Tests must reject duplicate/overlapping evaluation identities and anime rows, missing catalog or model mappings, invalid scores and policy inputs, and a stale fit manifest. A changed evaluation label must leave train/fit/model hashes and every new-user score/rank unchanged while changing only label-derived metrics. A changed training score with a refreshed manifest must change its train fingerprint; a stale manifest must fail. Unit cases must verify native-score sentiment/confidence, 1/3/5/10 nested prefixes, watched/imported-seen/excluded/Include Only and required metadata filters, and rank/metric edge cases. The fixture command must run offline without provider calls or release writes. Full local fixture, typecheck, unit, Python, workflow, build, and mocked-browser gates plus fresh PR CI are required before checking M5.5.
+
+These users, titles, scores, genres, and metadata are invented. Their overlap and small fixed catalog are engineering constraints, not representativeness, calibrated uncertainty, a model promotion, or a permitted provider-derived test. Decision 0001's source/use holds and the M5 exit gate remain open.
