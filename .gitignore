@@ -15,6 +15,10 @@ data/*.test-used
 web/dist/
 web/public/data/*.json
 web/public/data/*.json.gz
+web/public/data/bundles/
+web/public/data/.incoming-*/
+web/public/data/.active-*.tmp
+web/public/data/.install.lock
 !web/public/data/.gitkeep
 web/public/demo-data/
 .playwright-cli/

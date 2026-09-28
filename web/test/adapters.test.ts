@@ -455,7 +455,9 @@ test("artifact transport keeps the missing compact to legacy fallback deliberate
   const graph = await createArtifactLoader(fake.runtime, false).fetchGraph();
   assert.equal(graph.animeCount, 1);
   assert.deepEqual(fake.requests.map((request) => request.url), [
+    "./data/active.json",
     "./data/graph.compact.json.gz", "./data/graph.compact.json",
     "./data/graph.json.gz", "./data/graph.json",
   ]);
+  assert.equal(fake.requests[0].init?.cache, "no-store");
 });
