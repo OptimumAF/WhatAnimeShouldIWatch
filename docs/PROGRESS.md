@@ -781,4 +781,4 @@
 
 **Plan revisions and reasons:** Extended decision 0024 and the M5.9 plan evidence to distinguish data-only containment from a future model promotion route. Added destination inspection because refusing only newly staged models could still leave an old model on an updated release. Added a read-only preflight with an empty committed review list so invented compatibility tests cannot accidentally authorize publication. No acceptance criterion was lowered.
 
-**Single next task:** After fresh fixture PR CI and diff review, connect a genuinely reviewed, immutable model promotion route to a permitted source/quality decision and remote rollback preservation; keep LightGCN/content candidates outside selection until they share the split-first new-user harness.
+**Single next task:** Add a synthetic LightGCN/content candidate adapter to the same split-first, centrally eligible new-user evaluation harness without Jikan or live provider calls. Keep real model promotion held for a reviewed source/quality decision and remote rollback proof.
