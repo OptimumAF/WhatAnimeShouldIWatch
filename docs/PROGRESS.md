@@ -906,3 +906,13 @@
 **Plan revision and reason:** Record containment as a partial M8.3 slice. Replacing the held legacy publisher is a safety change; it does not lower M8.3's acceptance criteria or assert that real publication is approved.
 
 **Single next task:** Define and implement the aggregate-only graph/export contract against invented ratings so the future public package can retain truthful pair statistics without per-user IDs or edges.
+
+## Session 2026-09-28 — M8.3 containment CI review
+
+**Reviewed head:** `codex/m8-publication-audit` implementation commit `8b2f7e18936ce06eb407e2943c85b7ee0b5fe955`, draft [PR #43](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/43) stacked on M8.2. The 10-file stacked diff and `git diff --check codex/m8-atomic-installer...HEAD` passed review.
+
+**Clean-checkout evidence:** [CI run 36417045255](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36417045255) and GitGuardian passed on the exact implementation SHA. It ran clean install, fixture/evaluation checks, typecheck, 70 pipeline tests, 105 web unit tests, 68 ML tests, 10 workflow tests, web build, and 65 mocked browser cases. No publishing job was dispatched; the release workflow remains gated and read-only.
+
+**Unrun / remaining:** Real source rights, privacy-safe graph export, an audited immutable release, hosted deployment, and rollback remain unverified. M8.3 remains unchecked, and the M8 exit gate remains open.
+
+**Single next task:** Implement the separately versioned aggregate-only graph/export contract and its synthetic runtime and manifest checks.
