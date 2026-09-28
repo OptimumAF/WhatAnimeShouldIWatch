@@ -87,14 +87,16 @@ def preflight(repo: str, tag: str, admin_read_token: str, release_token: str,
         raise ReleaseCheckError("candidate tag already exists")
 
 
-def published(repo: str, tag: str, package_dir: Path, token: str,
-              opener=urlopen) -> None:
+def published_assets(repo: str, tag: str, package_dir: Path, token: str,
+                     assets_allowed: tuple[str, ...], opener=urlopen) -> None:
     _inputs(repo, tag)
+    count = {5: "five", 6: "six"}.get(len(assets_allowed), str(len(assets_allowed)))
     if not package_dir.is_dir() or package_dir.is_symlink():
         raise ReleaseCheckError("package directory must be real")
     entries = sorted(package_dir.iterdir())
-    if [entry.name for entry in entries] != sorted(ASSETS):
-        raise ReleaseCheckError("package inventory is not the exact five-file allowlist")
+    if [entry.name for entry in entries] != sorted(assets_allowed):
+        raise ReleaseCheckError(
+            f"package inventory is not the exact {count}-file allowlist")
     for entry in entries:
         if not entry.is_file() or entry.is_symlink():
             raise ReleaseCheckError(f"package asset {entry.name} is not a regular file")
@@ -104,8 +106,9 @@ def published(repo: str, tag: str, package_dir: Path, token: str,
             or release.get("immutable") is not True):
         raise ReleaseCheckError("published release is absent, draft, or not immutable")
     assets = release.get("assets")
-    if not isinstance(assets, list) or len(assets) != len(ASSETS):
-        raise ReleaseCheckError("published asset inventory differs from the five-file allowlist")
+    if not isinstance(assets, list) or len(assets) != len(assets_allowed):
+        raise ReleaseCheckError(
+            f"published asset inventory differs from the {count}-file allowlist")
     by_name = {}
     for asset in assets:
         if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
@@ -113,8 +116,9 @@ def published(repo: str, tag: str, package_dir: Path, token: str,
         if asset["name"] in by_name:
             raise ReleaseCheckError("published asset names repeat")
         by_name[asset["name"]] = asset
-    if set(by_name) != set(ASSETS):
-        raise ReleaseCheckError("published asset names differ from the five-file allowlist")
+    if set(by_name) != set(assets_allowed):
+        raise ReleaseCheckError(
+            f"published asset names differ from the {count}-file allowlist")
     for entry in entries:
         remote = by_name[entry.name]
         digest = hashlib.sha256()
@@ -125,6 +129,11 @@ def published(repo: str, tag: str, package_dir: Path, token: str,
                 or remote.get("size") != entry.stat().st_size
                 or remote.get("digest") != f"sha256:{digest.hexdigest()}"):
             raise ReleaseCheckError(f"published asset {entry.name} differs from local bytes")
+
+
+def published(repo: str, tag: str, package_dir: Path, token: str,
+              opener=urlopen) -> None:
+    published_assets(repo, tag, package_dir, token, ASSETS, opener)
 
 
 def main(argv: list[str]) -> int:

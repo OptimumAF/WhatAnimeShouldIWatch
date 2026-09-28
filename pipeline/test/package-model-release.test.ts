@@ -15,6 +15,7 @@ import { OUTPUT_FILES, packageDataRelease, PUBLIC_FIELDS,
   type PublicationReviewV1 } from "../src/package-data-release.js";
 import { RELEASE_FILES, releaseSha256, writeReleaseManifest } from "../src/release-manifest.js";
 import { verifyModelReleasePackage } from "../src/verify-model-release-package.js";
+import { verifyModelPublicRelease } from "../src/verify-model-release-public.js";
 import { generateServingReport, verifyServingReport } from
   "../../web/bench/model-promotion-serving-evaluation.ts";
 import type { CompactGraphDataV2 } from "../src/types.js";
@@ -682,6 +683,41 @@ test("an invented reviewed package requires exact model, provider, and data-base
       artifactName: "invented-model" },
     providerApprovals, publicationApprovals, modelApprovals };
   assert.deepEqual(verifyModelReleasePackage(options), audit);
+  const publicOptions = { packageDir: fixture.outputDir, baseDir: basePackage,
+    approvalRepoDir, planApprovals, providerApprovals,
+    publicationApprovals, modelApprovals,
+    dispatch: { ...options.dispatch, ownerApprovalRef: refs.owner } };
+  assert.deepEqual(verifyModelPublicRelease(publicOptions), audit);
+  const wrongPublicApproval = structuredClone(modelApprovals);
+  wrongPublicApproval.promotions[0].auditSha256 = H("f");
+  assert.throws(() => verifyModelPublicRelease({ ...publicOptions,
+    modelApprovals: wrongPublicApproval }),
+  /modelApprovals.promotion.auditSha256: differs from exact package/);
+  assert.throws(() => verifyModelPublicRelease({ ...publicOptions,
+    dispatch: { ...publicOptions.dispatch, ownerApprovalRef: refs.freeze } }),
+  /dispatch.ownerApprovalRef: differs from exact owner approval/);
+  const originalPublicModel = fs.readFileSync(path.join(fixture.outputDir, RELEASE_FILES.model));
+  fs.appendFileSync(path.join(fixture.outputDir, RELEASE_FILES.model), " ");
+  assert.throws(() => verifyModelPublicRelease(publicOptions),
+    /Release bundle .*model-mf-web.compact.json|Release bundle release-manifest.json/);
+  fs.writeFileSync(path.join(fixture.outputDir, RELEASE_FILES.model), originalPublicModel);
+  fs.writeFileSync(path.join(fixture.outputDir, "model.npz"), "invented private archive");
+  assert.throws(() => verifyModelPublicRelease(publicOptions),
+    /packageDir: has an unsupported file inventory/);
+  fs.unlinkSync(path.join(fixture.outputDir, "model.npz"));
+  const originalBaseAudit = fs.readFileSync(path.join(basePackage, "publication-audit.json"));
+  fs.appendFileSync(path.join(basePackage, "publication-audit.json"), " ");
+  assert.throws(() => verifyModelPublicRelease(publicOptions),
+    /publicationApprovals.base: differs from reviewed data base bytes or owner/);
+  fs.writeFileSync(path.join(basePackage, "publication-audit.json"), originalBaseAudit);
+  const publicCli = spawnSync(process.execPath, ["--import", "tsx",
+    path.join(repoRoot, "pipeline/src/verify-model-release-public.ts"),
+    "--package", fixture.outputDir, "--base", basePackage,
+    "--tag", audit.tag, "--base-tag", audit.base.tag,
+    "--run-id", "123", "--artifact-name", "invented-model",
+    "--owner-approval-ref", refs.owner], { cwd: repoRoot, encoding: "utf8" });
+  assert.notEqual(publicCli.status, 0);
+  assert.match(publicCli.stderr, /providerApprovals\.approvals\.training|modelApprovals/);
   const lateFreeze = structuredClone(modelApprovals);
   lateFreeze.promotions[0].freezeRevision = git("rev-parse", "HEAD");
   assert.throws(() => verifyModelReleasePackage({ ...options,
