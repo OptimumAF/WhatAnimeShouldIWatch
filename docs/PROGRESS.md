@@ -1120,3 +1120,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI and stacked-diff review remain. The invented fixture's refit rows and archive are deliberately constructed; their consistency does not prove that an actual fitted model came from the reviewed raw split. The raw-to-v3 dataset bridge is still an assertion, the private evaluation cohort/policy timing is not independently established, and owner/source-use approvals remain empty. Immutable model publication, exact-tag deployment, hosted checks, and rollback remain. M8.4 and the M8 exit gate stay unchecked.
 
 **Plan revision / single next task:** M8.4's existing numeric integrity requirement now includes a required private sidecar digest and cross-artifact checks, while keeping the older v2 preflight valid. Next: verify an invented raw-split-to-v3 graph identity bridge from restricted inputs and exact producer outputs before designing a real promotion workflow.
+
+## Session 2026-09-28 — M8.4 archive verifier CI review
+
+**PR / exact head:** Committed `4df97985f5503d7bb19afedd4a92e6ef6f0659fb` and opened draft [PR #51](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/51) against PR #50's branch. The 13-file stacked diff passed `git diff --check`; the checkout is clean. [Fixture CI run 36443016967](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36443016967) passed on that implementation SHA, as did GitGuardian. CI used a clean Node/Python install, fixture generation, typecheck, pipeline/Python/workflow tests, web build, and mocked browser smoke.
+
+**Checks not run / blockers:** No real provider or private watchlist input, publication, deployment, or hosted verification was used. The refit archive and synthetic user set in this PR are invented; the local gate proves safe parsing and consistency only. Permitted raw-to-v3 source lineage, predeclared final policy, source/use and owner approvals, immutable model release, exact-tag Pages trigger, hosted checks, and rollback are still missing. M8.4 and M8 remain unchecked. This documentation-only handoff commit needs its own final-head CI check.
+
+**Single next task:** Verify a synthetic raw-snapshot/split-to-v3 graph dataset bridge from restricted inputs and exact producer outputs, preserving the source-use hold for any real dataset.
