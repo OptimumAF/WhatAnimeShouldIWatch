@@ -196,10 +196,19 @@ def refit_frozen_selection(snapshot: RawSnapshot, manifest: object,
 
 def _allow_cli_source(raw: Path, manifest: Path, metadata: Path,
                       training_approval_ref: str | None) -> None:
-    fixture = (
-        raw.resolve() == ROOT / "fixtures" / "synthetic-split-input.json" and
-        manifest.resolve() == ROOT / "fixtures" / "synthetic-split-manifest.json" and
-        metadata.resolve() == ROOT / "fixtures" / "synthetic-anime-metadata.json"
+    # Paths alone cannot make edited or substituted data an approved fixture.
+    fixture_inputs = (
+        (raw, "synthetic-split-input.json",
+         "cf6c53386175613610363b90ace3deb473bc93edbc348e2b099d91634bc23b18"),
+        (manifest, "synthetic-split-manifest.json",
+         "3b21b267a7a9eaa0b677ca7ad1a20ae208b3df2ad7b2826fefeccdfe78bd6b76"),
+        (metadata, "synthetic-anime-metadata.json",
+         "2a2ec17221c63a46d44d85699e72f193f31c1cf5c7f7741a6151b462776f0694"),
+    )
+    fixture = all(
+        source.resolve() == ROOT / "fixtures" / name and
+        hashlib.sha256(source.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == expected
+        for source, name, expected in fixture_inputs
     )
     if fixture:
         return

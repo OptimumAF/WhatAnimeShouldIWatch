@@ -20,9 +20,11 @@ sys.path.insert(0, str(ROOT / "ml"))
 
 import split_first_refit as refit  # noqa: E402
 import split_first_selection as selection  # noqa: E402
-from model_artifact import load_numeric_model  # noqa: E402
+from export_model_web import export_model  # noqa: E402
+from model_artifact import load_numeric_model, metadata_path, save_numeric_model  # noqa: E402
 from raw_interaction_split import build_split_manifest, parse_raw_snapshot  # noqa: E402
 from train_only_preprocessing import load_metadata_snapshot  # noqa: E402
+from verify_split_first_refit import verify_refit  # noqa: E402
 
 
 RAW_PATH = ROOT / "fixtures" / "synthetic-split-input.json"
@@ -143,6 +145,127 @@ class FinalRefitTests(unittest.TestCase):
                 np.testing.assert_array_equal(getattr(left, field), getattr(right, field))
             self.assertEqual(left.global_mean, right.global_mean)
             self.assertEqual(left.train_user_items, right.train_user_items)
+
+    def test_read_only_reproduction_checks_the_selected_refit_and_cli_source_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, manifest, selection_path, _ = self.freeze(self.raw, root)
+            with contextlib.redirect_stdout(io.StringIO()):
+                record = refit.refit_frozen_selection(
+                    snapshot, manifest, self.metadata, selection_path, root / "refit")
+            report = verify_refit(RAW_PATH, MANIFEST_PATH, METADATA_PATH,
+                                  selection_path, root / "refit")
+            self.assertEqual(report["format"], "split-first-refit-reproduction-v1")
+            self.assertEqual(report["refitModelSha256"], record["refitModelSha256"])
+            self.assertEqual(report["modelSeed"], self.spec.model_seed)
+            self.assertEqual((report["trainRows"], report["validationRows"],
+                              report["testRowsExcluded"]), (7, 3, 3))
+            command = [sys.executable, str(ROOT / "ml" / "verify_split_first_refit.py"),
+                       "--raw-ratings", str(RAW_PATH), "--split-manifest", str(MANIFEST_PATH),
+                       "--metadata", str(METADATA_PATH), "--selection", str(selection_path),
+                       "--evidence-dir", str(root / "refit")]
+            completed = subprocess.run(command, cwd=ROOT, capture_output=True,
+                                       text=True, check=True)
+            self.assertEqual(json.loads(completed.stdout), report)
+            self.assertNotIn("invented-a", completed.stdout + completed.stderr)
+            copied = root / "copied-raw.json"
+            copied.write_bytes(RAW_PATH.read_bytes())
+            command[command.index(str(RAW_PATH))] = str(copied)
+            refused = subprocess.run(command, cwd=ROOT, capture_output=True,
+                                     text=True, check=False)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("source/use approval", refused.stderr)
+            self.assertNotIn("invented-a", refused.stdout + refused.stderr)
+
+    def test_rehashed_numeric_arrays_and_selection_seed_cannot_fake_refit_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, manifest, selection_path, report_path = self.freeze(self.raw, root)
+            with contextlib.redirect_stdout(io.StringIO()):
+                refit.refit_frozen_selection(snapshot, manifest, self.metadata,
+                                             selection_path, root / "changed-archive")
+            out_dir = root / "changed-archive"
+            archive_path = out_dir / "model.npz"
+            loaded = load_numeric_model(archive_path)
+            changed_q = loaded.q.copy()
+            changed_q[0, 0] += np.float32(0.125)
+            save_numeric_model(
+                archive_path, p=loaded.p, q=changed_q, bu=loaded.bu, bi=loaded.bi,
+                global_mean=loaded.global_mean, user_ids=loaded.user_ids,
+                anime_ids=loaded.anime_ids, anime_titles=loaded.anime_titles,
+                train_user_items=loaded.train_user_items)
+            changed = load_numeric_model(archive_path)
+            export_model(archive_path, out_dir / "model-mf-web.compact.json", "compact", 8)
+            record_path = out_dir / "refit-record.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record.update({
+                "refitModelSha256": refit.model_fingerprint({
+                    "P": changed.p, "Q": changed.q, "bu": changed.bu, "bi": changed.bi,
+                    "global_mean": changed.global_mean}),
+                "numericArchiveSha256": changed.archive_sha256,
+                "numericMetadataSha256": refit._sha_file(metadata_path(archive_path)),
+                "webModelSha256": refit._sha_file(out_dir / "model-mf-web.compact.json"),
+            })
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"model\.npz\.Q differs"):
+                verify_refit(RAW_PATH, MANIFEST_PATH, METADATA_PATH,
+                             selection_path, out_dir)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                refit.refit_frozen_selection(snapshot, manifest, self.metadata,
+                                             selection_path, root / "changed-seed")
+            selected = json.loads(selection_path.read_text(encoding="utf-8"))
+            selected["selectionSpec"]["modelSeed"] += 1
+            selected["candidateSpecSha256"] = selection._sha(selected["selectionSpec"])
+            selected["selectionSha256"] = selection._sha({
+                key: value for key, value in selected.items() if key != "selectionSha256"})
+            selection_path.write_text(json.dumps(selected), encoding="utf-8")
+            final = json.loads(report_path.read_text(encoding="utf-8"))
+            final["selectionSha256"] = selected["selectionSha256"]
+            report_path.write_text(json.dumps(final), encoding="utf-8")
+            digest_path = Path(str(report_path) + ".sha256.json")
+            digest = json.loads(digest_path.read_text(encoding="utf-8"))
+            digest["selectionSha256"] = selected["selectionSha256"]
+            digest["reportSha256"] = refit._sha_file(report_path)
+            digest_path.write_text(json.dumps(digest), encoding="utf-8")
+            marker_path = Path(str(selection_path) + ".test-used")
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            marker["selectionSha256"] = selected["selectionSha256"]
+            marker_path.write_text(json.dumps(marker), encoding="utf-8")
+            refit_record_path = root / "changed-seed" / "refit-record.json"
+            refit_record = json.loads(refit_record_path.read_text(encoding="utf-8"))
+            refit_record["selectionSha256"] = selected["selectionSha256"]
+            refit_record["candidateSpecSha256"] = selected["candidateSpecSha256"]
+            refit_record["finalReportSha256"] = digest["reportSha256"]
+            refit_record_path.write_text(json.dumps(refit_record), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "selection.selectedModelSha256"):
+                verify_refit(RAW_PATH, MANIFEST_PATH, METADATA_PATH,
+                             selection_path, root / "changed-seed")
+
+            selected["selectionSpec"]["modelSeed"] = self.spec.model_seed
+            selected_id = selected["selectedCandidate"]["id"]
+            selected["selectedCandidate"]["epochs"] += 1
+            for candidate in selected["selectionSpec"]["candidates"]:
+                if candidate["id"] == selected_id:
+                    candidate["epochs"] += 1
+            selected["candidateSpecSha256"] = selection._sha(selected["selectionSpec"])
+            selected["selectionSha256"] = selection._sha({
+                key: value for key, value in selected.items() if key != "selectionSha256"})
+            selection_path.write_text(json.dumps(selected), encoding="utf-8")
+            final["selectionSha256"] = selected["selectionSha256"]
+            report_path.write_text(json.dumps(final), encoding="utf-8")
+            digest["selectionSha256"] = selected["selectionSha256"]
+            digest["reportSha256"] = refit._sha_file(report_path)
+            digest_path.write_text(json.dumps(digest), encoding="utf-8")
+            marker["selectionSha256"] = selected["selectionSha256"]
+            marker_path.write_text(json.dumps(marker), encoding="utf-8")
+            refit_record["selectionSha256"] = selected["selectionSha256"]
+            refit_record["candidateSpecSha256"] = selected["candidateSpecSha256"]
+            refit_record["finalReportSha256"] = digest["reportSha256"]
+            refit_record_path.write_text(json.dumps(refit_record), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "selection.selectedModelSha256"):
+                verify_refit(RAW_PATH, MANIFEST_PATH, METADATA_PATH,
+                             selection_path, root / "changed-seed")
 
     def test_validation_score_change_changes_refit_under_same_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
