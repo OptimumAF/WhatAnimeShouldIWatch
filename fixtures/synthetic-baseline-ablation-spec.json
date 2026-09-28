@@ -1,0 +1,31 @@
+{
+  "format": "split-first-baseline-ablation-spec-v1",
+  "fitSnapshotSha256": "2b1a785b6351a4bea840f62cab546ac387c45594566c806680c0cceef5163ab7",
+  "fitManifestSha256": "5d94b83b46e89f7b9aabbf4fa3e623689cd5ebcf85cb888a9ea609eccbe794d1",
+  "metadataSha256": "f7c731534ab531eaa7c83db9c82dc2e33624e46cabc1e3eea3c6344d4dbd5bd1",
+  "validationSha256": "c6292dd8ff0440da5e57b5255b5bb95f35fb84bac247f9a18c440f401fc9faf1",
+  "mfCandidatesSha256": "34994098ed424638cf2059ef69c70a88a1066b7946d31991beeb93436459b556",
+  "modelCandidateId": "graph-two-epochs",
+  "suppliedCounts": [1, 3, 5, 10],
+  "positiveRawScoreMin": 7,
+  "topK": 10,
+  "similarityMinSupport": 2,
+  "similarityShrinkage": 2,
+  "graphShrinkage": 2,
+  "hybridModelWeight": 0.5,
+  "missingSignalScore": 0,
+  "tieBreak": "anime-id-ascending",
+  "objective": "mean-displayed-ndcg-at-10",
+  "methods": [
+    "train-count",
+    "metadata-score",
+    "supported-adjusted-cosine",
+    "genre-overlap",
+    "v1-positive-pair-graph",
+    "plain-mf",
+    "positive-pair-mf",
+    "unit-positive-pair-mf",
+    "shrunk-positive-pair-mf",
+    "hybrid-default-0.5"
+  ]
+}
