@@ -10,7 +10,7 @@ export const MODEL_SOURCE_FILES = [RELEASE_FILES.manifest, RELEASE_FILES.neighbo
   RELEASE_FILES.explorer, RELEASE_FILES.catalog, RELEASE_FILES.model] as const;
 export const MODEL_PRIVATE_FILES = ["model-promotion-review.json", "selection.json",
   "final-report.json", "final-report.sha256.json", "selection.test-used.json",
-  "refit-record.json", "model.npz", "dataset-bridge.json", "quality-policy.json",
+  "refit-record.json", "model.npz", "model.metadata.json", "dataset-bridge.json", "quality-policy.json",
   "serving-cohort.json", "serving-report.json"] as const;
 export const MODEL_OUTPUT_FILES = [...MODEL_SOURCE_FILES, "model-promotion-audit.json"] as const;
 
@@ -43,6 +43,7 @@ export interface ModelPromotionAuditV1 {
   sourceName: string;
   modelSha256: string;
   numericArchiveSha256: string;
+  numericMetadataSha256: string;
   modelCoverage: number;
   evidence: { reviewSha256: string; selectionFileSha256: string;
     finalReportSha256: string; refitRecordSha256: string;
@@ -184,6 +185,7 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   const required = ["format", "promotionId", "tag", "bundleId", "manifestSha256", "baseTag",
     "baseBundleId", "baseManifestSha256", "sourceName", "sourceDecisionRef", "datasetBridgeDecisionRef",
     "graphDatasetSha256", "rawContentSha256", "modelSha256", "numericArchiveSha256",
+    "numericMetadataSha256",
     "selectionFileSha256", "selectionSha256", "finalReportSha256", "refitRecordSha256",
     "datasetBridgeSha256", "qualityPolicySha256", "servingCohortSha256", "servingReportSha256",
     "minimumModelCoverage", "owner", "ownerApprovalRef",
@@ -196,6 +198,7 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   tag(review.baseTag, "review.baseTag");
   for (const key of ["bundleId", "manifestSha256", "baseBundleId", "baseManifestSha256",
     "graphDatasetSha256", "rawContentSha256", "modelSha256", "numericArchiveSha256",
+    "numericMetadataSha256",
     "selectionFileSha256", "selectionSha256", "finalReportSha256", "refitRecordSha256",
     "datasetBridgeSha256", "qualityPolicySha256", "servingCohortSha256",
     "servingReportSha256"] as const) {
@@ -221,6 +224,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   same(review.numericArchiveSha256, model.sourceModelSha256, "review.numericArchiveSha256");
   same(review.numericArchiveSha256, releaseSha256(privateBytes.get("model.npz")!),
     "model.npz");
+  same(review.numericMetadataSha256, releaseSha256(privateBytes.get("model.metadata.json")!),
+    "model.metadata.json");
   const coverage = manifest.model!.coverage.mappedAnimeCount /
     manifest.model!.coverage.totalCatalogAnimeCount;
   if (coverage < minimumModelCoverage) fail("review.minimumModelCoverage", "model map falls below the floor");
@@ -236,7 +241,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
       "candidateSpecSha256", "rawContentSha256", "splitIdentitySha256", "metadataSha256",
       "fitMembership", "trainRows", "validationRows", "testRowsExcluded", "refitRows",
       "originalTrainSha256", "refitTrainSha256", "refitFitSha256", "refitModelSha256",
-      "numericArchiveSha256", "webModelSha256", "evaluation", "releaseStatus"],
+      "numericArchiveSha256", "numericMetadataSha256", "webModelSha256", "evaluation",
+      "releaseStatus"],
     "refit-record.json");
   const bridge = fields(readEvidence(privateBytes, "dataset-bridge.json"),
     ["format", "sourceName", "rawContentSha256", "graphDatasetSha256", "decisionRef", "reviewRef"],
@@ -288,6 +294,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   same(refit.selectedCandidateId, selectedId, "refit-record.selectedCandidateId");
   same(refit.rawContentSha256, review.rawContentSha256, "refit-record.rawContentSha256");
   same(refit.numericArchiveSha256, review.numericArchiveSha256, "refit-record.numericArchiveSha256");
+  same(refit.numericMetadataSha256, review.numericMetadataSha256,
+    "refit-record.numericMetadataSha256");
   same(refit.webModelSha256, review.modelSha256, "refit-record.webModelSha256");
   const train = positiveInt(refit.trainRows, "refit-record.trainRows");
   const validation = positiveInt(refit.validationRows, "refit-record.validationRows");
@@ -433,6 +441,15 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
     candidateBytes.get(RELEASE_FILES.model)!, options.syntheticFixture === true);
   same(evidence.sourceName, manifest.dataset.source, "review.sourceName");
   try {
+    execFileSync("python", [fileURLToPath(new URL("../../ml/verify_model_promotion_archive.py",
+      import.meta.url)), "--evidence-dir", path.resolve(options.evidenceDir),
+      "--web-model", path.resolve(options.candidateDir, RELEASE_FILES.model)],
+    { cwd: path.resolve(import.meta.dirname, "../.."), encoding: "utf8",
+      maxBuffer: 1024 * 1024, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    fail("model.npz", "safe archive, refit fingerprint, membership, or item export check failed");
+  }
+  try {
     execFileSync(process.execPath, ["--import", "tsx",
       fileURLToPath(new URL("../../web/bench/model-promotion-serving-evaluation.ts", import.meta.url)),
       path.resolve(options.candidateDir), path.resolve(options.evidenceDir)],
@@ -468,6 +485,7 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
       manifestSha256: releaseSha256(baseBytes.get(RELEASE_FILES.manifest)!) },
     datasetSha256: manifest.dataset.sha256, sourceName: evidence.sourceName,
     modelSha256: manifest.model.sha256, numericArchiveSha256: evidence.numericArchiveSha256,
+    numericMetadataSha256: review.numericMetadataSha256 as string,
     modelCoverage: evidence.modelCoverage, evidence: evidence.evidence,
     approvals: evidence.approvals,
     assets: MODEL_SOURCE_FILES.map((name) => ({ path: name,

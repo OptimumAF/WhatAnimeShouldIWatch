@@ -73,12 +73,14 @@ function setup(t: TestContext, synthetic = true) {
   for (const name of [RELEASE_FILES.neighborhood, RELEASE_FILES.explorer, RELEASE_FILES.catalog]) {
     fs.copyFileSync(path.join(baseDir, name), path.join(candidateDir, name));
   }
-  const archive = Buffer.from("invented numeric archive; no user data");
-  fs.writeFileSync(path.join(evidenceDir, "model.npz"), archive);
-  const numericArchiveSha256 = releaseSha256(archive);
-  const model = JSON.parse(fs.readFileSync(path.join(demo, RELEASE_FILES.model), "utf8"));
-  model.sourceModelSha256 = numericArchiveSha256;
-  const modelSha256 = write(candidateDir, RELEASE_FILES.model, model);
+  const generated = spawnSync("python", [path.join(repoRoot, "ml/synthetic_promotion_archive.py"),
+    "--candidate-dir", candidateDir, "--evidence-dir", evidenceDir],
+  { cwd: repoRoot, encoding: "utf8" });
+  assert.equal(generated.status, 0, generated.stderr);
+  const archiveEvidence = JSON.parse(generated.stdout);
+  const { numericArchiveSha256, numericMetadataSha256, refitModelSha256 } = archiveEvidence;
+  const model = JSON.parse(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.model), "utf8"));
+  const modelSha256 = releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.model)));
   const manifest = writeReleaseManifest(candidateDir, "data-vinvented-model", baseDir);
   const rawContentSha256 = H("a");
   const selectionSha256 = H("b");
@@ -106,8 +108,8 @@ function setup(t: TestContext, synthetic = true) {
     selectedCandidateId: "invented-mf", rawContentSha256,
     candidateSpecSha256: H("c"), splitIdentitySha256: H("d"), metadataSha256: H("e"),
     originalTrainSha256: H("f"), refitTrainSha256: H("1"),
-    refitFitSha256: H("2"), refitModelSha256: H("3"),
-    numericArchiveSha256, webModelSha256: modelSha256,
+    refitFitSha256: H("2"), refitModelSha256,
+    numericArchiveSha256, numericMetadataSha256, webModelSha256: modelSha256,
     trainRows: 7, validationRows: 3, testRowsExcluded: 3, refitRows: 10,
     evaluation: "none; this record contains no held-out quality metric",
   });
@@ -125,8 +127,8 @@ function setup(t: TestContext, synthetic = true) {
   });
   const cohort = { format: "model-promotion-cohort-v1", seed: 42, sourceName,
     datasetSha256: graph.dataset.sha256,
-    trainingUsers: ["fixture-overlap-a", "fixture-overlap-b", "fixture-opposite",
-      "fixture-equal", "fixture-sparse", "fixture-empty", "fixture-duplicate-unknown"],
+    trainingUsers: JSON.parse(fs.readFileSync(path.join(evidenceDir,
+      "model.metadata.json"), "utf8")).userIds,
     metadata: JSON.parse(fs.readFileSync(path.join(demo, "catalog.json"), "utf8")),
     baselineValidation: Array.from({ length: 4 }, (_, index) =>
       caseFor(`invented-promo-validation-${index + 1}`, 102)),
@@ -159,7 +161,8 @@ function setup(t: TestContext, synthetic = true) {
     baseManifestSha256: releaseSha256(fs.readFileSync(path.join(baseDir, RELEASE_FILES.manifest))),
     sourceName, sourceDecisionRef: decision, datasetBridgeDecisionRef: promotionDecision,
     graphDatasetSha256: graph.dataset.sha256, rawContentSha256, modelSha256,
-    numericArchiveSha256, selectionFileSha256, selectionSha256, finalReportSha256,
+    numericArchiveSha256, numericMetadataSha256,
+    selectionFileSha256, selectionSha256, finalReportSha256,
     refitRecordSha256, datasetBridgeSha256, qualityPolicySha256,
     servingCohortSha256, servingReportSha256,
     minimumModelCoverage: 0.9,
@@ -211,7 +214,7 @@ test("invented v3 model package copies only item assets and records private hash
     assert.deepEqual(fs.readFileSync(path.join(fixture.candidateDir, name)),
       fs.readFileSync(path.join(fixture.outputDir, name)));
   }
-  for (const privateName of ["model.npz", "selection.json", "final-report.json",
+  for (const privateName of ["model.npz", "model.metadata.json", "selection.json", "final-report.json",
     "refit-record.json", "dataset-bridge.json", "serving-cohort.json",
     "serving-report.json"]) {
     assert.equal(fs.existsSync(path.join(fixture.outputDir, privateName)), false);
@@ -293,6 +296,21 @@ test("a rehashed, passing-looking authored quality claim fails browser recomputa
   updateReview(fixture, { servingReportSha256 });
   assert.throws(() => packageModelRelease({ ...fixture, syntheticFixture: true }),
     /serving-report\.json: browser scorer recomputation or frozen quality gate failed/);
+});
+
+test("a rehashed private sidecar cannot change the archive fit-user set", (t) => {
+  const fixture = setup(t);
+  const sidecar = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir,
+    "model.metadata.json"), "utf8"));
+  sidecar.userIds[0] = "invented-other-fit-user";
+  const numericMetadataSha256 = write(fixture.evidenceDir, "model.metadata.json", sidecar);
+  const refit = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir,
+    "refit-record.json"), "utf8"));
+  refit.numericMetadataSha256 = numericMetadataSha256;
+  const refitRecordSha256 = write(fixture.evidenceDir, "refit-record.json", refit);
+  updateReview(fixture, { numericMetadataSha256, refitRecordSha256 });
+  assert.throws(() => packageModelRelease({ ...fixture, syntheticFixture: true }),
+    /model.npz: safe archive, refit fingerprint, membership, or item export check failed/);
 });
 
 test("a generated report must meet the frozen coverage and fresh latency gates", (t) => {
@@ -431,6 +449,7 @@ test("an invented reviewed package requires exact model, provider, and data-base
     datasetBridgeSha256: audit.evidence.datasetBridgeSha256,
     datasetBridgeReviewRef: refs.bridge,
     qualityPolicySha256: audit.evidence.qualityPolicySha256,
+    numericMetadataSha256: audit.numericMetadataSha256,
     servingCohortSha256: audit.evidence.servingCohortSha256,
     servingReportSha256: audit.evidence.servingReportSha256,
     owner: audit.approvals.owner, ownerApprovalRef: refs.owner,

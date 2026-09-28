@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import subprocess
@@ -94,6 +95,12 @@ class FinalRefitTests(unittest.TestCase):
             loaded = load_numeric_model(out_dir / "model.npz")
             self.assertEqual(len(loaded.user_ids), 4)
             self.assertEqual(loaded.archive_sha256, record["numericArchiveSha256"])
+            self.assertEqual(hashlib.sha256((out_dir / "model.metadata.json").read_bytes()).hexdigest(),
+                             record["numericMetadataSha256"])
+            self.assertEqual(refit.model_fingerprint({
+                "P": loaded.p, "Q": loaded.q, "bu": loaded.bu, "bi": loaded.bi,
+                "global_mean": loaded.global_mean,
+            }), record["refitModelSha256"])
             self.assertTrue((out_dir / "model.metadata.json").is_file())
             web = json.loads((out_dir / "model-mf-web.compact.json").read_text(encoding="utf-8"))
             self.assertEqual(web["sourceModelSha256"], loaded.archive_sha256)
