@@ -974,3 +974,13 @@
 **Plan revision and reason:** Kept M8.3's publication criteria unchanged. The package is a local, synthetic-tested component of the larger publication task; the audit now explicitly records manifest and graph formats and model absence, and output is required outside its source directories.
 
 **Single next task:** Wire an immutable, approval-gated publication workflow to the audited data-only package, then verify only invented inputs and static workflow safety before considering any real source/use approval.
+
+## Session 2026-09-28 — M8.3 package CI review
+
+**Reviewed implementation:** Draft [PR #45](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/45), `codex/m8-publication-package` commit `76e2515`, stacked on PR #44. Reviewed the exact source and output inventories, v3 and prior verifier calls, review binding, computed audit, size/hash checks, failure cleanup, seven adversarial tests, and the six-file stacked diff. `git diff --check codex/m8-aggregate-graph...HEAD` passed.
+
+**Clean-checkout evidence:** [CI run 36425492935](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36425492935) and GitGuardian passed on the exact implementation SHA. The job ran synthetic fixture and evaluation checks, typecheck, 80 pipeline and 107 web unit tests, 68 ML tests, 10 workflow tests, web build, and 66 mocked browser cases.
+
+**Unrun / remaining:** No real candidate, release upload, provider data, private watchlist, deployment, or model promotion was read or changed. The packager has no upload caller; the approval manifest is empty. M8.3 remains unchecked because source/use and quality approval and an immutable publication workflow are unverified. M8's exit gate remains open.
+
+**Single next task:** Add and statically test an immutable, approval-gated publication workflow that consumes only the audited five-file package, while preserving the real publication hold.
