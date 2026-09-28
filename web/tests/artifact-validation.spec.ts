@@ -101,6 +101,23 @@ test("a present malformed source model digest is named and graph fallback remain
   await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
 });
 
+test("a compact model with undeclared user factors fails visibly and keeps graph fallback", async ({ page }) => {
+  const model = demoArtifact("model-mf-web.compact.json");
+  model.userFactors = [[1, 0]];
+  await page.route("**/demo-data/model-mf-web.compact.json", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify(model),
+  }));
+  await page.goto("/");
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText(
+    "synthetic demo model: root.userFactors is unsupported",
+  );
+  await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
+});
+
 test("a present malformed model dataset digest names the field and keeps graph fallback", async ({ page }) => {
   const model = demoArtifact("model-mf-web.compact.json");
   model.datasetSha256 = "not-a-sha";

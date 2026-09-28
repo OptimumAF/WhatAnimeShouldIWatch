@@ -237,6 +237,17 @@ test("optional numeric source digest is validated in compact and legacy models",
     /sourceModelSha256.*lowercase SHA-256/);
 });
 
+test("compact item model rejects undeclared user factors at the browser boundary", () => {
+  const model = fixture("model-mf-web.compact.json");
+  model.userFactors = [[1, 0]];
+  assert.throws(() => parseCompactModel(model, "model-mf-web.compact.json"),
+    /model-mf-web.compact.json: root.userFactors is unsupported/);
+  delete model.userFactors;
+  model.trainUserItems = { invented: [101] };
+  assert.throws(() => parseCompactModel(model, "model-mf-web.compact.json"),
+    /model-mf-web.compact.json: root.trainUserItems is unsupported/);
+});
+
 test("release identity and manifest contracts reject stale fields and mutable tags", () => {
   const catalog = fixture("catalog.identity.json");
   const manifest = fixture("release-manifest.json");

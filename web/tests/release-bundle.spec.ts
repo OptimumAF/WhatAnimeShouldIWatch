@@ -72,15 +72,24 @@ async function routeBundle(page: Page, options: { corruptGraph?: boolean; corrup
   return requests;
 }
 
-async function routeAggregateBundle(page: Page) {
+async function routeAggregateBundle(page: Page, options: { withModel?: boolean } = {}) {
   const source = JSON.parse(fixture("graph.compact.json").toString("utf8"));
   const graph = projectAggregateGraph(source);
   const explorer = buildExplorerGraph(graph, 5, 0);
   const graphBytes = Buffer.from(`${JSON.stringify(graph, null, 2)}\n`);
   const explorerBytes = Buffer.from(`${JSON.stringify(explorer, null, 2)}\n`);
   const catalogBytes = fixture("catalog.identity.json");
-  const release = buildReleaseManifest({ neighborhood: graphBytes, explorer: explorerBytes,
+  const base = buildReleaseManifest({ neighborhood: graphBytes, explorer: explorerBytes,
     catalog: catalogBytes }, { tag: "data-vinvented-aggregate-browser", fixtureGenesis: true });
+  const baseBytes = Buffer.from(`${JSON.stringify(base, null, 2)}\n`);
+  const modelBytes = fixture("model-mf-web.compact.json");
+  const release = options.withModel
+    ? buildReleaseManifest({ neighborhood: graphBytes, explorer: explorerBytes,
+      catalog: catalogBytes, model: modelBytes }, {
+      tag: "data-vinvented-aggregate-model-browser",
+      lastKnownGood: { tag: base.tag, bundleId: base.bundleId,
+        manifestSha256: crypto.createHash("sha256").update(baseBytes).digest("hex") },
+    }) : base;
   const releaseBytes = Buffer.from(`${JSON.stringify(release, null, 2)}\n`);
   const active = { format: "active-release-bundle-v1", tag: release.tag,
     bundleId: release.bundleId,
@@ -90,6 +99,7 @@ async function routeAggregateBundle(page: Page) {
     ["graph.compact.json", graphBytes],
     ["graph-explorer.compact.json", explorerBytes],
     ["catalog.identity.json", catalogBytes],
+    ...(options.withModel ? [["model-mf-web.compact.json", modelBytes] as [string, Buffer]] : []),
   ]);
   const requests: string[] = [];
   await page.route("**/*", (route) => {
@@ -196,5 +206,18 @@ test("aggregate-only bundle ranks pairs and labels sampled popularity unavailabl
   await expect(page.locator("#rec-engine-status")).toContainText("Using graph recommendations");
   await expect(page.locator("#rec-results")).toContainText("Moonlit Workshop");
   expect(requests).toContain(`/data/bundles/${release.bundleId}/graph.compact.json`);
+  expect(requests.some((name) => name.includes("anonymized-ratings"))).toBe(false);
+});
+
+test("aggregate-only graph can serve a pinned item-only model without user history", async ({ page }) => {
+  const { requests, release } = await routeAggregateBundle(page, { withModel: true });
+  expect(release.model?.coverage.mappedAnimeCount).toBe(8);
+  await page.goto(normalAppUrl);
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations (2 factors)");
+  expect(requests).toContain(`/data/bundles/${release.bundleId}/model-mf-web.compact.json`);
   expect(requests.some((name) => name.includes("anonymized-ratings"))).toBe(false);
 });
