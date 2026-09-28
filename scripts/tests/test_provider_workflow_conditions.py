@@ -8,8 +8,6 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 GUARDED = {
     "ml-retrain.yml": ("training", {"retrain"}),
-    "publish-data-release.yml": ("publication", {"verify", "publish"}),
-    "deploy-web.yml": ("deployment", {"build", "deploy"}),
 }
 
 
@@ -25,11 +23,6 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
             for job_name, job in jobs.items():
                 with self.subTest(workflow=filename, job=job_name):
                     expression = job.get("if", "")
-                    if filename == "publish-data-release.yml":
-                        self.assertIn("github.ref == 'refs/heads/master' &&", expression)
-                        expression = expression.replace(
-                            "github.ref == 'refs/heads/master' && ", ""
-                        )
                     match = re.fullmatch(
                         r"\$\{\{\s*vars\.([A-Z_]+)\s*==\s*'true'\s*&&\s*vars\.([A-Z_]+)\s*!=\s*''\s*\}\}",
                         expression,
@@ -46,9 +39,6 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
                         actual = variables.get(flag, "") == "true" and variables.get(ref, "") != ""
                         self.assertEqual(actual, should_run)
 
-                    if job_name == "deploy":
-                        self.assertEqual(job.get("needs"), "build")
-                        continue
                     steps = job["steps"]
                     self.assertEqual(steps[0].get("uses"), "actions/checkout@v4")
                     self.assertEqual(
@@ -75,9 +65,18 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         self.assertEqual(workflow["concurrency"]["cancel-in-progress"], False)
         verify = workflow["jobs"]["verify"]
         publish = workflow["jobs"]["publish"]
+        trigger = workflow["jobs"]["trigger_pages"]
+        self.assertEqual(set(workflow["jobs"]), {"verify", "publish", "trigger_pages"})
         self.assertEqual(verify["permissions"], {"contents": "read", "actions": "read"})
         self.assertEqual(publish["permissions"], {"contents": "write", "actions": "read"})
         self.assertEqual(publish["needs"], "verify")
+        self.assertEqual(trigger["needs"], "publish")
+        self.assertEqual(trigger["permissions"], {"contents": "read", "actions": "write"})
+        publication_gate = "${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' }}"
+        self.assertEqual(verify["if"], publication_gate)
+        self.assertEqual(publish["if"], publication_gate)
+        self.assertIn("vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true'", trigger["if"])
+        self.assertIn("vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != ''", trigger["if"])
         self.assertFalse(workflow[True]["workflow_dispatch"]["inputs"]["previous_tag"]["required"])
         verify_steps = verify["steps"]
         publish_steps = publish["steps"]
@@ -125,6 +124,16 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         self.assertNotIn("--clobber", str(workflow))
         self.assertNotIn("anonymized-ratings", str(workflow))
         self.assertNotIn("data-latest", str(workflow))
+        trigger_steps = trigger["steps"]
+        self.assertEqual(trigger_steps[0]["uses"], "actions/checkout@v4")
+        self.assertIn("verify_provider_data_approval.py deployment", trigger_steps[1]["run"])
+        trigger_run = trigger_steps[2]["run"]
+        self.assertLess(trigger_run.index("verify_immutable_data_release.py published"),
+                        trigger_run.index("gh workflow run deploy-web.yml"))
+        for field in ("kind=data", "tag=$RELEASE_TAG", "manifest_sha256=$MANIFEST_SHA256",
+                      "source_run_id=$SOURCE_RUN_ID", "artifact_name=$ARTIFACT_NAME",
+                      "previous_tag=$PREVIOUS_TAG"):
+            self.assertIn(field, trigger_run)
 
     def test_immutable_model_release_transfers_only_six_public_files(self):
         workflow = yaml.safe_load((WORKFLOWS / "publish-model-release.yml").read_text(
@@ -137,9 +146,13 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         self.assertTrue(all(item["required"] for item in inputs.values()))
         verify = workflow["jobs"]["verify"]
         publish = workflow["jobs"]["publish"]
+        trigger = workflow["jobs"]["trigger_pages"]
+        self.assertEqual(set(workflow["jobs"]), {"verify", "publish", "trigger_pages"})
         self.assertEqual(verify["permissions"], {"contents": "read", "actions": "read"})
         self.assertEqual(publish["permissions"], {"contents": "write", "actions": "read"})
         self.assertEqual(publish["needs"], "verify")
+        self.assertEqual(trigger["needs"], "publish")
+        self.assertEqual(trigger["permissions"], {"contents": "read", "actions": "write"})
         gate_parts = ["github.ref == 'refs/heads/master'"]
         for scope in ("TRAINING", "PUBLICATION", "DEPLOYMENT"):
             gate_parts.extend([
@@ -149,7 +162,7 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
         gate_parts.extend(["vars.MODEL_PROMOTION_APPROVED == 'true'",
                            "vars.MODEL_PROMOTION_APPROVAL_REF != ''"])
         expected_gate = "${{ " + " && ".join(gate_parts) + " }}"
-        for job in (verify, publish):
+        for job in (verify, publish, trigger):
             gate = job["if"]
             self.assertEqual(gate, expected_gate)
             self.assertIn("github.ref == 'refs/heads/master'", gate)
@@ -160,7 +173,8 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
             self.assertIn("vars.MODEL_PROMOTION_APPROVAL_REF != ''", gate)
             steps = job["steps"]
             self.assertEqual(steps[0].get("uses"), "actions/checkout@v4")
-            self.assertEqual(steps[0].get("with", {}).get("fetch-depth"), 0)
+            if job is not trigger:
+                self.assertEqual(steps[0].get("with", {}).get("fetch-depth"), 0)
             for scope in ("training", "publication", "deployment"):
                 self.assertIn(f"scripts/verify_provider_data_approval.py {scope}",
                               steps[1]["run"])
@@ -197,6 +211,66 @@ class ProviderWorkflowConditionTests(unittest.TestCase):
                      "--clobber"):
             self.assertNotIn(text, str(workflow))
         self.assertNotIn("*", create)
+        trigger_run = trigger["steps"][2]["run"]
+        self.assertLess(trigger_run.index("verify_immutable_model_release published"),
+                        trigger_run.index("gh workflow run deploy-web.yml"))
+        for field in ("kind=model", "tag=$RELEASE_TAG", "manifest_sha256=$MANIFEST_SHA256",
+                      "source_run_id=$SOURCE_RUN_ID", "artifact_name=$ARTIFACT_NAME",
+                      "previous_tag=$BASE_TAG"):
+            self.assertIn(field, trigger_run)
+
+    def test_pages_deployment_uses_only_approved_exact_release(self):
+        workflow = yaml.safe_load((WORKFLOWS / "deploy-web.yml").read_text(
+            encoding="utf-8"))
+        self.assertEqual(set(workflow[True]), {"workflow_dispatch"})
+        self.assertEqual(set(workflow["jobs"]), {"build", "deploy", "verify_hosted"})
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+        inputs = workflow[True]["workflow_dispatch"]["inputs"]
+        self.assertEqual(set(inputs), {"kind", "tag", "manifest_sha256",
+                                       "source_run_id", "artifact_name", "previous_tag"})
+        self.assertEqual(inputs["kind"]["options"], ["data", "model"])
+        build, deploy = workflow["jobs"]["build"], workflow["jobs"]["deploy"]
+        hosted = workflow["jobs"]["verify_hosted"]
+        self.assertEqual(build["if"], deploy["if"])
+        self.assertEqual(build["if"], hosted["if"])
+        for key in ("DEPLOYMENT", "PUBLICATION"):
+            self.assertIn(f"vars.PROVIDER_DATA_{key}_APPROVED == 'true'", build["if"])
+            self.assertIn(f"vars.PROVIDER_DATA_{key}_APPROVAL_REF != ''", build["if"])
+        self.assertIn("vars.PROVIDER_DATA_TRAINING_APPROVED == 'true'", build["if"])
+        self.assertIn("vars.MODEL_PROMOTION_APPROVED == 'true'", build["if"])
+        self.assertEqual(build["permissions"], {"contents": "read"})
+        self.assertEqual(deploy["permissions"], {"pages": "write", "id-token": "write"})
+        self.assertEqual(deploy["needs"], "build")
+        self.assertEqual(hosted["permissions"], {"contents": "read"})
+        self.assertEqual(hosted["needs"], "deploy")
+        self.assertEqual(hosted["steps"][0]["uses"], "actions/checkout@v4")
+        self.assertIn("verify_provider_data_approval.py deployment", hosted["steps"][1]["run"])
+        self.assertIn("verify_hosted_pages", hosted["steps"][2]["run"])
+        steps = build["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertEqual(steps[0]["uses"], "actions/checkout@v4")
+        self.assertEqual(steps[0]["with"]["fetch-depth"], 0)
+        for scope in ("deployment", "publication", "training"):
+            self.assertIn(f"verify_provider_data_approval.py {scope}", steps[1]["run"])
+        self.assertLess(names.index("Verify source-use approvals before release access"),
+                        names.index("Download only named public release assets"))
+        self.assertLess(names.index("Install pinned dependencies and run offline gates"),
+                        names.index("Download only named public release assets"))
+        self.assertLess(names.index("Verify published immutable state and remote asset hashes"),
+                        names.index("Recompute approvals and atomically install the exact public bundle"))
+        self.assertLess(names.index("Build exact project-path Pages output and verify direct entry"),
+                        next(index for index, step in enumerate(steps) if
+                             step.get("uses") == "actions/upload-pages-artifact@v3"))
+        runs = "\n".join(step.get("run", "") for step in steps)
+        for command in ("npm ci", "npm run data:fixture:check", "npm run typecheck",
+                        "npm test", "npm run test:python", "npm run test:e2e",
+                        "npm run test:pages", "prepare-pages-bundle.ts",
+                        "finalize-pages-build.ts"):
+            self.assertIn(command, runs)
+        for disallowed in ("data:fetch:release", "sync:web", "data-latest",
+                           "--clobber", "anonymized-ratings", "model.npz"):
+            self.assertNotIn(disallowed, str(workflow))
 
 
 if __name__ == "__main__":

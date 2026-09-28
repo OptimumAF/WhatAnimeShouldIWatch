@@ -16,7 +16,12 @@ import type {
 import type { ModelRecommendationIndex } from "./domain";
 import type { RuntimePorts } from "./runtime";
 
-export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
+export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
+  publicBasePath = "./") {
+  if (!/^(?:\.\/|\/|\/[A-Za-z0-9._-]+\/)$/.test(publicBasePath)) {
+    throw new Error("Artifact base path must be ./, /, or one absolute project path.");
+  }
+  const publicPath = (relative: string) => `${publicBasePath}${relative.replace(/^\.\//, "")}`;
   let activeBundlePromise: Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> | null = null;
 
   async function getActiveBundle(): Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> {
@@ -26,14 +31,14 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
   }
 
   async function loadActiveBundle(): Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> {
-    const response = await runtime.fetch("./data/active.json", {
+    const response = await runtime.fetch(publicPath("./data/active.json"), {
       headers: { Accept: "application/json" }, cache: "no-store",
     });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`active.json: unable to load (${response.status}).`);
     const pointer = parseActiveReleaseBundle(parseBoundedJson(await readBoundedResponse(response,
       RELEASE_BUNDLE_LIMITS.activePointerBytes, "active.json"), "active.json"), "active.json");
-    const basePath = `./data/bundles/${pointer.bundleId}/`;
+    const basePath = publicPath(`./data/bundles/${pointer.bundleId}/`);
     const manifestResponse = await runtime.fetch(`${basePath}release-manifest.json`, {
       headers: { Accept: "application/json" },
     });
@@ -209,7 +214,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
   }
 
   async function fetchPlainJson(url: string, label: string): Promise<unknown> {
-    const response = await runtime.fetch(url);
+    const response = await runtime.fetch(publicPath(url));
     if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
     try {
       return await response.json();
@@ -219,7 +224,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
   }
 
   async function fetchOptionalPlainJson(url: string, label: string): Promise<{ value: unknown } | null> {
-    const response = await runtime.fetch(url);
+    const response = await runtime.fetch(publicPath(url));
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`Unable to load ${label} (${response.status}).`);
     try {
@@ -238,7 +243,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
     required: boolean;
     label: string;
   }): Promise<{ value: unknown } | null> {
-    const gzPath = `${path}.gz`;
+    const gzPath = publicPath(`${path}.gz`);
     let gzStatus: number | null = null;
 
     try {
@@ -257,7 +262,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean) {
       console.warn(`Fetch failed for ${label}.gz`, error);
     }
 
-    const response = await runtime.fetch(path);
+    const response = await runtime.fetch(publicPath(path));
     if (!response.ok) {
       if (!required && response.status === 404 && (gzStatus === 404 || gzStatus === null)) {
         return null;

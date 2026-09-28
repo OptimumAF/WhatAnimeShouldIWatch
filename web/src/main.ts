@@ -75,7 +75,7 @@ import "./style.css";
 const runtime = createBrowserRuntime();
 const providerAdapter = createProviderAdapter(runtime);
 const demoMode = import.meta.env.VITE_DEMO_MODE === "true";
-const artifactLoader = createArtifactLoader(runtime, demoMode);
+const artifactLoader = createArtifactLoader(runtime, demoMode, import.meta.env.BASE_URL);
 const persistence = createPersistenceAdapter(runtime, demoMode ? "wasiw.demo" : "wasiw");
 
 type AppView = "recommendations" | "network";

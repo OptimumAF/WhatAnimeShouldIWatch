@@ -55,6 +55,26 @@ test("runtime randomness is repeatable from an injected synthetic seed", () => {
   assert.ok(sequence.every((value) => value >= 0 && value < 1));
 });
 
+test("project Pages base pins asset URLs even after direct nested navigation", async () => {
+  const prefix = "/WhatAnimeShouldIWatch/";
+  const fake = fakeRuntime((url) => {
+    if (url === `${prefix}data/active.json` ||
+        url === `${prefix}data/graph.compact.json.gz`) return jsonResponse({}, 404);
+    if (url === `${prefix}data/graph.compact.json`) {
+      return jsonResponse(fixture("graph.compact.json"));
+    }
+    throw new Error(`Unexpected asset URL: ${url}`);
+  });
+  const graph = await createArtifactLoader(fake.runtime, false, prefix).fetchGraph();
+  assert.equal(graph.format, "graph-compact-v2");
+  assert.deepEqual(fake.requests.map((request) => request.url), [
+    `${prefix}data/active.json`, `${prefix}data/graph.compact.json.gz`,
+    `${prefix}data/graph.compact.json`,
+  ]);
+  assert.throws(() => createArtifactLoader(fake.runtime, false, "../"),
+    /Artifact base path/);
+});
+
 test("persistence uses injected storage, prefix, and clock while migrating legacy keys", () => {
   const fake = fakeRuntime(() => { throw new Error("network must not be used"); });
   const persistence = createPersistenceAdapter(fake.runtime, "wasiw.demo");

@@ -16,6 +16,7 @@ import { OUTPUT_FILES, packageDataRelease, PUBLIC_FIELDS,
 import { RELEASE_FILES, releaseSha256, writeReleaseManifest } from "../src/release-manifest.js";
 import { verifyModelReleasePackage } from "../src/verify-model-release-package.js";
 import { verifyModelPublicRelease } from "../src/verify-model-release-public.js";
+import { preparePagesBundle } from "../src/prepare-pages-bundle.js";
 import { generateServingReport, verifyServingReport } from
   "../../web/bench/model-promotion-serving-evaluation.ts";
 import type { CompactGraphDataV2 } from "../src/types.js";
@@ -587,7 +588,7 @@ test("failed staging leaves no output and the empty committed registry rejects s
   assert.match(result.stderr, /syntheticFixture|synthetic|unapproved/);
 });
 
-test("an invented reviewed package requires exact model, provider, and data-base approvals", (t) => {
+test("an invented reviewed package requires exact model, provider, and data-base approvals", async (t) => {
   const fixture = setup(t, false, true);
   const baseReview: PublicationReviewV1 = {
     format: "publication-review-v1", tag: fixture.baseManifest.tag,
@@ -688,6 +689,25 @@ test("an invented reviewed package requires exact model, provider, and data-base
     publicationApprovals, modelApprovals,
     dispatch: { ...options.dispatch, ownerApprovalRef: refs.owner } };
   assert.deepEqual(verifyModelPublicRelease(publicOptions), audit);
+  const storeDir = path.join(fixture.root, "pages-store");
+  const pagesOptions = { kind: "model" as const, packageDir: fixture.outputDir,
+    previousDir: basePackage, previousTag: audit.base.tag,
+    storeDir, tag: audit.tag, manifestSha256: audit.manifestSha256,
+    sourceRunId: 123, artifactName: "invented-model",
+    publicationApprovalRef: refs.publication, deploymentApprovalRef: refs.deployment,
+    ownerApprovalRef: refs.owner, providerApprovals, publicationApprovals,
+    modelApprovals, planApprovals, approvalRepoDir };
+  await assert.rejects(() => preparePagesBundle({ ...pagesOptions,
+    deploymentApprovalRef: refs.training }),
+  /providerApprovals.approvals.deployment.*source, owner, and reference/);
+  const installed = await preparePagesBundle(pagesOptions);
+  assert.equal(installed.bundleId, audit.bundleId);
+  assert.equal(fs.existsSync(path.join(storeDir, "bundles", audit.bundleId,
+    RELEASE_FILES.model)), true);
+  assert.equal(fs.existsSync(path.join(storeDir, "bundles", audit.base.bundleId,
+    RELEASE_FILES.manifest)), true);
+  assert.equal(fs.existsSync(path.join(storeDir, "bundles", audit.bundleId,
+    "model-promotion-audit.json")), false);
   const wrongPublicApproval = structuredClone(modelApprovals);
   wrongPublicApproval.promotions[0].auditSha256 = H("f");
   assert.throws(() => verifyModelPublicRelease({ ...publicOptions,

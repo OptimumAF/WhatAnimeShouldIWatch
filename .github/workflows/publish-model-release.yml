@@ -238,3 +238,45 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 -m scripts.verify_immutable_model_release published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate
+
+  trigger_pages:
+    needs: publish
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_TRAINING_APPROVED == 'true' && vars.PROVIDER_DATA_TRAINING_APPROVAL_REF != '' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' && vars.MODEL_PROMOTION_APPROVED == 'true' && vars.MODEL_PROMOTION_APPROVAL_REF != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recheck source-use approvals before release access
+        env:
+          TRAINING_REF: ${{ vars.PROVIDER_DATA_TRAINING_APPROVAL_REF }}
+          PUBLICATION_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+          DEPLOYMENT_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+        run: |
+          PROVIDER_DATA_APPROVAL_REF="$TRAINING_REF" python3 scripts/verify_provider_data_approval.py training
+          PROVIDER_DATA_APPROVAL_REF="$PUBLICATION_REF" python3 scripts/verify_provider_data_approval.py publication
+          PROVIDER_DATA_APPROVAL_REF="$DEPLOYMENT_REF" python3 scripts/verify_provider_data_approval.py deployment
+
+      - name: Recheck exact immutable release and dispatch Pages
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          BASE_TAG: ${{ inputs.base_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir candidate
+          gh release download "$RELEASE_TAG" --dir candidate \
+            --pattern release-manifest.json --pattern graph.compact.json \
+            --pattern graph-explorer.compact.json --pattern catalog.identity.json \
+            --pattern model-mf-web.compact.json --pattern model-promotion-audit.json
+          python3 -m scripts.verify_immutable_model_release published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate
+          MANIFEST_SHA256="$(sha256sum candidate/release-manifest.json | cut -d ' ' -f 1)"
+          python3 -m scripts.verify_pages_deployment "$GITHUB_REPOSITORY" model "$RELEASE_TAG" "$MANIFEST_SHA256" "$SOURCE_RUN_ID" "$ARTIFACT_NAME" "$BASE_TAG"
+          gh workflow run deploy-web.yml --ref master \
+            -f kind=model -f "tag=$RELEASE_TAG" -f "manifest_sha256=$MANIFEST_SHA256" \
+            -f "source_run_id=$SOURCE_RUN_ID" -f "artifact_name=$ARTIFACT_NAME" \
+            -f "previous_tag=$BASE_TAG"

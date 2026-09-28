@@ -1,72 +1,209 @@
-name: Deploy Web (GitHub Pages)
+name: Deploy Reviewed Web Bundle (GitHub Pages)
 
 on:
-  push:
-    branches: ["master"]
-    paths:
-      - "web/**"
-      - "pipeline/**"
-      - ".github/workflows/deploy-web.yml"
-      - "package.json"
-      - "package-lock.json"
   workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+    inputs:
+      kind:
+        description: Published audited release type
+        required: true
+        type: choice
+        options: [data, model]
+      tag:
+        description: Exact immutable data-v release tag
+        required: true
+        type: string
+      manifest_sha256:
+        description: Exact published release-manifest.json SHA-256
+        required: true
+        type: string
+      source_run_id:
+        description: Approved source run pinned by the committed release record
+        required: true
+        type: string
+      artifact_name:
+        description: Approved artifact name pinned by the committed release record
+        required: true
+        type: string
+      previous_tag:
+        description: Exact data-only predecessor; empty only for an approved first data release
+        required: false
+        type: string
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    # This build downloads the provider-derived release before creating Pages output.
-    if: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' }}
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' && (inputs.kind != 'model' || (vars.PROVIDER_DATA_TRAINING_APPROVED == 'true' && vars.PROVIDER_DATA_TRAINING_APPROVAL_REF != '' && vars.MODEL_PROMOTION_APPROVED == 'true' && vars.MODEL_PROMOTION_APPROVAL_REF != '')) }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Verify recorded deployment approval
+      - name: Verify source-use approvals before release access
         env:
-          PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
-        run: python3 scripts/verify_provider_data_approval.py deployment
+          RELEASE_KIND: ${{ inputs.kind }}
+          DEPLOYMENT_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+          PUBLICATION_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+          TRAINING_REF: ${{ vars.PROVIDER_DATA_TRAINING_APPROVAL_REF }}
+        run: |
+          PROVIDER_DATA_APPROVAL_REF="$DEPLOYMENT_REF" python3 scripts/verify_provider_data_approval.py deployment
+          PROVIDER_DATA_APPROVAL_REF="$PUBLICATION_REF" python3 scripts/verify_provider_data_approval.py publication
+          if [[ "$RELEASE_KIND" == model ]]; then
+            PROVIDER_DATA_APPROVAL_REF="$TRAINING_REF" python3 scripts/verify_provider_data_approval.py training
+          fi
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Validate exact immutable-release dispatch
+        env:
+          RELEASE_KIND: ${{ inputs.kind }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+        run: python3 -m scripts.verify_pages_deployment "$GITHUB_REPOSITORY" "$RELEASE_KIND" "$RELEASE_TAG" "$MANIFEST_SHA256" "$SOURCE_RUN_ID" "$ARTIFACT_NAME" "$PREVIOUS_TAG"
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install pinned dependencies and run offline gates
+        run: |
+          npm ci
+          npm run data:fixture:check
+          npm run typecheck
+          npm test
+          npm run test:python
+          python3 -m unittest discover -s scripts/tests
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+          npm run test:pages
 
-      - name: Fetch release data assets
+      - name: Download only named public release assets
         env:
+          RELEASE_KIND: ${{ inputs.kind }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir candidate
+          if [[ "$RELEASE_KIND" == data ]]; then
+            gh release download "$RELEASE_TAG" --dir candidate \
+              --pattern release-manifest.json --pattern graph.compact.json \
+              --pattern graph-explorer.compact.json --pattern catalog.identity.json \
+              --pattern publication-audit.json
+          else
+            gh release download "$RELEASE_TAG" --dir candidate \
+              --pattern release-manifest.json --pattern graph.compact.json \
+              --pattern graph-explorer.compact.json --pattern catalog.identity.json \
+              --pattern model-mf-web.compact.json --pattern model-promotion-audit.json
+          fi
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            mkdir previous
+            gh release download "$PREVIOUS_TAG" --dir previous \
+              --pattern release-manifest.json --pattern graph.compact.json \
+              --pattern graph-explorer.compact.json --pattern catalog.identity.json \
+              --pattern publication-audit.json
+          fi
+
+      - name: Verify published immutable state and remote asset hashes
+        env:
+          RELEASE_KIND: ${{ inputs.kind }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: npm run data:fetch:release
+        run: |
+          if [[ "$RELEASE_KIND" == data ]]; then
+            python3 scripts/verify_immutable_data_release.py published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate
+          else
+            python3 -m scripts.verify_immutable_model_release published "$GITHUB_REPOSITORY" "$RELEASE_TAG" candidate
+          fi
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            python3 scripts/verify_immutable_data_release.py published "$GITHUB_REPOSITORY" "$PREVIOUS_TAG" previous
+          fi
 
-      - name: Sync data into web/public
-        run: npm run sync:web
+      - name: Recompute approvals and atomically install the exact public bundle
+        env:
+          RELEASE_KIND: ${{ inputs.kind }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          PUBLICATION_REF: ${{ vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF }}
+          DEPLOYMENT_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+          OWNER_REF: ${{ vars.MODEL_PROMOTION_APPROVAL_REF }}
+        run: |
+          args=(--kind "$RELEASE_KIND" --package candidate --store web/public/data \
+            --tag "$RELEASE_TAG" --manifest-sha256 "$MANIFEST_SHA256" \
+            --run-id "$SOURCE_RUN_ID" --artifact-name "$ARTIFACT_NAME" \
+            --publication-approval-ref "$PUBLICATION_REF" \
+            --deployment-approval-ref "$DEPLOYMENT_REF")
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            args+=(--previous previous --previous-tag "$PREVIOUS_TAG")
+          fi
+          if [[ "$RELEASE_KIND" == model ]]; then
+            args+=(--owner-approval-ref "$OWNER_REF")
+          fi
+          node --import tsx pipeline/src/prepare-pages-bundle.ts "${args[@]}"
 
-      - name: Build web
-        run: npm run build:web
+      - name: Build exact project-path Pages output and verify direct entry
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+        run: |
+          export PAGES_BASE_PATH="/${GITHUB_REPOSITORY#*/}/"
+          npm run build:web
+          node --import tsx pipeline/src/finalize-pages-build.ts \
+            --dist web/dist --tag "$RELEASE_TAG" \
+            --manifest-sha256 "$MANIFEST_SHA256" --base-path "$PAGES_BASE_PATH"
 
-      - name: Upload pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
 
   deploy:
-    if: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' }}
+    needs: build
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' && (inputs.kind != 'model' || (vars.PROVIDER_DATA_TRAINING_APPROVED == 'true' && vars.PROVIDER_DATA_TRAINING_APPROVAL_REF != '' && vars.MODEL_PROMOTION_APPROVED == 'true' && vars.MODEL_PROMOTION_APPROVAL_REF != '')) }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - uses: actions/deploy-pages@v4
         id: deployment
-        uses: actions/deploy-pages@v4
+
+  verify_hosted:
+    needs: deploy
+    if: ${{ github.ref == 'refs/heads/master' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVED == 'true' && vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF != '' && vars.PROVIDER_DATA_PUBLICATION_APPROVED == 'true' && vars.PROVIDER_DATA_PUBLICATION_APPROVAL_REF != '' && (inputs.kind != 'model' || (vars.PROVIDER_DATA_TRAINING_APPROVED == 'true' && vars.PROVIDER_DATA_TRAINING_APPROVAL_REF != '' && vars.MODEL_PROMOTION_APPROVED == 'true' && vars.MODEL_PROMOTION_APPROVAL_REF != '')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recheck recorded deployment approval before hosted reads
+        env:
+          PROVIDER_DATA_APPROVAL_REF: ${{ vars.PROVIDER_DATA_DEPLOYMENT_APPROVAL_REF }}
+        run: python3 scripts/verify_provider_data_approval.py deployment
+
+      - name: Verify exact hosted Pages path, assets, and data-only model absence
+        env:
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          RELEASE_KIND: ${{ inputs.kind }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+        run: python3 -m scripts.verify_hosted_pages "$GITHUB_REPOSITORY" "$PAGE_URL" "$RELEASE_KIND" "$RELEASE_TAG" "$MANIFEST_SHA256"
