@@ -1077,4 +1077,14 @@
 
 **Checks not run / blockers:** Clean-checkout PR CI and stacked-diff review remain. A real bridge from permitted raw input to v3 graph, frozen predeclared policy, independently generated serving-path report against the best simple baseline, owner/source-use approval, immutable model release, exact-tag Pages trigger, hosted verification, and rollback practice are missing. The package verifier is a local structural gate, not a scientific or licensing proof. M8.4 and M8 remain unchecked.
 
-**Single next task:** Generate the serving-path quality report from pinned permitted inputs and browser scoring under a frozen policy, then use it to replace the authored report accepted by the local promotion gate.
+**Single next task:** Generate the serving-path quality report from pinned invented inputs and browser scoring under a frozen policy, then require the same protocol for a later permitted evaluation.
+
+## Session 2026-09-28 — M8.4 model package CI review
+
+**PR / exact head:** Committed `717f8bc5a9711018391d8615cd616ca7cf0a983f` and opened draft [PR #49](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/49) against PR #48's branch. The ten-file stacked diff passed `git diff --check`; review confirmed only local package/verifier code, invented tests, an empty model approval registry, scripts, decision/guidance, and living records. [Fixture CI run 36437366560](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36437366560) and GitGuardian passed on that implementation SHA, including clean dependency install, fixture generation, typecheck, pipeline/web/ML/workflow tests, build, and mocked browser smoke test.
+
+**Scope limit:** The local gate copies and independently rechecks the six public bytes, binds private evidence and exact approvals, and refuses the committed empty registries. It only hashes the numeric archive; it does not parse it. The dataset bridge and serving metrics can be authored, so this test seam cannot establish permitted source lineage, predeclared evaluation timing, or real model quality. No remote release, provider read, private watchlist, or Pages deployment was used.
+
+**Checks not run / blockers:** A generated serving-path report from a frozen permitted cohort/policy, independent archive validation, real source/use and owner approvals, immutable model release, exact-tag Pages trigger, hosted verification, and practiced rollback remain. M8.4 and M8 remain unchecked. This documentation-only handoff commit still needs final-head CI.
+
+**Single next task:** Generate and verify a serving-path model-versus-best-simple-baseline report from pinned invented inputs and the browser scorer, replacing the authored quality numbers accepted by the local package gate; a later permitted evaluation still needs source/use approval.
