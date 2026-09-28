@@ -1100,3 +1100,11 @@
 **Checks not run / blockers:** Clean-checkout PR CI and stacked-diff review remain. The invented cohort, its membership, labels, and policy timing are authored; passing its gate does not establish production quality, leakage safety of an actual refit, or a permitted raw-to-v3 bridge. The private numeric archive is still only hash-bound. Real owner/source-use approval, immutable model release, exact-tag deployment, hosted verification, and practiced rollback are absent. `docs/approvals` records remain empty, and M8.4 plus the M8 exit gate stay unchecked.
 
 **Plan revision / single next task:** The serving gate now requires generated, independently recomputed browser-path numbers and a separate serving coverage floor; this tightens the existing criterion without changing its ID. Next: add a private numeric-archive/model consistency verifier with invented tamper tests before any real promotion workflow.
+
+## Session 2026-09-28 — M8.4 generated serving gate CI review
+
+**PR / exact head:** Committed `b906ff68cdc282b4ae48e5e7308f0ad50af223eb` and opened draft [PR #50](https://github.com/OptimumAF/WhatAnimeShouldIWatch/pull/50) against PR #49's branch. The eight-file stacked diff passed `git diff --check`; the checkout is clean. [Fixture CI run 36440834555](https://github.com/OptimumAF/WhatAnimeShouldIWatch/actions/runs/36440834555) passed on that exact SHA, as did GitGuardian. CI installed clean Node/Python dependencies, generated and verified synthetic artifacts, typechecked, ran pipeline/Python/workflow checks, built web, and passed the mocked browser smoke test.
+
+**Checks not run / blockers:** No real provider request, private Crunchyroll history, release, deployment, or hosted verification was used. The invented cohort and policy are not proof of predeclared timing or permitted source lineage; the numeric archive and dataset bridge still need independent validation. Model/source-use/owner approvals remain empty, and immutable model release, exact-tag deployment, hosted checks, and rollback remain. M8.4 and M8 stay unchecked. This documentation-only handoff commit requires its own final-head CI check.
+
+**Single next task:** Verify the private numeric archive against its declared refit and exported item model using invented, tamperable NPZ input, then keep any real promotion held for reviewed source/use and quality evidence.
