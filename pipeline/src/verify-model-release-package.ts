@@ -27,6 +27,7 @@ export interface ModelPackageVerificationOptions {
   baseDir: string;
   basePreviousDir?: string;
   evidenceDir: string;
+  sourceDir?: string;
   dispatch: ModelPromotionDispatch;
   providerApprovals: unknown;
   publicationApprovals: unknown;
@@ -124,6 +125,41 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
   runId(options.dispatch.sourceRunId, "dispatch.sourceRunId");
   match(options.dispatch.artifactName, ARTIFACT, "dispatch.artifactName");
   exactPackage(options.packageDir);
+  const auditBytes = fs.readFileSync(path.join(options.packageDir, "model-promotion-audit.json"));
+  const suppliedAudit = object(JSON.parse(auditBytes.toString("utf8")),
+    "model-promotion-audit.json");
+  if (suppliedAudit.status === "synthetic-only") {
+    fail("model-promotion-audit.json.status", "synthetic packages cannot be approved");
+  }
+  if (!options.sourceDir) fail("sourceDir", "requires private raw/split/metadata inputs");
+  const earlyApprovals = fields(suppliedAudit.approvals, ["owner", "ownerApprovalRef",
+    "trainingApprovalRef", "publicationApprovalRef", "deploymentApprovalRef"],
+  "model-promotion-audit.json.approvals");
+  if (suppliedAudit.status !== "pending-approval" ||
+      suppliedAudit.tag !== options.dispatch.tag ||
+      object(suppliedAudit.base, "model-promotion-audit.json.base").tag !== options.dispatch.baseTag ||
+      typeof suppliedAudit.sourceName !== "string" || !suppliedAudit.sourceName ||
+      Object.values(earlyApprovals).some((value) => typeof value !== "string" || !value)) {
+    fail("model-promotion-audit.json", "does not identify a pending exact-source package");
+  }
+  const earlyProvider = object(options.providerApprovals, "providerApprovals");
+  if (earlyProvider.schemaVersion !== 1) fail("providerApprovals.schemaVersion", "is unsupported");
+  const earlyUses = object(earlyProvider.approvals, "providerApprovals.approvals");
+  for (const use of ["training", "publication", "deployment"] as const) {
+    providerUse(earlyUses[use], use, suppliedAudit as unknown as ModelPromotionAuditV1);
+  }
+  const earlyRegistry = object(options.modelApprovals, "modelApprovals");
+  if (earlyRegistry.schemaVersion !== 1 || !Array.isArray(earlyRegistry.promotions) ||
+      earlyRegistry.promotions.filter((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+        const entry = value as Record<string, unknown>;
+        return entry.tag === options.dispatch.tag &&
+          entry.auditSha256 === releaseSha256(auditBytes) &&
+          entry.ownerApprovalRef === earlyApprovals.ownerApprovalRef &&
+          entry.trainingApprovalRef === earlyApprovals.trainingApprovalRef;
+      }).length !== 1) {
+    fail("modelApprovals", "requires one exact committed owner record before reading private rows");
+  }
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "model-verify-"));
   try {
     const candidate = path.join(temporary, "candidate");
@@ -133,7 +169,8 @@ export function verifyModelReleasePackage(options: ModelPackageVerificationOptio
         fs.constants.COPYFILE_EXCL);
     }
     const audit = packageModelRelease({ candidateDir: candidate, baseDir: options.baseDir,
-      evidenceDir: options.evidenceDir, outputDir: path.join(temporary, "recomputed") });
+      evidenceDir: options.evidenceDir, sourceDir: options.sourceDir,
+      outputDir: path.join(temporary, "recomputed") });
     for (const name of MODEL_OUTPUT_FILES) {
       if (!fs.readFileSync(path.join(options.packageDir, name)).equals(
         fs.readFileSync(path.join(temporary, "recomputed", name)))) {
@@ -248,12 +285,13 @@ function main(): void {
   const command = new Command();
   command.requiredOption("--package <path>").requiredOption("--base <path>")
     .option("--base-previous <path>").requiredOption("--evidence <path>")
+    .option("--source <path>")
     .requiredOption("--tag <tag>").requiredOption("--base-tag <tag>")
     .requiredOption("--run-id <number>").requiredOption("--artifact-name <name>");
   command.parse(process.argv);
   const flags = command.opts();
   const result = verifyModelReleasePackage({ packageDir: flags.package, baseDir: flags.base,
-    basePreviousDir: flags.basePrevious, evidenceDir: flags.evidence,
+    basePreviousDir: flags.basePrevious, evidenceDir: flags.evidence, sourceDir: flags.source,
     dispatch: { tag: flags.tag, baseTag: flags.baseTag,
       sourceRunId: Number(flags.runId), artifactName: flags.artifactName },
     providerApprovals: JSON.parse(fs.readFileSync(path.join(repoRoot,

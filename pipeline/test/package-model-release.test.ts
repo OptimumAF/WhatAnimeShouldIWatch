@@ -7,7 +7,8 @@ import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { projectAggregateGraph } from "../src/core/aggregate-projection.js";
 import { buildExplorerGraph } from "../src/core/explorer-graph.js";
-import { aggregateRecommendationGraphId } from "../src/core/graph-contract.js";
+import { graphFromPrepared, prepareGraphBridge, verifyGraphDatasetBridge } from
+  "../src/core/split-graph-bridge.js";
 import { MODEL_OUTPUT_FILES, packageModelRelease } from "../src/package-model-release.js";
 import { OUTPUT_FILES, packageDataRelease, PUBLIC_FIELDS,
   type PublicationReviewV1 } from "../src/package-data-release.js";
@@ -55,26 +56,50 @@ function setup(t: TestContext, synthetic = true) {
   const baseDir = path.join(root, "base");
   const candidateDir = path.join(root, "candidate");
   const evidenceDir = path.join(root, "evidence");
+  const sourceDir = path.join(root, "source");
   const outputDir = path.join(root, "package");
   for (const directory of [baseDir, candidateDir, evidenceDir]) fs.mkdirSync(directory);
-  const graph = projectAggregateGraph(JSON.parse(fs.readFileSync(path.join(demo,
-    RELEASE_FILES.neighborhood), "utf8")) as CompactGraphDataV2);
+  const demoGraph = JSON.parse(fs.readFileSync(path.join(demo,
+    RELEASE_FILES.neighborhood), "utf8")) as CompactGraphDataV2;
   const sourceName = synthetic ? "synthetic-fixture" : "invented-reviewed-source";
   if (!synthetic) {
-    graph.dataset.source = sourceName;
-    const { graphId: _graphId, ...withoutId } = graph;
-    graph.graphId = aggregateRecommendationGraphId(withoutId);
+    fs.mkdirSync(sourceDir);
+    for (const [source, target] of [
+      ["fixtures/synthetic-split-input.json", "raw-ratings.json"],
+      ["fixtures/synthetic-anime-metadata.json", "anime-metadata.json"],
+    ]) fs.copyFileSync(path.join(repoRoot, source), path.join(sourceDir, target));
+    const rawPath = path.join(sourceDir, "raw-ratings.json");
+    const raw = JSON.parse(fs.readFileSync(rawPath, "utf8"));
+    raw.interactions.push({ userId: "invented-a", animeId: 106, rawScore: 7 });
+    fs.writeFileSync(rawPath, encode(raw));
+    const split = spawnSync("python", [path.join(repoRoot, "ml/raw_interaction_split.py"),
+      "--input", path.join(sourceDir, "raw-ratings.json"),
+      "--out", path.join(sourceDir, "split-manifest.json"),
+      "--policy", "seeded", "--seed", "8"], { cwd: repoRoot, encoding: "utf8" });
+    assert.equal(split.status, 0, split.stderr);
   }
+  const prepared = synthetic ? null : prepareGraphBridge(path.join(sourceDir, "raw-ratings.json"),
+    path.join(sourceDir, "split-manifest.json"), path.join(sourceDir, "anime-metadata.json"));
+  const graph = synthetic ? projectAggregateGraph(demoGraph)
+    : graphFromPrepared(prepared!, sourceName, demoGraph.generatedAt, demoGraph.config);
   write(baseDir, RELEASE_FILES.neighborhood, graph);
   write(baseDir, RELEASE_FILES.explorer, buildExplorerGraph(graph, 5, 0));
-  fs.copyFileSync(path.join(demo, RELEASE_FILES.catalog), path.join(baseDir, RELEASE_FILES.catalog));
+  if (synthetic) {
+    fs.copyFileSync(path.join(demo, RELEASE_FILES.catalog), path.join(baseDir, RELEASE_FILES.catalog));
+  } else {
+    write(baseDir, RELEASE_FILES.catalog, { format: "anime-catalog-v1",
+      datasetSha256: graph.dataset.sha256,
+      anime: graph.anime });
+  }
   const baseManifest = writeReleaseManifest(baseDir, "data-vinvented-base", undefined,
     synthetic, !synthetic);
   for (const name of [RELEASE_FILES.neighborhood, RELEASE_FILES.explorer, RELEASE_FILES.catalog]) {
     fs.copyFileSync(path.join(baseDir, name), path.join(candidateDir, name));
   }
   const generated = spawnSync("python", [path.join(repoRoot, "ml/synthetic_promotion_archive.py"),
-    "--candidate-dir", candidateDir, "--evidence-dir", evidenceDir],
+    "--candidate-dir", candidateDir, "--evidence-dir", evidenceDir,
+    ...(!synthetic ? ["--bridge-source-dir", sourceDir,
+      "--dataset-sha256", graph.dataset.sha256] : [])],
   { cwd: repoRoot, encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
   const archiveEvidence = JSON.parse(generated.stdout);
@@ -82,10 +107,11 @@ function setup(t: TestContext, synthetic = true) {
   const model = JSON.parse(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.model), "utf8"));
   const modelSha256 = releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.model)));
   const manifest = writeReleaseManifest(candidateDir, "data-vinvented-model", baseDir);
-  const rawContentSha256 = H("a");
+  const rawContentSha256 = prepared?.rawContentSha256 ?? H("a");
   const selectionSha256 = H("b");
   const selectionFileSha256 = write(evidenceDir, "selection.json", {
     format: "split-first-selection-v1", rawContentSha256, selectionSha256,
+    ...(!synthetic ? { trainSha256: prepared!.originalTrainSha256 } : {}),
     selectedCandidate: { id: "invented-mf" },
   });
   const finalReportSha256 = write(evidenceDir, "final-report.json", {
@@ -106,18 +132,25 @@ function setup(t: TestContext, synthetic = true) {
     format: "split-first-final-refit-v1", releaseStatus: "unapproved experiment artifact",
     fitMembership: "train-plus-validation", selectionSha256, finalReportSha256,
     selectedCandidateId: "invented-mf", rawContentSha256,
-    candidateSpecSha256: H("c"), splitIdentitySha256: H("d"), metadataSha256: H("e"),
-    originalTrainSha256: H("f"), refitTrainSha256: H("1"),
-    refitFitSha256: H("2"), refitModelSha256,
+    candidateSpecSha256: H("c"), splitIdentitySha256: prepared?.splitIdentitySha256 ?? H("d"),
+    metadataSha256: prepared?.metadataSha256 ?? H("e"),
+    originalTrainSha256: prepared?.originalTrainSha256 ?? H("f"),
+    refitTrainSha256: prepared?.refitTrainSha256 ?? H("1"),
+    refitFitSha256: prepared?.refitFitSha256 ?? H("2"), refitModelSha256,
     numericArchiveSha256, numericMetadataSha256, webModelSha256: modelSha256,
-    trainRows: 7, validationRows: 3, testRowsExcluded: 3, refitRows: 10,
+    trainRows: prepared?.trainRows ?? 7, validationRows: prepared?.validationRows ?? 3,
+    testRowsExcluded: prepared?.testRowsExcluded ?? 3, refitRows: prepared?.rows.length ?? 10,
     evaluation: "none; this record contains no held-out quality metric",
   });
-  const datasetBridgeSha256 = write(evidenceDir, "dataset-bridge.json", {
-    format: "model-dataset-bridge-v1", sourceName, rawContentSha256,
+  const bridgeRecord = {
+    format: synthetic ? "model-dataset-bridge-v1" : "model-dataset-bridge-v2",
+    sourceName, rawContentSha256,
     graphDatasetSha256: graph.dataset.sha256, decisionRef: promotionDecision,
     reviewRef: refs.bridge,
-  });
+    ...(!synthetic ? { verification: verifyGraphDatasetBridge(prepared!, graph, sourceName,
+      JSON.parse(fs.readFileSync(path.join(evidenceDir, "refit-record.json"), "utf8"))) } : {}),
+  };
+  const datasetBridgeSha256 = write(evidenceDir, "dataset-bridge.json", bridgeRecord);
   const caseFor = (userId: string, labelId: number) => ({
     userId, observed: [{ animeId: 101, rawScore: 10 }],
     labels: [{ animeId: labelId, rawScore: 9 },
@@ -125,11 +158,21 @@ function setup(t: TestContext, synthetic = true) {
     historySeen: [], exclude: [], includeOnly: [],
     filters: { genre: "", minYear: null, maxYear: null, minScore: null },
   });
+  const cohortMetadata = JSON.parse(fs.readFileSync(path.join(demo, "catalog.json"), "utf8"));
+  if (!synthetic) {
+    const titles = new Map((JSON.parse(fs.readFileSync(path.join(sourceDir,
+      "anime-metadata.json"), "utf8"))).anime.map(
+        ({ animeId, title }: { animeId: number; title: string }) => [animeId, title]));
+    for (const item of cohortMetadata.anime) item.title = titles.get(item.animeId) ?? item.title;
+    cohortMetadata.anime.push({ animeId: 109, title: titles.get(109), year: 2022,
+      score: 7.1, genres: ["Fantasy"], studios: [], synopsis: "Invented title.",
+      imageUrl: "", season: null });
+  }
   const cohort = { format: "model-promotion-cohort-v1", seed: 42, sourceName,
     datasetSha256: graph.dataset.sha256,
     trainingUsers: JSON.parse(fs.readFileSync(path.join(evidenceDir,
       "model.metadata.json"), "utf8")).userIds,
-    metadata: JSON.parse(fs.readFileSync(path.join(demo, "catalog.json"), "utf8")),
+    metadata: cohortMetadata,
     baselineValidation: Array.from({ length: 4 }, (_, index) =>
       caseFor(`invented-promo-validation-${index + 1}`, 102)),
     finalTest: Array.from({ length: 4 }, (_, index) =>
@@ -139,7 +182,7 @@ function setup(t: TestContext, synthetic = true) {
   const policy = {
     format: "model-promotion-quality-policy-v1", decisionRef: promotionDecision,
     candidateBundleId: manifest.bundleId, cohortSha256: servingCohortSha256,
-    baselineName: "graph", seed: 42, suppliedCount: 1,
+    baselineName: synthetic ? "graph" : "coverage", seed: 42, suppliedCount: 1,
     positiveRawScoreMin: 7, topK: 5, minimumEligibleUsers: 4,
     minimumPositiveLabels: 4, minimumServingCoverage: 0.5,
     minimumNdcgLift: 0.05, maximumP95LatencyMs: 1000,
@@ -147,7 +190,7 @@ function setup(t: TestContext, synthetic = true) {
   };
   const qualityPolicySha256 = write(evidenceDir, "quality-policy.json", policy);
   const serving = generateServingReport({ graph, model,
-    catalog: JSON.parse(fs.readFileSync(path.join(demo, RELEASE_FILES.catalog), "utf8")),
+    catalog: JSON.parse(fs.readFileSync(path.join(baseDir, RELEASE_FILES.catalog), "utf8")),
     cohort, policy, tag: manifest.tag, bundleId: manifest.bundleId,
     rawContentSha256, selectionSha256, finalReportSha256,
     graphSha256: releaseSha256(fs.readFileSync(path.join(candidateDir, RELEASE_FILES.neighborhood))),
@@ -171,7 +214,8 @@ function setup(t: TestContext, synthetic = true) {
     deploymentApprovalRef: refs.deployment,
   };
   write(evidenceDir, "model-promotion-review.json", review);
-  return { root, baseDir, candidateDir, evidenceDir, outputDir,
+  return { root, baseDir, candidateDir, evidenceDir,
+    sourceDir: synthetic ? undefined : sourceDir, outputDir,
     graph, baseManifest, manifest, review, sourceName, serving };
 }
 
@@ -313,6 +357,33 @@ test("a rehashed private sidecar cannot change the archive fit-user set", (t) =>
     /model.npz: safe archive, refit fingerprint, membership, or item export check failed/);
 });
 
+test("nonfixture packaging requires the exact private split and recomputed bridge", (t) => {
+  const missing = setup(t, false);
+  assert.throws(() => packageModelRelease({ ...missing, sourceDir: undefined }),
+    /sourceDir: nonfixture packaging requires private raw ratings/);
+
+  const extra = setup(t, false);
+  fs.writeFileSync(path.join(extra.sourceDir!, "invented-extra.json"), "{}");
+  assert.throws(() => packageModelRelease(extra), /source: must contain exactly/);
+
+  const forged = setup(t, false);
+  const bridge = JSON.parse(fs.readFileSync(path.join(forged.evidenceDir,
+    "dataset-bridge.json"), "utf8"));
+  bridge.verification.selectedPairs += 1;
+  updateReview(forged, { datasetBridgeSha256: write(forged.evidenceDir,
+    "dataset-bridge.json", bridge) });
+  assert.throws(() => packageModelRelease(forged),
+    /dataset-bridge.verification.selectedPairs/);
+
+  const stale = setup(t, false);
+  const rawPath = path.join(stale.sourceDir!, "raw-ratings.json");
+  const raw = JSON.parse(fs.readFileSync(rawPath, "utf8"));
+  raw.interactions[0].rawScore -= 1;
+  fs.writeFileSync(rawPath, encode(raw));
+  assert.throws(() => packageModelRelease(stale),
+    /Graph dataset bridge private inputs: raw snapshot, split manifest, or metadata failed validation/);
+});
+
 test("a generated report must meet the frozen coverage and fresh latency gates", (t) => {
   const fixture = setup(t);
   const inputs = servingInputs(fixture);
@@ -423,6 +494,13 @@ test("an invented reviewed package requires exact model, provider, and data-base
   assert.deepEqual(fs.readdirSync(basePackage).sort(), [...OUTPUT_FILES].sort());
   const audit = packageModelRelease({ ...fixture, baseDir: basePackage });
   assert.equal(audit.status, "pending-approval");
+  assert.deepEqual(fs.readdirSync(fixture.outputDir).sort(), [...MODEL_OUTPUT_FILES].sort());
+  for (const name of ["raw-ratings.json", "split-manifest.json", "anime-metadata.json",
+    "dataset-bridge.json", "model.metadata.json", "model.npz"]) {
+    assert.equal(fs.existsSync(path.join(fixture.outputDir, name)), false);
+  }
+  assert.equal(fs.readFileSync(path.join(fixture.outputDir,
+    "model-promotion-audit.json"), "utf8").includes("invented-a"), false);
   const providerApprovals = { schemaVersion: 1, approvals: Object.fromEntries(
     (["training", "publication", "deployment"] as const).map((use) => [use, {
       approved: true, sources: [fixture.sourceName], sourceBasis: "Invented source",
@@ -457,20 +535,21 @@ test("an invented reviewed package requires exact model, provider, and data-base
     deploymentApprovalRef: refs.deployment,
   }] };
   const options = { packageDir: fixture.outputDir, baseDir: basePackage,
-    evidenceDir: fixture.evidenceDir,
+    evidenceDir: fixture.evidenceDir, sourceDir: fixture.sourceDir!,
     dispatch: { tag: audit.tag, baseTag: audit.base.tag, sourceRunId: 123,
       artifactName: "invented-model" },
     providerApprovals, publicationApprovals, modelApprovals };
   assert.deepEqual(verifyModelReleasePackage(options), audit);
   assert.throws(() => verifyModelReleasePackage({ ...options,
-    modelApprovals: { schemaVersion: 1, promotions: [] } }), /exact committed owner review/);
+    modelApprovals: { schemaVersion: 1, promotions: [] } }), /exact committed owner record/);
   assert.throws(() => verifyModelReleasePackage({ ...options,
+    sourceDir: path.join(fixture.root, "missing-source"),
     providerApprovals: { schemaVersion: 1, approvals: {} } }), /providerApprovals.*training/);
   const stale = structuredClone(modelApprovals);
   stale.promotions[0].auditSha256 = H("f");
   assert.throws(() => verifyModelReleasePackage({ ...options, modelApprovals: stale }),
-    /no exact independently reviewed model package/);
+    /exact committed owner record/);
   fs.appendFileSync(path.join(fixture.outputDir, "model-promotion-audit.json"), " ");
   assert.throws(() => verifyModelReleasePackage(options),
-    /model-promotion-audit.json.*differs/);
+    /exact committed owner record/);
 });

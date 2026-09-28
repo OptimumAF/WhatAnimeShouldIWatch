@@ -50,7 +50,8 @@ function refit(prepared: ReturnType<typeof prepareGraphBridge>): Record<string, 
     trainRows: prepared.trainRows, validationRows: prepared.validationRows,
     testRowsExcluded: prepared.testRowsExcluded, refitRows: prepared.rows.length,
     refitTrainSha256: prepared.refitTrainSha256,
-    refitFitSha256: prepared.refitFitSha256 };
+    refitFitSha256: prepared.refitFitSha256,
+    originalTrainSha256: prepared.originalTrainSha256 };
 }
 
 function interactionId(userId: string, animeId: number): string {

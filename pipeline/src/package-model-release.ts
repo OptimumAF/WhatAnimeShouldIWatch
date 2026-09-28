@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCompactModel, parseReleaseManifest, RELEASE_BUNDLE_LIMITS } from
   "../../web/src/artifacts.js";
+import type { CompactGraphDataV3 } from "./types.js";
+import { prepareGraphBridge, verifyGraphDatasetBridge } from "./core/split-graph-bridge.js";
 import { RELEASE_FILES, releaseSha256, verifyReleaseBundle } from "./release-manifest.js";
 
 export const MODEL_SOURCE_FILES = [RELEASE_FILES.manifest, RELEASE_FILES.neighborhood,
@@ -13,6 +15,8 @@ export const MODEL_PRIVATE_FILES = ["model-promotion-review.json", "selection.js
   "refit-record.json", "model.npz", "model.metadata.json", "dataset-bridge.json", "quality-policy.json",
   "serving-cohort.json", "serving-report.json"] as const;
 export const MODEL_OUTPUT_FILES = [...MODEL_SOURCE_FILES, "model-promotion-audit.json"] as const;
+export const MODEL_BRIDGE_SOURCE_FILES = ["raw-ratings.json", "split-manifest.json",
+  "anime-metadata.json"] as const;
 
 const DIGEST = /^[a-f0-9]{64}$/;
 const TAG = /^data-v[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -25,6 +29,8 @@ export interface ModelPackageOptions {
   candidateDir: string;
   baseDir: string;
   evidenceDir: string;
+  /** Restricted raw/split/fixed-metadata inputs, required for nonfixture packages. */
+  sourceDir?: string;
   outputDir: string;
   /** Only an invented fixture may use this; its package is permanently unpublishable. */
   syntheticFixture?: boolean;
@@ -155,6 +161,8 @@ function inventory(directory: string, names: readonly string[], field: string): 
     const item = fs.lstatSync(path.join(directory, filename));
     const maximum = filename === RELEASE_FILES.manifest ? RELEASE_BUNDLE_LIMITS.manifestBytes
       : filename === "model.npz" ? NUMERIC_ARCHIVE_LIMIT
+      : field === "source" ? filename === "raw-ratings.json" ? 128 * 1024 * 1024
+        : 16 * 1024 * 1024
       : (MODEL_PRIVATE_FILES as readonly string[]).includes(filename) ? PRIVATE_JSON_LIMIT
       : RELEASE_BUNDLE_LIMITS.plainAssetBytes;
     if (!entry.isFile() || item.isSymbolicLink() || item.size < 1 || item.size > maximum) {
@@ -245,8 +253,10 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
       "releaseStatus"],
     "refit-record.json");
   const bridge = fields(readEvidence(privateBytes, "dataset-bridge.json"),
-    ["format", "sourceName", "rawContentSha256", "graphDatasetSha256", "decisionRef", "reviewRef"],
-    "dataset-bridge.json");
+    syntheticFixture
+      ? ["format", "sourceName", "rawContentSha256", "graphDatasetSha256", "decisionRef", "reviewRef"]
+      : ["format", "sourceName", "rawContentSha256", "graphDatasetSha256", "decisionRef", "reviewRef",
+        "verification"], "dataset-bridge.json");
   const policy = fields(readEvidence(privateBytes, "quality-policy.json"),
     ["format", "decisionRef", "candidateBundleId", "cohortSha256", "baselineName",
       "seed", "suppliedCount", "positiveRawScoreMin", "topK", "minimumEligibleUsers",
@@ -297,6 +307,10 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
   same(refit.numericMetadataSha256, review.numericMetadataSha256,
     "refit-record.numericMetadataSha256");
   same(refit.webModelSha256, review.modelSha256, "refit-record.webModelSha256");
+  if (!syntheticFixture) {
+    same(selection.trainSha256, refit.originalTrainSha256,
+      "selection.trainSha256");
+  }
   const train = positiveInt(refit.trainRows, "refit-record.trainRows");
   const validation = positiveInt(refit.validationRows, "refit-record.validationRows");
   positiveInt(refit.testRowsExcluded, "refit-record.testRowsExcluded");
@@ -308,7 +322,8 @@ function evidenceAudit(privateBytes: Map<string, Buffer>, review: ObjectValue, m
 
   same(review.datasetBridgeSha256, releaseSha256(privateBytes.get("dataset-bridge.json")!),
     "review.datasetBridgeSha256");
-  same(bridge.format, "model-dataset-bridge-v1", "dataset-bridge.format");
+  same(bridge.format, syntheticFixture ? "model-dataset-bridge-v1" : "model-dataset-bridge-v2",
+    "dataset-bridge.format");
   same(bridge.sourceName, sourceName, "dataset-bridge.sourceName");
   same(bridge.rawContentSha256, review.rawContentSha256, "dataset-bridge.rawContentSha256");
   same(bridge.graphDatasetSha256, review.graphDatasetSha256, "dataset-bridge.graphDatasetSha256");
@@ -389,7 +404,8 @@ function outputPath(options: ModelPackageOptions): string {
     fail("outputDir", "requires an unused path under a real parent directory");
   }
   const realParent = fs.realpathSync(parent);
-  for (const input of [options.candidateDir, options.baseDir, options.evidenceDir]) {
+  for (const input of [options.candidateDir, options.baseDir, options.evidenceDir,
+    options.sourceDir].filter((value): value is string => value !== undefined)) {
     const realInput = fs.realpathSync(input);
     const relative = path.relative(realInput, realParent);
     if (relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." &&
@@ -400,6 +416,9 @@ function outputPath(options: ModelPackageOptions): string {
 
 /** Build only a local package. An independent approval verifier must run before any publication. */
 export function packageModelRelease(options: ModelPackageOptions): ModelPromotionAuditV1 {
+  if (!options.syntheticFixture && !options.sourceDir) {
+    fail("sourceDir", "nonfixture packaging requires private raw ratings, split, and fixed metadata");
+  }
   const candidateBytes = inventory(options.candidateDir, MODEL_SOURCE_FILES, "candidate");
   const baseNames = fs.existsSync(path.join(options.baseDir, "publication-audit.json"))
     ? [RELEASE_FILES.manifest, RELEASE_FILES.neighborhood, RELEASE_FILES.explorer,
@@ -408,6 +427,8 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
       RELEASE_FILES.catalog];
   const baseBytes = inventory(options.baseDir, baseNames, "base");
   const privateBytes = inventory(options.evidenceDir, MODEL_PRIVATE_FILES, "evidence");
+  const sourceBytes = options.sourceDir
+    ? inventory(options.sourceDir, MODEL_BRIDGE_SOURCE_FILES, "source") : null;
   const manifest = verifyReleaseBundle(options.candidateDir, options.baseDir);
   for (const [name, captured] of candidateBytes) {
     if (!captured.equals(fs.readFileSync(path.join(options.candidateDir, name)))) {
@@ -440,10 +461,35 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
   const evidence = evidenceAudit(privateBytes, review, manifest,
     candidateBytes.get(RELEASE_FILES.model)!, options.syntheticFixture === true);
   same(evidence.sourceName, manifest.dataset.source, "review.sourceName");
+  if (!options.syntheticFixture) {
+    const prepared = prepareGraphBridge(
+      path.join(options.sourceDir!, "raw-ratings.json"),
+      path.join(options.sourceDir!, "split-manifest.json"),
+      path.join(options.sourceDir!, "anime-metadata.json"));
+    const graph = json(candidateBytes.get(RELEASE_FILES.neighborhood)!,
+      RELEASE_FILES.neighborhood) as unknown as CompactGraphDataV3;
+    const refit = readEvidence(privateBytes, "refit-record.json");
+    const report = verifyGraphDatasetBridge(prepared, graph, evidence.sourceName, refit);
+    const sidecar = readEvidence(privateBytes, "model.metadata.json");
+    const actualUsers = sidecar.userIds;
+    const fitUsers = [...new Set(prepared.rows.map((row) => row.userId))].sort();
+    if (!Array.isArray(actualUsers) || actualUsers.length !== fitUsers.length ||
+        actualUsers.some((value) => typeof value !== "string") ||
+        JSON.stringify([...actualUsers].sort()) !== JSON.stringify(fitUsers)) {
+      fail("model.metadata.json.userIds", "does not match validated raw fit users");
+    }
+    const bridge = readEvidence(privateBytes, "dataset-bridge.json");
+    const verified = fields(bridge.verification, Object.keys(report),
+      "dataset-bridge.verification");
+    for (const [key, value] of Object.entries(report)) {
+      same(verified[key], value, `dataset-bridge.verification.${key}`);
+    }
+  }
   try {
     execFileSync("python", [fileURLToPath(new URL("../../ml/verify_model_promotion_archive.py",
       import.meta.url)), "--evidence-dir", path.resolve(options.evidenceDir),
-      "--web-model", path.resolve(options.candidateDir, RELEASE_FILES.model)],
+      "--web-model", path.resolve(options.candidateDir, RELEASE_FILES.model),
+      ...(!options.syntheticFixture ? ["--source-dir", path.resolve(options.sourceDir!)] : [])],
     { cwd: path.resolve(import.meta.dirname, "../.."), encoding: "utf8",
       maxBuffer: 1024 * 1024, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
   } catch {
@@ -470,6 +516,7 @@ export function packageModelRelease(options: ModelPackageOptions): ModelPromotio
   unchanged(options.candidateDir, MODEL_SOURCE_FILES, candidateBytes, "candidate");
   unchanged(options.baseDir, baseNames, baseBytes, "base");
   unchanged(options.evidenceDir, MODEL_PRIVATE_FILES, privateBytes, "evidence");
+  if (sourceBytes) unchanged(options.sourceDir!, MODEL_BRIDGE_SOURCE_FILES, sourceBytes, "source");
   const synthetic = options.syntheticFixture === true;
   if (synthetic !== (evidence.sourceName === "synthetic-fixture")) {
     fail("syntheticFixture", "must match the invented source and cannot mark it publishable");

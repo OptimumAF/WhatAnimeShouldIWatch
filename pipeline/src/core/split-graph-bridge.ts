@@ -25,12 +25,14 @@ export interface PreparedGraphBridge {
   format: "private-graph-bridge-rows-v1";
   rawContentSha256: string;
   splitIdentitySha256: string;
+  splitManifestSha256: string;
   metadataSha256: string;
   trainRows: number;
   validationRows: number;
   testRowsExcluded: number;
   refitTrainSha256: string;
   refitFitSha256: string;
+  originalTrainSha256: string;
   rows: PrivateRow[];
 }
 
@@ -40,12 +42,14 @@ export interface GraphBridgeReport {
   fitMembership: "train-plus-validation";
   rawContentSha256: string;
   splitIdentitySha256: string;
+  splitManifestSha256: string;
   metadataSha256: string;
   trainRows: number;
   validationRows: number;
   testRowsExcluded: number;
   refitTrainSha256: string;
   refitFitSha256: string;
+  originalTrainSha256: string;
   graphDatasetSha256: string;
   graphId: string;
   selectedRatings: number;
@@ -67,12 +71,15 @@ function count(value: unknown, field: string, minimum = 0): void {
 function validatePrepared(value: unknown): PreparedGraphBridge {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("prepared", "invalid object");
   const input = value as Record<string, unknown>;
-  const keys = ["format", "rawContentSha256", "splitIdentitySha256", "metadataSha256",
-    "trainRows", "validationRows", "testRowsExcluded", "refitTrainSha256", "refitFitSha256", "rows"];
+  const keys = ["format", "rawContentSha256", "splitIdentitySha256", "splitManifestSha256",
+    "metadataSha256", "trainRows", "validationRows", "testRowsExcluded",
+    "refitTrainSha256", "refitFitSha256", "originalTrainSha256", "rows"];
   if (Object.keys(input).sort().join() !== keys.sort().join() ||
       input.format !== "private-graph-bridge-rows-v1") fail("prepared", "unsupported fields or format");
-  for (const key of ["rawContentSha256", "splitIdentitySha256", "metadataSha256",
-    "refitTrainSha256", "refitFitSha256"]) digest(input[key], `prepared.${key}`);
+  for (const key of ["rawContentSha256", "splitIdentitySha256", "splitManifestSha256",
+    "metadataSha256", "refitTrainSha256", "refitFitSha256", "originalTrainSha256"]) {
+    digest(input[key], `prepared.${key}`);
+  }
   for (const key of ["trainRows", "validationRows", "testRowsExcluded"]) {
     count(input[key], `prepared.${key}`, 1);
   }
@@ -199,7 +206,7 @@ export function verifyGraphDatasetBridge(prepared: PreparedGraphBridge,
   if (difference) fail(difference, "does not match exact split fit producer output");
   const fields: (keyof PreparedGraphBridge)[] = ["rawContentSha256", "splitIdentitySha256",
     "metadataSha256", "trainRows", "validationRows", "testRowsExcluded",
-    "refitTrainSha256", "refitFitSha256"];
+    "refitTrainSha256", "refitFitSha256", "originalTrainSha256"];
   for (const key of fields) {
     if (refit[key] !== prepared[key]) fail(`refit-record.${key}`, "does not match validated split fit");
   }
@@ -209,9 +216,11 @@ export function verifyGraphDatasetBridge(prepared: PreparedGraphBridge,
   return { format: "model-dataset-bridge-verification-v1", sourceName,
     fitMembership: "train-plus-validation", rawContentSha256: prepared.rawContentSha256,
     splitIdentitySha256: prepared.splitIdentitySha256,
+    splitManifestSha256: prepared.splitManifestSha256,
     metadataSha256: prepared.metadataSha256, trainRows: prepared.trainRows,
     validationRows: prepared.validationRows, testRowsExcluded: prepared.testRowsExcluded,
     refitTrainSha256: prepared.refitTrainSha256, refitFitSha256: prepared.refitFitSha256,
+    originalTrainSha256: prepared.originalTrainSha256,
     graphDatasetSha256: graph.dataset.sha256, graphId: graph.graphId,
     selectedRatings: graph.truncation.selectedRatings,
     selectedPairs: graph.truncation.selectedPairs };
