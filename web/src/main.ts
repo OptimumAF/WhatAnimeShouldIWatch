@@ -35,8 +35,9 @@ import {
   hasActiveRecommendationFilters,
   normalizeTitle,
   rankEligibleCandidates,
+  summarizeCandidateMetadataCoverage,
 } from "./recommendations";
-import type { CandidateEligibilityPolicy, EligibilityRankingMode, GenreOverlapRecommendation, RecommendationExplanation, RecommendationFilters } from "./recommendations";
+import type { CandidateEligibilityPolicy, CandidateMetadataCoverage, EligibilityRankingMode, GenreOverlapRecommendation, RecommendationExplanation, RecommendationFilters } from "./recommendations";
 import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { selectFranchiseDiverseRecommendations } from "./franchise-diversity";
 import type { FranchiseSelection } from "./franchise-diversity";
@@ -90,7 +91,7 @@ const persistence = createPersistenceAdapter(runtime, demoMode ? "wasiw.demo" : 
 
 type AppView = "recommendations" | "network";
 type UsernameImportProvider = "anilist" | "mal";
-type AsyncUiState = "idle" | "loading" | "ready" | "empty" | "unavailable" | "failed" | "stale" | "demo";
+type AsyncUiState = "idle" | "loading" | "partial" | "ready" | "empty" | "unavailable" | "failed" | "stale" | "demo";
 type DiscoveryView = "auto" | "popularity" | "quality" | "related";
 type CommandMatchReason =
   | "pinned"
@@ -469,6 +470,10 @@ app.innerHTML = `
                   <button id="clear-rec-filters" type="button" class="ghost-btn">Clear Filters</button>
                   <span id="metadata-status" class="metadata-status" role="status" aria-live="polite" data-state="idle">Metadata: idle</span>
                 </div>
+                <div id="filter-metadata-controls" class="metadata-coverage-controls" hidden>
+                  <p id="filter-metadata-note" class="muted" role="status"></p>
+                  <button id="filter-metadata-more" type="button" class="ghost-btn">Check more candidate metadata</button>
+                </div>
               </section>
             </details>
             <p id="rec-summary" class="muted" role="status" aria-live="polite">Add at least one anime to start.</p>
@@ -711,6 +716,9 @@ const filterMinScoreInput = mustElement<HTMLInputElement>("#filter-min-score");
 const filterMinScoreValue = mustElement<HTMLOutputElement>("#filter-min-score-value");
 const clearRecFiltersBtn = mustElement<HTMLButtonElement>("#clear-rec-filters");
 const metadataStatusEl = mustElement<HTMLSpanElement>("#metadata-status");
+const filterMetadataControlsEl = mustElement<HTMLDivElement>("#filter-metadata-controls");
+const filterMetadataNoteEl = mustElement<HTMLParagraphElement>("#filter-metadata-note");
+const filterMetadataMoreBtn = mustElement<HTMLButtonElement>("#filter-metadata-more");
 const seasonalStatusEl = mustElement<HTMLParagraphElement>("#seasonal-status");
 const seasonalListEl = mustElement<HTMLUListElement>("#seasonal-list");
 const refreshSeasonalBtn = mustElement<HTMLButtonElement>("#refresh-seasonal");
@@ -1429,6 +1437,10 @@ selectedAnimeEl.addEventListener("input", (event) => {
   }
 
   void updateRecommendations();
+});
+
+filterMetadataMoreBtn.addEventListener("click", () => {
+  void updateRecommendations(true);
 });
 
 selectedAnimeEl.addEventListener("change", (event) => {
@@ -3034,13 +3046,14 @@ function franchiseSelectionSummary(selection: FranchiseSelection, eligibleCount:
     `${selection.repeatedFranchiseHidden} repeated known/title-suggested series entry(ies). ${coverage}`;
 }
 
-async function updateRecommendations(): Promise<void> {
+async function updateRecommendations(checkMoreFilterMetadata = false): Promise<void> {
   recommendationController?.abort();
-  // A later user action can retry transient metadata failures; unavailable IDs stay known.
-  animeMetadataFailed.clear();
+  filterMetadataMoreBtn.disabled = true;
+  filterMetadataControlsEl.hidden = true;
   const controller = new AbortController();
   recommendationController = controller;
   const runId = ++recommendationRunId;
+  const filtersActive = hasActiveRecommendationFilters(recommendationFilters);
   const selectedPreferences = selectedAnimeNodeIds
     .map((nodeId) => selectedAnimePreferences.get(nodeId))
     .filter((item): item is AnimePreference => item !== undefined);
@@ -3099,7 +3112,13 @@ async function updateRecommendations(): Promise<void> {
     const likedCount = preferences.filter((item) => item.sentiment === "liked").length;
     if (likedCount === 0 || likedCount > MAX_SPARSE_CONTENT_SEEDS) return false;
     const content = buildGenreOverlapExploration(preferences, recommendationIndex, animeMetadataCache);
-    if (eligibilityPolicy.evaluate(content, animeMetadataCache).recommendations.length === 0) return false;
+    const hasConfirmedContent = eligibilityPolicy.evaluate(content, animeMetadataCache).recommendations.length > 0;
+    const catalog = filtersActive && !demoMode ? eligibilityPolicy.evaluate(
+      buildSamplePopularityExploration(recommendationIndex), animeMetadataCache,
+    ).structurallyEligible : [];
+    const catalogMayStillMatch = catalog.length > 0 &&
+      unresolvedMetadataCount(candidateMetadataCoverage(catalog)) > 0;
+    if (!hasConfirmedContent && !catalogMayStillMatch) return false;
     activeRankingMode = "fallback";
     usingFallback = true;
     fallbackDisplay = "related";
@@ -3198,7 +3217,8 @@ async function updateRecommendations(): Promise<void> {
     }
   }
   let structuralCandidates = initialEligibility.structurallyEligible;
-  if (structuralCandidates.length === 0) {
+  if (structuralCandidates.length === 0 &&
+      !(filtersActive && usingFallback && currentFallbackDisplay() === "related")) {
     recSummaryEl.textContent = includeCandidateNodeIds.length > 0
       ? "No scored candidates match Include Only after watched and excluded titles are removed."
       : "No eligible recommendations found from these preferences. Try another liked title or review filters.";
@@ -3208,16 +3228,28 @@ async function updateRecommendations(): Promise<void> {
   }
 
   let metadataCandidateAnimeIds: number[] = [];
+  let filterFetchBudget = METADATA_PREFETCH_WITH_FILTER_LIMIT;
   async function hydrateRankedCandidates(candidates: RecommendationResult[]): Promise<boolean> {
     metadataCandidateAnimeIds = candidates
-      .slice(0, METADATA_PREFETCH_LIMIT)
       .map((item) => item.anime.animeId)
       .filter((animeId) => Number.isFinite(animeId) && animeId > 0);
-    const metadataPrefetchLimit = hasActiveRecommendationFilters(recommendationFilters)
-      ? METADATA_PREFETCH_WITH_FILTER_LIMIT
-      : Math.min(12, metadataCandidateAnimeIds.length);
-    if (metadataPrefetchLimit > 0) {
-      await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds, metadataPrefetchLimit, controller.signal);
+    if (filtersActive && !demoMode) {
+      const scope = checkMoreFilterMetadata ? candidates
+        : candidates.slice(0, METADATA_PREFETCH_WITH_FILTER_LIMIT);
+      const coverage = candidateMetadataCoverage(scope);
+      let batch = coverage.uncheckedAnimeIds.slice(0, filterFetchBudget);
+      if (batch.length === 0 && checkMoreFilterMetadata) {
+        batch = coverage.failedAnimeIds.slice(0, filterFetchBudget);
+        for (const animeId of batch) animeMetadataFailed.delete(animeId);
+      }
+      if (batch.length > 0) {
+        setMetadataStatus("loading", `Checking ${batch.length} candidate metadata records for required filters...`);
+        filterFetchBudget -= batch.length;
+        await hydrateMetadataForAnimeIds(batch, batch.length, controller.signal);
+      }
+    } else {
+      await hydrateMetadataForAnimeIds(metadataCandidateAnimeIds.slice(0, METADATA_PREFETCH_LIMIT),
+        Math.min(12, metadataCandidateAnimeIds.length), controller.signal);
     }
     return runId === recommendationRunId && !controller.signal.aborted;
   }
@@ -3229,7 +3261,9 @@ async function updateRecommendations(): Promise<void> {
     activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
   );
   if (recommendationMode !== "graph" && !usingFallback &&
-      finalEligibility.recommendations.length === 0) {
+      finalEligibility.recommendations.length === 0 &&
+      (!filtersActive || unresolvedMetadataCount(candidateMetadataCoverage(
+        finalEligibility.structurallyEligible)) === 0)) {
     if (activeRankingMode !== "graph") {
       activeRankingMode = "graph";
       fallbackReason = "No ML candidates passed catalog and required filters.";
@@ -3244,7 +3278,9 @@ async function updateRecommendations(): Promise<void> {
         activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
       );
     }
-    if (finalEligibility.recommendations.length === 0) {
+    if (finalEligibility.recommendations.length === 0 &&
+        (!filtersActive || unresolvedMetadataCount(candidateMetadataCoverage(
+          finalEligibility.structurallyEligible)) === 0)) {
       if (!await primeSparseContentMetadata()) return;
       selectCatalogBaseline();
       structuralCandidates = rankEligibleCandidates(
@@ -3258,7 +3294,9 @@ async function updateRecommendations(): Promise<void> {
       );
     }
   }
-  if (recommendationMode === "graph" && finalEligibility.recommendations.length === 0 && !usingFallback) {
+  if (recommendationMode === "graph" && finalEligibility.recommendations.length === 0 && !usingFallback &&
+      (!filtersActive || unresolvedMetadataCount(candidateMetadataCoverage(
+        finalEligibility.structurallyEligible)) === 0)) {
     if (!await primeSparseContentMetadata()) return;
     if (selectContentBaseline()) {
       structuralCandidates = rankEligibleCandidates(
@@ -3269,7 +3307,31 @@ async function updateRecommendations(): Promise<void> {
       );
     }
   }
-  updateGenreFilterOptions(structuralCandidates);
+  let filterCoverageCandidates = finalEligibility.structurallyEligible;
+  if (filtersActive && usingFallback && currentFallbackDisplay() === "related" && !demoMode) {
+    const eligibleCatalog = eligibilityPolicy.evaluate(
+      buildSamplePopularityExploration(recommendationIndex), animeMetadataCache,
+    ).structurallyEligible;
+    if (checkMoreFilterMetadata) {
+      if (!await hydrateRankedCandidates(eligibleCatalog)) return;
+      sources.fallback = buildGenreOverlapExploration(preferences, recommendationIndex, animeMetadataCache);
+      finalEligibility = rankEligibleCandidates(
+        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+      );
+      if (recommendationMode !== "graph" && finalEligibility.recommendations.length === 0 &&
+          unresolvedMetadataCount(candidateMetadataCoverage(eligibleCatalog)) === 0) {
+        selectCatalogBaseline();
+        finalEligibility = rankEligibleCandidates(
+          activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
+        );
+      }
+    }
+    filterCoverageCandidates = usingFallback && currentFallbackDisplay() === "related"
+      ? eligibleCatalog : finalEligibility.structurallyEligible;
+  }
+  updateGenreFilterOptions(filterCoverageCandidates);
+  const filterCoverage = renderRankedFilterMetadataCoverage(filterCoverageCandidates);
+  const filterScanIncomplete = filtersActive && unresolvedMetadataCount(filterCoverage) > 0;
   const franchiseSelection = selectVisibleFranchises(finalEligibility.recommendations);
   const filteredRecommendations = franchiseSelection.recommendations;
   const effectiveFusion = activeRankingMode === "hybrid" ? filteredRecommendations[0]?.fusion : undefined;
@@ -3285,20 +3347,24 @@ async function updateRecommendations(): Promise<void> {
   if (filteredRecommendations.length === 0) {
     recSummaryEl.textContent = finalEligibility.recommendations.length > 0
       ? `Known immediate prequels block all currently eligible titles. Turn on Allow related titles to inspect them. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}`
-      : hasActiveRecommendationFilters(recommendationFilters)
-        ? "No recommendations match your current metadata filters."
+      : filtersActive
+        ? filterScanIncomplete
+          ? `No confirmed matches yet. Filter scan is partial: ${metadataCoverageText(filterCoverage)} Check more candidate metadata before treating this as no match.`
+          : `No candidates meet the required filters after checking all ${filterCoverage.total} eligible titles.` +
+            (filterCoverage.unavailable > 0
+              ? ` ${filterCoverage.unavailable} title(s) had unavailable metadata and could not pass.` : "")
         : "No eligible recommendations found from these preferences.";
     recResultsEl.innerHTML = "";
     const metadataState: AsyncUiState = demoMode ? "demo"
-      : metadataCandidateAnimeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
-        : metadataCandidateAnimeIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "empty";
-    setMetadataStatus(metadataState,
-      metadataState === "failed" ? "Metadata request failed; some candidates could not be checked."
+      : filtersActive ? filterCoverage.failed > 0 ? "failed"
+        : filterScanIncomplete ? "partial" : filterCoverage.unavailable > 0 ? "unavailable" : "empty"
+        : metadataCandidateAnimeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
+          : metadataCandidateAnimeIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "empty";
+    setMetadataStatus(metadataState, filtersActive
+      ? `Filter metadata: ${metadataCoverageText(filterCoverage)}`
+      : metadataState === "failed" ? "Metadata request failed; some candidates could not be checked."
         : metadataState === "unavailable" ? "Metadata is unavailable for some candidates."
-          : hasActiveRecommendationFilters(recommendationFilters) && finalEligibility.missingMetadataCount > 0
-            ? `Metadata: ${finalEligibility.missingMetadataCount} candidate(s) skipped due to missing metadata.`
-            : "Metadata: no matches after filters.",
-    );
+          : "Metadata: no matches after filters.");
     return;
   }
 
@@ -3312,7 +3378,8 @@ async function updateRecommendations(): Promise<void> {
       ? " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles by sampled rating count."
       : " Shared genres use available metadata; the automatic check covers at most 12 eligible catalog titles in catalog order."
     : "";
-  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${finalEligibility.recommendations.length} eligible candidates (${methodLabel})${filterSummary}. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}${fallbackScopeNote}`;
+  recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${finalEligibility.recommendations.length} eligible candidates (${methodLabel})${filterSummary}. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}${fallbackScopeNote}` +
+    (filtersActive ? ` Filter scan ${filterScanIncomplete ? "partial" : "complete"}: ${metadataCoverageText(filterCoverage)}` : "");
 
   const visibleRecommendations = filteredRecommendations
     .slice(0, MAX_RECOMMENDATIONS)
@@ -3337,15 +3404,17 @@ async function updateRecommendations(): Promise<void> {
       : "";
   const visibleIds = filteredRecommendations.slice(0, MAX_RECOMMENDATIONS).map((item) => item.anime.animeId);
   const metadataState: AsyncUiState = demoMode ? "demo"
-    : visibleIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
-      : visibleIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "ready";
+    : filtersActive ? filterCoverage.failed > 0 ? "failed"
+      : filterScanIncomplete ? "partial" : filterCoverage.unavailable > 0 ? "unavailable" : "ready"
+      : visibleIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
+        : visibleIds.some((id) => animeMetadataUnavailable.has(id)) ? "unavailable" : "ready";
   const providerNote = metadataState === "failed" ? " | some metadata requests failed"
     : metadataState === "unavailable" ? " | some metadata unavailable"
       : metadataState === "demo" ? " | synthetic demo data" : "";
   setMetadataStatus(metadataState,
     `Metadata loaded for ${visibleWithMetadata}/${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} visible recommendations` +
       `${visibleMissingMetadata > 0 ? ` | pending: ${visibleMissingMetadata}` : ""}` +
-      missingNote + providerNote,
+      missingNote + providerNote + (filtersActive ? ` | ${metadataCoverageText(filterCoverage)}` : ""),
   );
 }
 
@@ -3366,11 +3435,11 @@ async function renderCatalogExploration(
   }
   const popularity = buildSamplePopularityExploration(recommendationIndex);
   const eligibleCatalog = policy.evaluate(popularity, animeMetadataCache).structurallyEligible;
-  const metadataScope = eligibleCatalog.slice(0, METADATA_PREFETCH_LIMIT);
-  const metadataScopeIds = metadataScope.map((item) => item.anime.animeId);
+  const metadataScopeIds = eligibleCatalog.map((item) => item.anime.animeId);
   const hasLikedSource = preferences.some((item) => item.sentiment === "liked");
   if (view === "related" && !hasLikedSource) discoveryMetadataBatchRequested = false;
   if (discoveryMetadataBatchRequested && !demoMode) {
+    discoveryMetadataBatchRequested = false;
     discoveryLoadMetadataBtn.disabled = true;
     recEngineStatusEl.textContent = "Checking catalog metadata for exploration...";
     setMetadataStatus("loading", "Metadata: checking a bounded catalog batch...");
@@ -3381,28 +3450,35 @@ async function renderCatalogExploration(
       await hydrateMetadataForAnimeIds(seedIds, seedIds.length, signal);
       if (runId !== recommendationRunId || signal.aborted) return;
     }
-    await hydrateMetadataForAnimeIds(metadataScopeIds, 12, signal);
+    const coverage = candidateMetadataCoverage(eligibleCatalog);
+    let batch = coverage.uncheckedAnimeIds.slice(0, 12);
+    if (batch.length === 0) {
+      batch = coverage.failedAnimeIds.slice(0, 12);
+      for (const animeId of batch) animeMetadataFailed.delete(animeId);
+    }
+    await hydrateMetadataForAnimeIds(batch, batch.length, signal);
     if (runId !== recommendationRunId || signal.aborted) return;
-    discoveryMetadataBatchRequested = false;
   }
 
   updateGenreFilterOptions(eligibleCatalog);
+  const coverage = candidateMetadataCoverage(eligibleCatalog);
+  const incompleteMetadata = unresolvedMetadataCount(coverage) > 0;
+  const metadataMatters = hasActiveRecommendationFilters(recommendationFilters) || view !== "popularity";
   const knownInScope = metadataScopeIds.filter((id) => animeMetadataCache.has(id)).length;
   const scoredInScope = metadataScopeIds.filter((id) => animeMetadataCache.get(id)?.score !== null &&
     animeMetadataCache.get(id)?.score !== undefined).length;
   const genresInScope = metadataScopeIds.filter((id) => (animeMetadataCache.get(id)?.genres.length ?? 0) > 0).length;
-  const unavailableInScope = metadataScopeIds.filter((id) => animeMetadataUnavailable.has(id)).length;
-  const checkedScopeCount = knownInScope + unavailableInScope;
   discoveryMetadataControlsEl.hidden = demoMode;
   if (!demoMode) {
     discoveryMetadataNoteEl.textContent =
-      `Metadata loaded for ${knownInScope}/${metadataScopeIds.length} eligible titles in the first ` +
-      `${METADATA_PREFETCH_LIMIT} ${samplePopularityAvailable ? "by sampled ratings" : "in catalog order"}; ` +
+      `Metadata across the full ${metadataScopeIds.length}-title eligible catalog: ${metadataCoverageText(coverage)} ` +
       `${scoredInScope} have a community score and ` +
-      `${genresInScope} have genres. ${unavailableInScope} had no metadata. ` +
-      "Checking more titles sends only their catalog IDs through the existing metadata provider.";
+      `${genresInScope} have genres. Each check sends at most 12 catalog IDs through the existing metadata provider.`;
     discoveryLoadMetadataBtn.disabled = metadataScopeIds.length === 0 ||
-      checkedScopeCount >= metadataScopeIds.length || (view === "related" && !hasLikedSource);
+      !incompleteMetadata || (view === "related" && !hasLikedSource);
+    discoveryLoadMetadataBtn.textContent = coverage.uncheckedAnimeIds.length > 0
+      ? `Check next ${Math.min(12, coverage.uncheckedAnimeIds.length)} eligible titles`
+      : `Retry ${Math.min(12, coverage.failed)} failed metadata checks`;
   }
 
   const explorationResults = view === "popularity" ? popularity
@@ -3421,13 +3497,18 @@ async function renderCatalogExploration(
       ? `Known immediate prequels block all currently eligible titles. Turn on Allow related titles to inspect them. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}`
       : view === "related" && !hasLikedSource
       ? "Mark a title Liked to explore shared genres. Seen and Disliked titles are still excluded."
+      : metadataMatters && incompleteMetadata
+        ? `No confirmed matches yet. Metadata scan is partial: ${metadataCoverageText(coverage)} Check more eligible titles before treating this as no match.`
       : view === "quality"
         ? samplePopularityAvailable
-          ? "No eligible catalog titles with a known community score match these filters. Check more metadata or explore sampled rating counts."
-          : "No eligible catalog titles with a known community score match these filters. Check more metadata."
+          ? "No eligible catalog titles with a known community score match these filters. You can explore sampled rating counts."
+          : "No eligible catalog titles with a known community score match these filters."
         : view === "related"
-          ? "No checked catalog titles share genres with your Liked titles. Check more metadata or try another Liked title."
+          ? "No eligible catalog titles with verified shared genres match these filters and Liked titles. Try another Liked title."
           : "No eligible catalog titles match these filters and overrides.";
+    if (metadataMatters && !incompleteMetadata && !(view === "related" && !hasLikedSource)) {
+      recSummaryEl.textContent += ` Metadata scan complete: ${metadataCoverageText(coverage)}`;
+    }
     recResultsEl.innerHTML = "";
   } else {
     const scopeNote = view === "popularity"
@@ -3438,16 +3519,18 @@ async function renderCatalogExploration(
     recSummaryEl.textContent =
       `Showing top ${Math.min(MAX_RECOMMENDATIONS, results.length)} of ${results.length} eligible titles ` +
       `(${heading})${formatActiveFilterSummary()}. ${scopeNote} ` +
-      franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length);
+      franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length) +
+      (metadataMatters ? ` Metadata scan ${incompleteMetadata ? "partial" : "complete"}: ${metadataCoverageText(coverage)}` : "");
     recResultsEl.innerHTML = results.slice(0, MAX_RECOMMENDATIONS)
       .map((item) => renderRecommendationCard(item, view,
         franchiseSelection.notesByAnimeId.get(item.anime.animeId))).join("");
   }
   const metadataState: AsyncUiState = demoMode ? "demo"
-    : metadataScopeIds.some((id) => animeMetadataFailed.has(id)) ? "failed"
-      : knownInScope > 0 ? "ready" : "empty";
+    : coverage.failed > 0 ? "failed"
+      : metadataMatters && incompleteMetadata ? "partial"
+        : coverage.unavailable > 0 ? "unavailable" : knownInScope > 0 ? "ready" : "empty";
   setMetadataStatus(metadataState,
-    `Metadata available for ${knownInScope}/${metadataScopeIds.length} eligible titles in the bounded exploration scope` +
+    `Metadata available for ${knownInScope}/${metadataScopeIds.length} eligible titles in bounded exploration batches` +
       (finalEligibility.missingMetadataCount > 0
         ? ` | ${finalEligibility.missingMetadataCount} skipped by required filters until metadata is known`
         : "") + (demoMode ? " | synthetic demo catalog" : ""),
@@ -3594,6 +3677,39 @@ function setMetadataStatus(state: AsyncUiState, message: string): void {
   setAsyncStatus(metadataStatusEl, state, message);
 }
 
+function candidateMetadataCoverage(candidates: readonly RecommendationResult[]): CandidateMetadataCoverage {
+  return summarizeCandidateMetadataCoverage(
+    candidates.map((item) => item.anime.animeId),
+    animeMetadataCache, animeMetadataUnavailable, animeMetadataFailed,
+  );
+}
+
+function unresolvedMetadataCount(coverage: CandidateMetadataCoverage): number {
+  return coverage.uncheckedAnimeIds.length + coverage.failed;
+}
+
+function metadataCoverageText(coverage: CandidateMetadataCoverage): string {
+  return `${coverage.ready + coverage.unavailable}/${coverage.total} resolved; ` +
+    `${coverage.uncheckedAnimeIds.length} unchecked, ${coverage.failed} failed, ` +
+    `${coverage.unavailable} unavailable.` +
+    (hasActiveRecommendationFilters(recommendationFilters)
+      ? " Required filters exclude titles without verified fields." : "");
+}
+
+function renderRankedFilterMetadataCoverage(candidates: readonly RecommendationResult[]): CandidateMetadataCoverage {
+  const coverage = candidateMetadataCoverage(candidates);
+  filterMetadataControlsEl.hidden = demoMode || !hasActiveRecommendationFilters(recommendationFilters) ||
+    coverage.total === 0;
+  if (filterMetadataControlsEl.hidden) return coverage;
+  filterMetadataNoteEl.textContent = `Filter metadata: ${metadataCoverageText(coverage)}`;
+  filterMetadataMoreBtn.hidden = unresolvedMetadataCount(coverage) === 0;
+  filterMetadataMoreBtn.disabled = false;
+  filterMetadataMoreBtn.textContent = coverage.uncheckedAnimeIds.length > 0
+    ? `Check next ${Math.min(METADATA_PREFETCH_WITH_FILTER_LIMIT, coverage.uncheckedAnimeIds.length)} unchecked candidates`
+    : `Retry ${Math.min(METADATA_PREFETCH_WITH_FILTER_LIMIT, coverage.failed)} failed metadata checks`;
+  return coverage;
+}
+
 function formatActiveFilterSummary(): string {
   const parts: string[] = [];
   if (recommendationFilters.genre) {
@@ -3613,7 +3729,7 @@ function formatActiveFilterSummary(): string {
 
 function updateGenreFilterOptions(recommendations: RecommendationResult[]): void {
   const byNormalized = new Map<string, string>();
-  for (const item of recommendations.slice(0, METADATA_PREFETCH_LIMIT)) {
+  for (const item of recommendations) {
     const metadata = animeMetadataCache.get(item.anime.animeId);
     if (!metadata) {
       continue;
