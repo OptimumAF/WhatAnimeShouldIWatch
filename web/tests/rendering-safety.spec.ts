@@ -101,6 +101,9 @@ test("graph labels, imported lines, and profile names remain text", async ({ pag
 
   await page.getByRole("button", { name: "Open network explorer page" }).click();
   await expect(page.locator("#graph svg text").filter({ hasText: unsafeMarkup })).toHaveCount(1);
+  await page.locator("#network-node-list summary").click();
+  await expect(page.locator("#network-node-list-results button").filter({ hasText: unsafeMarkup }))
+    .toHaveCount(1);
   await page.locator("#graph svg [data-node-id='anime:101']").click();
   await expect(page.locator("#inspect-meta .inspect-title")).toContainText(unsafeMarkup);
   await expect(page.locator("#app img")).toHaveCount(0);

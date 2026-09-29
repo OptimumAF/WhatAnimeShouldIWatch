@@ -110,6 +110,7 @@ body {
 .app-shell {
   min-height: 100vh;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr;
 }
 
@@ -839,6 +840,29 @@ button:hover,
 }
 
 @media (max-width: 600px) {
+  .topbar {
+    position: relative;
+  }
+
+  #app button,
+  #app input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  #app select,
+  #app summary {
+    min-height: 44px;
+  }
+
+  #app button {
+    min-width: 44px;
+  }
+
+  #app input[type="range"] {
+    min-height: 44px;
+  }
+
+  .checkbox {
+    min-height: 44px;
+  }
+
   #add-anime-form {
     grid-template-columns: minmax(0, 1fr) auto;
   }
@@ -1767,6 +1791,7 @@ button:hover,
 
 .network-mobile-toggle {
   display: none;
+  min-height: 44px;
   border: 1px solid color-mix(in srgb, var(--accent) 62%, var(--line-strong) 38%);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-soft) 84%, var(--accent) 16%);
@@ -1865,6 +1890,79 @@ button:hover,
   color: var(--info);
   font-size: 0.78rem;
   min-height: 1.05rem;
+}
+
+.network-node-list {
+  margin-top: 0.9rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 0.35rem 0.7rem 0.7rem;
+}
+
+.network-node-list summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding: 0.6rem 0;
+  font-weight: 700;
+}
+
+.network-node-list label {
+  display: block;
+  margin: 0.35rem 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.network-node-list input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.network-node-list p {
+  margin: 0.45rem 0;
+  font-size: 0.76rem;
+}
+
+.network-node-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.network-node-choice {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 0.45rem 0.6rem;
+  background: var(--surface-soft);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.network-node-choice[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--surface-active);
+}
+
+.network-node-list-pages {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.network-node-list-pages button {
+  min-height: 44px;
 }
 
 .graph-shell {

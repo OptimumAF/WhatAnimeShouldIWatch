@@ -104,6 +104,7 @@ type CommandMatchReason =
 
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
+const NETWORK_NODE_LIST_PAGE_SIZE = 15;
 const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
 const IMPORTANCE_STEP = 0.1;
@@ -194,7 +195,7 @@ app.innerHTML = `
           <h2 id="command-title">Quick Actions</h2>
           <button id="command-close" type="button" class="ghost-btn" aria-label="Close command palette">Close</button>
         </div>
-        <input id="command-input" type="text" autocomplete="off" placeholder="Type an action (e.g. network, theme, import)" />
+        <input id="command-input" type="text" autocomplete="off" aria-label="Search quick actions" placeholder="Type an action (e.g. network, theme, import)" />
         <p id="command-hint" class="muted command-hint">Enter to run selected action. Keys 1-9 run visible commands instantly. Esc closes. Fuzzy search enabled. Use the star to pin favorites and drag the grip to reorder.</p>
         <ul id="command-list" class="command-list"></ul>
       </section>
@@ -510,7 +511,7 @@ app.innerHTML = `
           </ul>
         </section>
 
-        <button id="network-mobile-toggle" type="button" class="network-mobile-toggle" hidden aria-expanded="false">
+        <button id="network-mobile-toggle" type="button" class="network-mobile-toggle" hidden aria-expanded="false" aria-controls="network-panel">
           Show Controls
         </button>
         <div id="network-layout" class="network-layout">
@@ -555,6 +556,18 @@ app.innerHTML = `
               <datalist id="network-node-options"></datalist>
               <p id="network-search-message" class="network-search-message" role="status" aria-live="polite"></p>
             </section>
+
+            <details id="network-node-list" class="network-node-list">
+              <summary>Visible nodes as a list</summary>
+              <label for="network-node-filter">Filter visible nodes by title or ID</label>
+              <input id="network-node-filter" type="search" autocomplete="off" />
+              <p id="network-node-list-status" class="muted" role="status" aria-live="polite">Open the network to browse visible nodes.</p>
+              <ul id="network-node-list-results"></ul>
+              <div class="network-node-list-pages">
+                <button id="network-node-prev" type="button" class="ghost-btn">Previous</button>
+                <button id="network-node-next" type="button" class="ghost-btn">Next</button>
+              </div>
+            </details>
 
             <section class="inspect">
               <div class="inspect-head">
@@ -614,6 +627,8 @@ const contrastToggleLabelEl = mustElement<HTMLSpanElement>("#contrast-toggle-lab
 const tipsToggleBtn = mustElement<HTMLButtonElement>("#tips-toggle");
 const tipsToggleLabelEl = mustElement<HTMLSpanElement>("#tips-toggle-label");
 const commandsToggleBtn = mustElement<HTMLButtonElement>("#commands-toggle");
+const appTopbarEl = mustElement<HTMLElement>(".topbar");
+const appMainEl = mustElement<HTMLElement>("main");
 const commandPaletteEl = mustElement<HTMLDivElement>("#command-palette");
 const commandInput = mustElement<HTMLInputElement>("#command-input");
 const commandListEl = mustElement<HTMLUListElement>("#command-list");
@@ -728,6 +743,11 @@ const networkMobileToggleBtn = mustElement<HTMLButtonElement>("#network-mobile-t
 const networkLayoutEl = mustElement<HTMLDivElement>("#network-layout");
 const networkPanelEl = mustElement<HTMLElement>("#network-panel");
 const networkRenderStatusEl = mustElement<HTMLParagraphElement>("#network-render-status");
+const networkNodeFilterEl = mustElement<HTMLInputElement>("#network-node-filter");
+const networkNodeListStatusEl = mustElement<HTMLParagraphElement>("#network-node-list-status");
+const networkNodeListResultsEl = mustElement<HTMLUListElement>("#network-node-list-results");
+const networkNodePrevBtn = mustElement<HTMLButtonElement>("#network-node-prev");
+const networkNodeNextBtn = mustElement<HTMLButtonElement>("#network-node-next");
 const graphShell = mustElement<HTMLElement>("#graph-shell");
 const graphLoadingEl = mustElement<HTMLDivElement>("#graph-loading");
 const graphLoadingMessageEl = mustElement<HTMLParagraphElement>("#graph-loading-message");
@@ -758,6 +778,8 @@ diagnosticModelEl.textContent = modelVersionLabel(null, null, "unchecked", demoM
 
 let selectedNodeId: string | null = null;
 let currentGraph: Graph | null = null;
+let visibleGraphNodes: { id: string; label: string; nodeType: string; searchText: string }[] = [];
+let networkNodeListPage = 0;
 let explorerGraphData: LoadedGraphData | null = null;
 let explorerGraphDataPromise: Promise<LoadedGraphData> | null = null;
 let activeView: AppView = "recommendations";
@@ -809,6 +831,7 @@ let activeTheme: ThemeMode = persistence.loadThemeModePreference(
 let activeContrast: ContrastMode = persistence.loadContrastModePreference();
 let helpTipsDismissed = persistence.loadHelpTipsDismissed();
 let commandPaletteOpen = false;
+let commandPaletteReturnFocus: HTMLElement | null = null;
 let commandSelectionIndex = 0;
 let commandFilteredActions: CommandAction[] = [];
 let commandMatchReasons = new Map<string, CommandMatchReason[]>();
@@ -1185,6 +1208,25 @@ watchlistListEl.addEventListener("change", (event) => {
     const rating = target.value === "" ? null : Number(target.value);
     if (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 10)) return;
     changeWatchlistEntry({ ...existing, rating });
+  }
+});
+
+commandPaletteEl.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab") return;
+  const focusable = [...commandPaletteEl.querySelectorAll<HTMLElement>(
+    "button:not(:disabled), input:not(:disabled)",
+  )].filter((element) => element.getClientRects().length > 0);
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first ||
+      !commandPaletteEl.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last ||
+      !commandPaletteEl.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
   }
 });
 
@@ -1565,9 +1607,40 @@ networkSearchForm.addEventListener("submit", (event) => {
   selectNodeAndFocus(match.id);
 });
 
+networkNodeFilterEl.addEventListener("input", () => {
+  networkNodeListPage = 0;
+  renderVisibleNodeList();
+});
+
+networkNodePrevBtn.addEventListener("click", () => {
+  networkNodeListPage = Math.max(0, networkNodeListPage - 1);
+  renderVisibleNodeList();
+});
+
+networkNodeNextBtn.addEventListener("click", () => {
+  networkNodeListPage += 1;
+  renderVisibleNodeList();
+});
+
+networkNodeListResultsEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element) || !currentGraph) return;
+  const button = target.closest<HTMLButtonElement>("button[data-node-id]");
+  const nodeId = button?.dataset.nodeId;
+  if (!nodeId || !currentGraph.hasNode(nodeId)) return;
+  const attributes = currentGraph.getNodeAttributes(nodeId) as Record<string, unknown>;
+  const label = typeof attributes.label === "string" ? attributes.label : nodeId;
+  selectedNodeId = nodeId;
+  networkSearchMessage.textContent = `Focused: ${label} (${nodeId})`;
+  renderInspectPanel(nodeId);
+  renderSvgGraph(currentGraph);
+});
+
 revealApp();
 
 function setActiveView(view: AppView, fromHash: boolean): void {
+  const leavingView = view === "network" ? viewRecommendations : viewNetwork;
+  const focusWasInLeavingView = leavingView.contains(document.activeElement);
   activeView = view;
   viewRecommendations.hidden = view !== "recommendations";
   viewNetwork.hidden = view !== "network";
@@ -1576,6 +1649,16 @@ function setActiveView(view: AppView, fromHash: boolean): void {
 
   navRecommendationsBtn.classList.toggle("active", view === "recommendations");
   navNetworkBtn.classList.toggle("active", view === "network");
+  if (view === "recommendations") {
+    navRecommendationsBtn.setAttribute("aria-current", "page");
+    navNetworkBtn.removeAttribute("aria-current");
+  } else {
+    navNetworkBtn.setAttribute("aria-current", "page");
+    navRecommendationsBtn.removeAttribute("aria-current");
+  }
+  if (focusWasInLeavingView) {
+    (view === "network" ? navNetworkBtn : navRecommendationsBtn).focus({ preventScroll: true });
+  }
 
   if (!fromHash) {
     const nextHash = view === "network" ? "network" : "recommendations";
@@ -1623,6 +1706,9 @@ function applyNetworkCompactControlsState(): void {
   networkMobileToggleBtn.hidden = !compact || activeView !== "network";
 
   const hideControls = compact && networkControlsHiddenOnMobile;
+  if (activeView === "network" && hideControls && networkPanelEl.contains(document.activeElement)) {
+    networkMobileToggleBtn.focus({ preventScroll: true });
+  }
   networkLayoutEl.classList.toggle("controls-hidden", hideControls);
   networkMobileToggleBtn.setAttribute("aria-expanded", hideControls ? "false" : "true");
   networkMobileToggleBtn.textContent = hideControls ? "Show Controls" : "Hide Controls";
@@ -1811,9 +1897,14 @@ function toggleCommandPalette(): void {
 }
 
 function openCommandPalette(): void {
+  const opener = document.activeElement;
+  commandPaletteReturnFocus = opener instanceof HTMLElement && opener !== document.body
+    ? opener : commandsToggleBtn;
   commandPaletteOpen = true;
   commandPaletteEl.hidden = false;
   commandPaletteEl.setAttribute("aria-hidden", "false");
+  appTopbarEl.inert = true;
+  appMainEl.inert = true;
   commandInput.value = "";
   commandSelectionIndex = 0;
   renderCommandPaletteList();
@@ -1827,9 +1918,15 @@ function closeCommandPalette(): void {
   commandPaletteOpen = false;
   commandPaletteEl.hidden = true;
   commandPaletteEl.setAttribute("aria-hidden", "true");
+  appTopbarEl.inert = false;
+  appMainEl.inert = false;
   document.body.classList.remove("palette-open");
   clearCommandDragState();
-  commandsToggleBtn.focus();
+  const restoreTo = commandPaletteReturnFocus;
+  commandPaletteReturnFocus = null;
+  (restoreTo?.isConnected && restoreTo.getClientRects().length > 0 &&
+      !restoreTo.closest("[hidden]") && !restoreTo.matches(":disabled")
+    ? restoreTo : commandsToggleBtn).focus();
 }
 
 function moveCommandSelection(delta: number): void {
@@ -4173,6 +4270,39 @@ function setGraphLoadingState(loading: boolean, statusMessage: string): void {
   networkRenderStatusEl.textContent = statusMessage;
 }
 
+function renderVisibleNodeList(): void {
+  const query = normalizeTitle(networkNodeFilterEl.value);
+  const matching = query ? visibleGraphNodes.filter((node) => node.searchText.includes(query))
+    : visibleGraphNodes;
+  const pageCount = Math.max(1, Math.ceil(matching.length / NETWORK_NODE_LIST_PAGE_SIZE));
+  networkNodeListPage = Math.min(networkNodeListPage, pageCount - 1);
+  const start = networkNodeListPage * NETWORK_NODE_LIST_PAGE_SIZE;
+  const visible = matching.slice(start, start + NETWORK_NODE_LIST_PAGE_SIZE);
+  networkNodePrevBtn.disabled = networkNodeListPage === 0;
+  networkNodeNextBtn.disabled = networkNodeListPage >= pageCount - 1;
+  networkNodeListStatusEl.textContent = matching.length === 0
+    ? `No nodes match this filter among ${visibleGraphNodes.length} visible nodes.`
+    : `Showing ${start + 1}–${start + visible.length} of ${matching.length} matching nodes (${visibleGraphNodes.length} visible nodes).`;
+  networkNodeListResultsEl.replaceChildren(...visible.map((node) => {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "network-node-choice";
+    button.dataset.nodeId = node.id;
+    button.textContent = node.label;
+    button.setAttribute("aria-label", `${node.label} (${node.nodeType}, ${node.id})`);
+    button.setAttribute("aria-pressed", node.id === selectedNodeId ? "true" : "false");
+    item.append(button);
+    return item;
+  }));
+}
+
+function syncVisibleNodeSelection(): void {
+  for (const button of networkNodeListResultsEl.querySelectorAll<HTMLButtonElement>("button[data-node-id]")) {
+    button.setAttribute("aria-pressed", button.dataset.nodeId === selectedNodeId ? "true" : "false");
+  }
+}
+
 function renderGraph(
   graphDataValue: LoadedGraphData,
   minAbsoluteWeight: number,
@@ -4234,6 +4364,19 @@ function renderGraph(
 
   applyLayout(graph);
   currentGraph = graph;
+  visibleGraphNodes = [];
+  graph.forEachNode((id, attributes) => {
+    const label = typeof attributes.label === "string" ? attributes.label : id;
+    visibleGraphNodes.push({
+      id,
+      label,
+      nodeType: attributes.nodeType === "user" ? "user" : "anime",
+      searchText: normalizeTitle(`${label} ${id}`),
+    });
+  });
+  visibleGraphNodes.sort((left, right) =>
+    left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
+  renderVisibleNodeList();
   renderSvgGraph(graph);
 
   const visibleUsers = countNodesByType(graph, "user");
@@ -4474,6 +4617,7 @@ function applyLayout(graph: Graph): void {
 function renderSvgGraph(graph: Graph): void {
   graphContainer.replaceChildren();
   if (graph.order === 0) {
+    syncVisibleNodeSelection();
     return;
   }
 
@@ -4570,23 +4714,12 @@ function renderSvgGraph(graph: Graph): void {
     circle.setAttribute("r", String(isSelected ? baseSize * 1.5 : baseSize));
     circle.setAttribute("fill", isSelected ? "#ffd166" : dimmed ? "#4f607388" : baseColor);
     circle.setAttribute("data-node-id", node);
-    circle.setAttribute("tabindex", "0");
-    circle.setAttribute("role", "button");
-    circle.setAttribute("aria-label", String(nodeAttrs.label ?? node));
+    circle.setAttribute("aria-hidden", "true");
     circle.addEventListener("click", () => {
       selectedNodeId = node;
-      networkSearchMessage.textContent = `Focused: ${node}`;
+      networkSearchMessage.textContent = `Focused: ${String(nodeAttrs.label ?? node)} (${node})`;
       renderInspectPanel(node);
       renderSvgGraph(graph);
-    });
-    circle.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        selectedNodeId = node;
-        networkSearchMessage.textContent = `Focused: ${node}`;
-        renderInspectPanel(node);
-        renderSvgGraph(graph);
-      }
     });
     nodeLayer.appendChild(circle);
 
@@ -4613,6 +4746,7 @@ function renderSvgGraph(graph: Graph): void {
 
   svg.append(edgeLayer, nodeLayer, labelLayer);
   graphContainer.appendChild(svg);
+  syncVisibleNodeSelection();
 }
 
 function scaleGraphCoordinate(
