@@ -13,7 +13,6 @@ import type {
   ConnectedItem,
   ImportedPreferenceEntry,
   ModelRecommendationIndex,
-  RecommendationIndex,
   RecommendationResult,
   SeasonalAnimeItem,
 } from "./domain";
@@ -77,6 +76,8 @@ import type {
 } from "./persistence";
 import { createBrowserRuntime, isAbortError } from "./runtime";
 import { safeExternalImageUrl } from "./safe-url";
+import { searchAnimeTitles } from "./title-search";
+import type { TitleSearchResult } from "./title-search";
 import { mergeWatchlistFeedback, validateWatchlist, watchedWatchlistAnimeIds } from "./watchlist";
 import type { WatchlistEntry, WatchlistStatus } from "./watchlist";
 import "./style.css";
@@ -306,7 +307,7 @@ app.innerHTML = `
               <h3 id="watchlist-title">My Watchlist <span id="watchlist-count" class="count-pill">0</span></h3>
               <p class="muted">Save a shortlist, set a watch status, and rate titles from 1–10. Status alone never becomes a preference or training permission. An explicit rating can refine suggestions in this browser; a manually chosen preference takes precedence. Planned titles do not supply preference evidence.</p>
               <form id="watchlist-form" class="add-form add-form-compact">
-                <input id="watchlist-input" type="text" list="anime-options" autocomplete="off" aria-label="Anime to add to watchlist" placeholder="Exact title or anime ID" />
+                <input id="watchlist-input" type="text" list="anime-options" autocomplete="off" aria-label="Anime to add to watchlist" placeholder="Title, alias, or anime ID" />
                 <button type="submit">Plan to Watch</button>
               </form>
               <p id="watchlist-status" class="muted" role="status" aria-live="polite"></p>
@@ -587,6 +588,14 @@ app.innerHTML = `
         <p id="diagnostic-action" class="muted"></p>
       </details>
     </main>
+    <dialog id="title-search-dialog" class="title-search-dialog" aria-labelledby="title-search-heading" aria-describedby="title-search-summary">
+      <div class="title-search-head">
+        <h2 id="title-search-heading">Choose a catalog title</h2>
+        <button id="title-search-close" class="ghost-btn" type="button">Cancel</button>
+      </div>
+      <p id="title-search-summary" class="muted"></p>
+      <ul id="title-search-results" class="title-search-results"></ul>
+    </dialog>
   </div>
 `;
 
@@ -622,6 +631,10 @@ const addAnimeForm = mustElement<HTMLFormElement>("#add-anime-form");
 const animeInput = mustElement<HTMLInputElement>("#anime-input");
 const addPreferenceSelect = mustElement<HTMLSelectElement>("#add-preference");
 const animeOptions = mustElement<HTMLDataListElement>("#anime-options");
+const titleSearchDialog = mustElement<HTMLDialogElement>("#title-search-dialog");
+const titleSearchSummary = mustElement<HTMLParagraphElement>("#title-search-summary");
+const titleSearchResults = mustElement<HTMLUListElement>("#title-search-results");
+const titleSearchClose = mustElement<HTMLButtonElement>("#title-search-close");
 const recMethodSelect = mustElement<HTMLSelectElement>("#rec-method");
 const discoveryViewSelect = mustElement<HTMLSelectElement>("#discovery-view");
 const allowRelatedInput = mustElement<HTMLInputElement>("#allow-related-titles");
@@ -848,7 +861,7 @@ recBlendInput.value = modelBlendWeight.toFixed(2);
 renderModelBlendValue();
 setBlendControlVisibility();
 
-populateAnimeOptions(recommendationIndex.animeList, animeOptions);
+populateAnimeOptions(recommendationIndex.animeList, animeMetadataCache, animeOptions);
 populateNetworkNodeOptions(graphNodes, networkNodeOptions);
 renderSelectedAnime();
 renderImportedHistory();
@@ -1139,6 +1152,8 @@ addAnimeForm.addEventListener("submit", (event) => {
   event.preventDefault();
   addAnimeFromInput();
 });
+
+titleSearchClose.addEventListener("click", () => titleSearchDialog.close());
 
 watchlistForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1498,7 +1513,12 @@ networkSearchForm.addEventListener("submit", (event) => {
     networkSearchMessage.textContent = "Enter a node query first.";
     return;
   }
-  const match = resolveNetworkNodeQuery(query, graphData);
+  const found = resolveNetworkNodeQuery(query, graphData);
+  if (found.ambiguous) {
+    networkSearchMessage.textContent = "Several graph nodes match. Enter the exact node ID to choose one.";
+    return;
+  }
+  const match = found.match;
   if (!match) {
     networkSearchMessage.textContent = `No node match found for "${query}".`;
     return;
@@ -2277,28 +2297,18 @@ function showSeasonalIdeas(): void {
 }
 
 function addAnimeFromInput(): void {
-  const raw = animeInput.value.trim();
-  if (!raw) {
-    recMessageEl.textContent = "Enter an anime title first.";
-    return;
-  }
+  chooseAnimeFromInput(animeInput, recMessageEl, (anime) => {
+    if (selectedAnimeNodeIds.includes(anime.nodeId)) {
+      recMessageEl.textContent = `${anime.label} is already in your watched list.`;
+      animeInput.value = "";
+      return;
+    }
 
-  const anime = resolveAnimeInput(raw, recommendationIndex);
-  if (!anime) {
-    recMessageEl.textContent = `No anime match found for "${raw}".`;
-    return;
-  }
-
-  if (selectedAnimeNodeIds.includes(anime.nodeId)) {
-    recMessageEl.textContent = `${anime.label} is already in your watched list.`;
     animeInput.value = "";
-    return;
-  }
-
-  animeInput.value = "";
-  const sentiment = addPreferenceSelect.value as PreferenceSentiment;
-  addPreferenceSelect.value = favoriteQuickstartActive && sentiment === "liked" ? "liked" : "seen";
-  addAnimeToWatchedList(anime, "Added", ["seen", "liked", "disliked"].includes(sentiment) ? sentiment : "seen");
+    const sentiment = addPreferenceSelect.value as PreferenceSentiment;
+    addPreferenceSelect.value = favoriteQuickstartActive && sentiment === "liked" ? "liked" : "seen";
+    addAnimeToWatchedList(anime, "Added", ["seen", "liked", "disliked"].includes(sentiment) ? sentiment : "seen");
+  });
 }
 
 async function loadBulkImportFile(): Promise<void> {
@@ -2676,18 +2686,9 @@ function removeSelectedAnime(nodeId: string): void {
 }
 
 function addWatchlistFromInput(): void {
-  const raw = watchlistInput.value.trim();
-  const numeric = /^(?:anime:)?([1-9]\d*)$/i.exec(raw);
-  const anime = numeric ? recommendationIndex.animeByAnimeId.get(Number(numeric[1])) : null;
-  const exact = numeric ? [] : recommendationIndex.titleLookup.get(normalizeTitle(raw)) ?? [];
-  const matched = anime ?? (exact.length === 1 ? exact[0] : null);
-  if (!matched) {
-    watchlistStatusEl.textContent = exact.length > 1
-      ? "Several catalog titles have that exact name. Enter an anime ID to choose one."
-      : "Choose an exact catalog title or anime ID for the watchlist.";
-    return;
-  }
-  if (addToWatchlist(matched)) watchlistInput.value = "";
+  chooseAnimeFromInput(watchlistInput, watchlistStatusEl, (anime) => {
+    if (addToWatchlist(anime)) watchlistInput.value = "";
+  });
 }
 
 function addToWatchlist(anime: AnimeInfo): boolean {
@@ -2849,37 +2850,28 @@ function addCandidateFromInput(
   targetList: string[],
   mode: "include" | "exclude",
 ): void {
-  const raw = input.value.trim();
-  if (!raw) {
-    recMessageEl.textContent = "Enter an anime title first.";
-    return;
-  }
+  chooseAnimeFromInput(input, recMessageEl, (anime) => {
+    if (selectedAnimeNodeIds.includes(anime.nodeId)) {
+      recMessageEl.textContent = `${anime.label} is already in your watched list.`;
+      input.value = "";
+      return;
+    }
+    if (targetList.includes(anime.nodeId)) {
+      recMessageEl.textContent = `${anime.label} is already in your ${mode} list.`;
+      input.value = "";
+      return;
+    }
 
-  const anime = resolveAnimeInput(raw, recommendationIndex);
-  if (!anime) {
-    recMessageEl.textContent = `No anime match found for "${raw}".`;
-    return;
-  }
-  if (selectedAnimeNodeIds.includes(anime.nodeId)) {
-    recMessageEl.textContent = `${anime.label} is already in your watched list.`;
+    targetList.push(anime.nodeId);
+    persistRecommendationState();
     input.value = "";
-    return;
-  }
-  if (targetList.includes(anime.nodeId)) {
-    recMessageEl.textContent = `${anime.label} is already in your ${mode} list.`;
-    input.value = "";
-    return;
-  }
-
-  targetList.push(anime.nodeId);
-  persistRecommendationState();
-  input.value = "";
-  recMessageEl.textContent = mode === "include"
-    ? `Limited results to ${anime.label} and other Include Only titles; exclusions still win.`
-    : `Excluded ${anime.label}; exclusions win over Include Only.`;
-  renderIncludeCandidates();
-  renderExcludeCandidates();
-  void updateRecommendations();
+    recMessageEl.textContent = mode === "include"
+      ? `Limited results to ${anime.label} and other Include Only titles; exclusions still win.`
+      : `Excluded ${anime.label}; exclusions win over Include Only.`;
+    renderIncludeCandidates();
+    renderExcludeCandidates();
+    void updateRecommendations();
+  });
 }
 
 function removeCandidateNodeId(
@@ -3595,6 +3587,7 @@ async function ensureAnimeMetadata(animeId: number, signal: AbortSignal): Promis
       return null;
     }
     animeMetadataCache.set(animeId, outcome.metadata);
+    populateAnimeOptions(recommendationIndex.animeList, animeMetadataCache, animeOptions);
     return outcome.metadata;
   } catch (error) {
     if (!signal.aborted) animeMetadataFailed.add(animeId);
@@ -3709,42 +3702,100 @@ function renderSeasonalList(): void {
     .join("");
 }
 
-function resolveAnimeInput(
-  raw: string,
-  index: RecommendationIndex,
-): AnimeInfo | null {
-  const normalized = normalizeTitle(raw);
-  if (!normalized) {
-    return null;
+function chooseAnimeFromInput(
+  input: HTMLInputElement,
+  status: HTMLElement,
+  onChoose: (anime: AnimeInfo) => void,
+): void {
+  const raw = input.value.trim();
+  if (!raw) {
+    status.textContent = "Enter an anime title first.";
+    return;
   }
-
-  const exact = index.titleLookup.get(normalized);
-  if (exact && exact.length > 0) {
-    return exact[0];
+  const found = searchAnimeTitles(raw, recommendationIndex, animeMetadataCache);
+  if (found.automatic) {
+    onChoose(found.automatic);
+  } else if (!found.total) {
+    status.textContent = `No catalog title or known alias found for "${raw}".`;
+  } else {
+    showTitleSearchChoices(raw, found, input, onChoose);
   }
-
-  if (/^anime:\d+$/i.test(raw)) {
-    const byNodeId = index.animeByNodeId.get(raw.toLowerCase());
-    if (byNodeId) {
-      return byNodeId;
-    }
-  }
-
-  if (/^\d+$/.test(raw)) {
-    const byAnimeId = index.animeList.find((item) => item.animeId === Number.parseInt(raw, 10));
-    if (byAnimeId) {
-      return byAnimeId;
-    }
-  }
-
-  return index.animeList.find((item) => normalizeTitle(item.label).includes(normalized)) ?? null;
 }
 
-function populateAnimeOptions(animeList: AnimeInfo[], datalist: HTMLDataListElement): void {
-  const sorted = [...animeList].sort((left, right) => left.label.localeCompare(right.label));
-  datalist.innerHTML = sorted
-    .map((anime) => `<option value="${escapeHtml(anime.label)}"></option>`)
-    .join("");
+function showTitleSearchChoices(
+  raw: string,
+  found: TitleSearchResult,
+  input: HTMLInputElement,
+  onChoose: (anime: AnimeInfo) => void,
+): void {
+  titleSearchResults.replaceChildren();
+  titleSearchSummary.textContent = found.total > found.matches.length
+    ? `Showing ${found.matches.length} of ${found.total} matches for "${raw}". Choose one or refine your search.`
+    : found.total === 1
+      ? `Confirm the partial match for "${raw}" before adding it.`
+      : `${found.total} titles match "${raw}". Choose the intended title.`;
+  for (const { anime, matchedAlias } of found.matches) {
+    const metadata = animeMetadataCache.get(anime.animeId);
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "title-search-choice";
+    const imageUrl = safeExternalImageUrl(metadata?.imageUrl ?? "");
+    if (imageUrl) {
+      const cover = document.createElement("img");
+      cover.src = imageUrl;
+      cover.alt = "";
+      cover.referrerPolicy = "no-referrer";
+      cover.loading = "lazy";
+      button.append(cover);
+    } else {
+      const placeholder = document.createElement("span");
+      placeholder.className = "title-search-cover-placeholder";
+      placeholder.textContent = "No cover";
+      button.append(placeholder);
+    }
+    const copy = document.createElement("span");
+    copy.className = "title-search-choice-copy";
+    const heading = document.createElement("strong");
+    heading.textContent = anime.label;
+    copy.append(heading);
+    if (matchedAlias) {
+      const alias = document.createElement("span");
+      alias.textContent = `Matched alias: ${matchedAlias}`;
+      copy.append(alias);
+    }
+    const detail = document.createElement("span");
+    detail.textContent = `Anime ${anime.animeId} · ${metadata?.year ?? "Year unknown"} · ${metadata?.mediaFormat ?? "Format unknown"}`;
+    copy.append(detail);
+    button.append(copy);
+    button.addEventListener("click", () => {
+      titleSearchDialog.close();
+      input.focus({ preventScroll: true });
+      onChoose(anime);
+    });
+    item.append(button);
+    titleSearchResults.append(item);
+  }
+  titleSearchDialog.showModal();
+  titleSearchResults.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+function populateAnimeOptions(
+  animeList: AnimeInfo[],
+  metadata: ReadonlyMap<number, AnimeMetadata>,
+  datalist: HTMLDataListElement,
+): void {
+  const values = new Set<string>();
+  for (const anime of animeList) {
+    values.add(anime.label);
+    for (const alias of metadata.get(anime.animeId)?.aliases ?? []) values.add(alias);
+  }
+  datalist.replaceChildren(...[...values].sort((left, right) => left.localeCompare(right))
+    .slice(0, 8000).map((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      return option;
+    }));
 }
 
 function populateNetworkNodeOptions(nodes: GraphNode[], datalist: HTMLDataListElement): void {
@@ -3763,10 +3814,10 @@ function populateNetworkNodeOptions(nodes: GraphNode[], datalist: HTMLDataListEl
 function resolveNetworkNodeQuery(
   query: string,
   graphDataValue: LoadedGraphData,
-): GraphNode | null {
+): { match: GraphNode | null; ambiguous: boolean } {
   const raw = query.trim();
   if (!raw) {
-    return null;
+    return { match: null, ambiguous: false };
   }
 
   const rawLower = raw.toLowerCase();
@@ -3775,36 +3826,22 @@ function resolveNetworkNodeQuery(
 
   const byExactId = nodes.find((node) => node.id.toLowerCase() === rawLower);
   if (byExactId) {
-    return byExactId;
+    return { match: byExactId, ambiguous: false };
   }
 
   if (/^\d+$/.test(raw)) {
     const animeNodeId = `anime:${Number.parseInt(raw, 10)}`;
     const byAnimeId = nodes.find((node) => node.id === animeNodeId);
     if (byAnimeId) {
-      return byAnimeId;
+      return { match: byAnimeId, ambiguous: false };
     }
   }
-
-  const byExactLabel = nodes.find(
-    (node) => normalizeTitle(node.label) === normalized,
-  );
-  if (byExactLabel) {
-    return byExactLabel;
-  }
-
-  const byStartsWith = nodes.find((node) =>
-    normalizeTitle(node.label).startsWith(normalized),
-  );
-  if (byStartsWith) {
-    return byStartsWith;
-  }
-
-  return (
-    nodes.find((node) =>
-      normalizeTitle(`${node.label} ${node.id}`).includes(normalized),
-    ) ?? null
-  );
+  const exact = nodes.filter((node) => normalizeTitle(node.label) === normalized);
+  const prefix = exact.length ? [] : nodes.filter((node) => normalizeTitle(node.label).startsWith(normalized));
+  const partial = exact.length || prefix.length ? [] : nodes.filter((node) =>
+    normalizeTitle(`${node.label} ${node.id}`).includes(normalized));
+  const candidates = exact.length ? exact : prefix.length ? prefix : partial;
+  return { match: candidates.length === 1 ? candidates[0] : null, ambiguous: candidates.length > 1 };
 }
 
 function selectNodeAndFocus(nodeId: string): void {

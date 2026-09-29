@@ -13,6 +13,8 @@ interface FixtureAnime {
   year: number;
   score: number;
   genres: string[];
+  aliases?: string[];
+  mediaFormat?: string;
   embedding: number[];
   bias: number;
   relations?: { kind: "prequel" | "sequel" | "alternative-version" | "side-story" | "spin-off";
@@ -138,8 +140,10 @@ const explorerGraph = buildExplorerGraph(graph, 10, 10);
 const catalog = {
   format: "demo-catalog-v1",
   generatedAt,
-  anime: input.anime.map(({ animeId, title, year, score, genres, relations }) => ({
+  anime: input.anime.map(({ animeId, title, year, score, genres, aliases, mediaFormat, relations }) => ({
     animeId, title, year, score, genres,
+    ...(aliases ? { aliases } : {}),
+    ...(mediaFormat ? { mediaFormat } : {}),
     studios: [], synopsis: "Invented offline demo title.", imageUrl: "", season: null,
     ...(relations ? { relations } : {}),
   })),

@@ -58,12 +58,13 @@ test("status alone supplies no preference; explicit rating affects only local ra
   expect(stored.watchlist[0]).toMatchObject({ status: "watching", rating: 2 });
 });
 
-test("watchlist input refuses partial names; unknown backup titles render as text", async ({ page }) => {
+test("watchlist partial names need confirmation; unknown backup titles render as text", async ({ page }) => {
   await page.goto("/");
   await page.locator("#watchlist-input").fill("Moonlit");
   await page.locator("#watchlist-form button").click();
-  await expect(page.locator("#watchlist-status")).toContainText("exact catalog title");
+  await expect(page.locator("#title-search-dialog")).toBeVisible();
   await expect(page.locator("#watchlist-count")).toHaveText("0");
+  await page.locator("#title-search-close").click();
   await page.evaluate(() => {
     const state = { version: 5, mode: "graph", preferences: [], watchlist: [
       { animeId: 99999, title: "<img src=x onerror=alert(1)>", status: "on_hold", rating: 4 },

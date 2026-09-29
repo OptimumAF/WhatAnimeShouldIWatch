@@ -167,7 +167,9 @@ test("provider imports and metadata use only mocked direct transport and seeded 
     }
     if (parsed.pathname === "/v4/anime/102/full") {
       return attempt === 1 ? jsonResponse({}, 503) : jsonResponse({ data: {
-        year: 2020, score: 7.8, genres: [{ name: "Fantasy" }], studios: [],
+        year: 2020, score: 7.8, genres: [{ name: "Fantasy" }], studios: [], type: "Movie",
+        titles: [{ type: "Default", title: "Moonlit Workshop" }, { type: "English", title: "Moonlit Studio" }],
+        title_synonyms: ["The Moon Workshop"],
         synopsis: "Invented synopsis", images: { jpg: { image_url: "https://example.invalid/cover.png" } },
         relations: [
           { relation: "Prequel", entry: [{ mal_id: 101, type: "anime", name: "Copper Comet" }] },
@@ -199,6 +201,9 @@ test("provider imports and metadata use only mocked direct transport and seeded 
     assert.deepEqual([metadata.metadata.year, metadata.metadata.genres, metadata.metadata.score], [2020, ["Fantasy"], 7.8]);
     assert.deepEqual(metadata.metadata.relations,
       [{ kind: "prequel", animeId: 101, title: "Copper Comet" }]);
+    assert.deepEqual(metadata.metadata.aliases,
+      ["Moonlit Workshop", "Moonlit Studio", "The Moon Workshop"]);
+    assert.equal(metadata.metadata.mediaFormat, "Movie");
   }
   assert.deepEqual(await provider.fetchAnimeMetadataFromJikan(404), { state: "unavailable" });
   const seasonal = await provider.fetchSeasonalAnime(12);

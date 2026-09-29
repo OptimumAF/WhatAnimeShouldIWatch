@@ -125,6 +125,9 @@ export interface AnimeRelation {
 
 export interface AnimeMetadata {
   animeId: number;
+  /** Only titles already supplied by the loaded catalog or metadata response. */
+  aliases?: string[];
+  mediaFormat?: string | null;
   year: number | null;
   score: number | null;
   genres: string[];
@@ -632,6 +635,18 @@ export function parseDemoCatalog(value: unknown, label: string): DemoCatalogItem
     const id = safeInteger(item.animeId, label, `anime[${i}].animeId`, 1);
     uniqueKey(id, ids, label, `anime[${i}].animeId`);
     nonemptyText(item.title, label, `anime[${i}].title`);
+    if (item.aliases !== undefined) {
+      const aliases = list(item.aliases, label, `anime[${i}].aliases`);
+      if (aliases.length > 20) invalid(label, `anime[${i}].aliases`, "must contain at most 20 titles");
+      aliases.forEach((alias, j) => {
+        nonemptyText(alias, label, `anime[${i}].aliases[${j}]`);
+        if ((alias as string).length > 200) invalid(label, `anime[${i}].aliases[${j}]`, "is too long");
+      });
+    }
+    if (item.mediaFormat !== undefined && item.mediaFormat !== null) {
+      nonemptyText(item.mediaFormat, label, `anime[${i}].mediaFormat`);
+      if ((item.mediaFormat as string).length > 80) invalid(label, `anime[${i}].mediaFormat`, "is too long");
+    }
     if (item.year !== null) safeInteger(item.year, label, `anime[${i}].year`, 1);
     if (item.score !== null) finite(item.score, label, `anime[${i}].score`);
     for (const field of ["genres", "studios"] as const) {
