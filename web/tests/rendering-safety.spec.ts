@@ -5,7 +5,9 @@ const unsafeMarkup = '<img src=x onerror="window.__unsafe=1">';
 const unsafeImportLine = '<svg onload="window.__unsafe=3">';
 
 test("catalog metadata stays text and unsafe recommendation images are omitted", async ({ page }) => {
-  await page.route("https://images.example.test/**", (route) => route.abort());
+  await page.route("https://images.example.test/**", (route) => route.fulfill({
+    contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" />',
+  }));
   await page.route("**/demo-data/catalog.json", async (route) => {
     const response = await route.fetch();
     const catalog = await response.json();

@@ -135,8 +135,43 @@ for (const [responseStatus, expectedState] of [[404, "unavailable"], [400, "fail
     await page.locator("#add-preference").selectOption("liked");
     await page.locator("#add-anime-form button").click();
     await expect(page.locator("#metadata-status")).toHaveAttribute("data-state", expectedState);
+    const firstCard = page.locator("#rec-results .rec-item").first();
+    await expect(firstCard).toHaveAttribute("data-metadata-state", expectedState);
+    await expect(firstCard.locator(".rec-meta-details")).toContainText(
+      expectedState === "failed" ? "Details failed to load" : "Details unavailable from provider");
+    await expect(firstCard.locator(".rec-synopsis")).not.toContainText("loading");
+    await expect(firstCard.locator(".rec-metadata-retry")).toHaveCount(expectedState === "failed" ? 1 : 0);
   });
 }
+
+test("failed card details retry only on explicit action and then show ready metadata", async ({ page }) => {
+  let permitSuccess = false;
+  let metadataRequests = 0;
+  await openMockedApp(page, async (route, url) => {
+    if (url.pathname === "/v4/anime/102/full") {
+      metadataRequests += 1;
+      await jsonRoute(route, permitSuccess
+        ? { data: { year: 2020, type: "Movie", score: 7.8, genres: [{ name: "Fantasy" }] } }
+        : {}, permitSuccess ? 200 : 400);
+      return;
+    }
+    await jsonRoute(route, url.pathname.startsWith("/v4/anime/") ? {} : { data: [] },
+      url.pathname.startsWith("/v4/anime/") ? 404 : 200);
+  });
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  const moonlit = page.locator("#rec-results .rec-item").filter({ hasText: "Moonlit Workshop" });
+  await expect(moonlit).toHaveAttribute("data-metadata-state", "failed");
+  expect(metadataRequests).toBe(1);
+  permitSuccess = true;
+  await moonlit.locator(".rec-metadata-retry").click();
+  await expect(moonlit).toHaveAttribute("data-metadata-state", "ready");
+  await expect(moonlit.locator(".rec-meta-details")).toContainText("2020 | Movie | Fantasy");
+  await expect(moonlit.locator(".rec-synopsis")).toHaveText("No description available.");
+  await expect(moonlit.locator(".rec-community-score")).toHaveText("MAL community score: 7.80/10");
+  expect(metadataRequests).toBe(2);
+});
 
 test("seasonal status separates empty, unavailable, failed, and ready responses", async ({ page }) => {
   let seasonStatus = 200;

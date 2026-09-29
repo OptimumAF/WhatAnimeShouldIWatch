@@ -89,7 +89,7 @@ test("browser model ranks from three explicit preference signals", async ({ page
     await expect(page.locator("#rec-results .rec-title").filter({ hasText: title })).toHaveCount(0);
   }
   const first = page.locator("#rec-results .rec-item").first();
-  await expect(first.locator(".rec-meta").first()).toContainText("3 distinct mapped titles | 3/3 signals mapped");
+  await expect(first.locator(".rec-support")).toContainText("3 distinct mapped titles | 3/3 signals mapped");
   await expect(first.locator(".rec-why-line").first()).toContainText(
     "Copper Comet, Moonlit Workshop, Ashen Harbor");
   await first.locator(".rec-score-breakdown summary").click();
