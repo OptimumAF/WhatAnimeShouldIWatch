@@ -42,6 +42,7 @@ const v5State = {
   includeCandidates: oldState.includeCandidates,
   excludeCandidates: oldState.excludeCandidates,
   history: [],
+  watchlist: [],
 };
 
 test("legacy state and named profiles migrate with exact raw backups and unknown IDs", () => {
@@ -55,7 +56,7 @@ test("legacy state and named profiles migrate with exact raw backups and unknown
   assert.deepEqual(persistence.loadRecommendationState(), {
     mode: "hybrid", preferences: migrated, modelBlendWeight: 0.35, allowRelatedTitles: false,
     includeCandidates: oldState.includeCandidates, excludeCandidates: oldState.excludeCandidates,
-    history: [],
+    history: [], watchlist: [],
   });
   assert.deepEqual(persistence.loadRecommendationProfiles().get("Fixture Profile")?.state, {
     ...v5State,
@@ -89,7 +90,7 @@ test("v1 and v2 state defaults migrate without dropping watched weights", () => 
       mode: "model", preferences: [{ nodeId: "anime:999", sentiment: "liked", importance: 2.2,
         confidence: 0.5, source: "legacy" }],
       modelBlendWeight: 0.5, allowRelatedTitles: false,
-      includeCandidates: [], excludeCandidates: [], history: [],
+      includeCandidates: [], excludeCandidates: [], history: [], watchlist: [],
     });
   }
 });

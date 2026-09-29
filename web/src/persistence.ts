@@ -4,6 +4,8 @@ import { historyIdentity, validateHistoryEntries } from "./import-history";
 import type { HistoryEntry } from "./import-history";
 import { migrateLegacyPreferences, validatePreferences } from "./preferences";
 import type { AnimePreference } from "./preferences";
+import { validateWatchlist } from "./watchlist";
+import type { WatchlistEntry } from "./watchlist";
 import type { RuntimePorts } from "./runtime";
 
 export type RecommendationMode = "graph" | "model" | "hybrid";
@@ -18,6 +20,7 @@ export interface StoredRecommendationState {
   includeCandidates?: string[];
   excludeCandidates?: string[];
   history?: HistoryEntry[];
+  watchlist?: WatchlistEntry[];
 }
 
 export interface RecommendationProfileRecord {
@@ -32,6 +35,7 @@ export type RecommendationState = Omit<StoredRecommendationState, "version"> & {
   includeCandidates: string[];
   excludeCandidates: string[];
   history: HistoryEntry[];
+  watchlist: WatchlistEntry[];
 };
 
 export const RECOMMENDATION_STORAGE_VERSION = 5;
@@ -40,10 +44,11 @@ export function emptyRecommendationState(): StoredRecommendationState {
     version: RECOMMENDATION_STORAGE_VERSION,
     mode: "graph", preferences: [], modelBlendWeight: 0.5, allowRelatedTitles: false,
     includeCandidates: [], excludeCandidates: [], history: [],
+    watchlist: [],
   };
 }
 export const PROFILE_BACKUP_FORMAT = "wasiw-profile-backup";
-export const PROFILE_BACKUP_VERSION = 1;
+export const PROFILE_BACKUP_VERSION = 2;
 export const MAX_PROFILE_BACKUP_BYTES = 8 * 1024 * 1024;
 
 export type ProfileBackupImportMode = "merge" | "replace";
@@ -70,6 +75,11 @@ export interface ProfileBackupImportPlan {
     keptHistory: number;
     replacedHistory: number;
     removedHistory: number;
+    importedWatchlist: number;
+    addedWatchlist: number;
+    keptWatchlist: number;
+    replacedWatchlist: number;
+    removedWatchlist: number;
     importedProfiles: number;
     addedProfiles: number;
     keptProfiles: number;
@@ -324,6 +334,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       throw new Error("Invalid recommendation state shape or version");
     }
     const history = value.history === undefined ? [] : validateHistoryEntries(value.history);
+    const watchlist = value.version === RECOMMENDATION_STORAGE_VERSION && value.watchlist !== undefined
+      ? validateWatchlist(value.watchlist) : [];
     let preferences: AnimePreference[];
     if (value.version === RECOMMENDATION_STORAGE_VERSION) {
       preferences = validatePreferences(value.preferences);
@@ -363,6 +375,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       includeCandidates: candidateIds("includeCandidates"),
       excludeCandidates: candidateIds("excludeCandidates"),
       history,
+      watchlist,
     };
   }
 
@@ -554,6 +567,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
         includeCandidates: stored.includeCandidates ?? [],
         excludeCandidates: stored.excludeCandidates ?? [],
         history: stored.history ?? [],
+        watchlist: stored.watchlist ?? [],
       };
     }
     const state = emptyRecommendationState();
@@ -563,6 +577,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       allowRelatedTitles: state.allowRelatedTitles ?? false,
       includeCandidates: state.includeCandidates ?? [],
       excludeCandidates: state.excludeCandidates ?? [], history: state.history ?? [],
+      watchlist: state.watchlist ?? [],
     };
   }
 
@@ -608,22 +623,29 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     }
     const value = JSON.parse(raw) as unknown;
     onlyFields(value, ["format", "version", "exportedAt", "state", "profiles"], "profile backup");
-    if (value.format !== PROFILE_BACKUP_FORMAT || value.version !== PROFILE_BACKUP_VERSION ||
+    if (value.format !== PROFILE_BACKUP_FORMAT || (value.version !== 1 && value.version !== 2) ||
       typeof value.exportedAt !== "string" || !Number.isFinite(Date.parse(value.exportedAt))) {
       throw new Error("Unsupported profile backup format or version");
     }
-    onlyFields(value.state, ["version", "mode", "preferences", "modelBlendWeight", "allowRelatedTitles",
-      "includeCandidates", "excludeCandidates", "history"], "profile backup state");
-    if (!Array.isArray(value.state.preferences) || !Array.isArray(value.state.history)) {
-      throw new Error("Invalid profile backup state");
-    }
-    for (const item of value.state.preferences) {
-      onlyFields(item, ["nodeId", "sentiment", "importance", "confidence", "source"], "preference");
-    }
-    for (const item of value.state.history) {
-      onlyFields(item, ["provider", "sourceId", "title", "animeId", "status", "sourceStatus",
-        "progressEpisodes", "score", "scoreScale"], "history");
-    }
+    const backupVersion = value.version;
+    const checkState = (input: unknown, label: string): void => {
+      onlyFields(input, ["version", "mode", "preferences", "modelBlendWeight", "allowRelatedTitles",
+        "includeCandidates", "excludeCandidates", "history",
+        ...(backupVersion === 2 ? ["watchlist"] : [])], label);
+      if (!Array.isArray(input.preferences) || !Array.isArray(input.history) ||
+          (backupVersion === 2 && !Array.isArray(input.watchlist))) {
+        throw new Error(`Invalid ${label}`);
+      }
+      for (const item of input.preferences) {
+        onlyFields(item, ["nodeId", "sentiment", "importance", "confidence", "source"], `${label} preference`);
+      }
+      for (const item of input.history) {
+        onlyFields(item, ["provider", "sourceId", "title", "animeId", "status", "sourceStatus",
+          "progressEpisodes", "score", "scoreScale"], `${label} history`);
+      }
+      if (backupVersion === 2) validateWatchlist(input.watchlist);
+    };
+    checkState(value.state, "profile backup state");
     if (!Array.isArray(value.profiles) || value.profiles.length > 1000) {
       throw new Error("Invalid profile backup profile count");
     }
@@ -633,18 +655,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
         profile.name.length > 160 || typeof profile.updatedAt !== "string") {
         throw new Error("Invalid profile backup profile name or date");
       }
-      onlyFields(profile.state, ["version", "mode", "preferences", "modelBlendWeight", "allowRelatedTitles",
-        "includeCandidates", "excludeCandidates", "history"], "profile state");
-      if (!Array.isArray(profile.state.preferences) || !Array.isArray(profile.state.history)) {
-        throw new Error("Invalid profile state");
-      }
-      for (const item of profile.state.preferences) {
-        onlyFields(item, ["nodeId", "sentiment", "importance", "confidence", "source"], "profile preference");
-      }
-      for (const item of profile.state.history) {
-        onlyFields(item, ["provider", "sourceId", "title", "animeId", "status", "sourceStatus",
-          "progressEpisodes", "score", "scoreScale"], "profile history");
-      }
+      checkState(profile.state, "profile state");
     }
     const state = parseState(value.state, [RECOMMENDATION_STORAGE_VERSION]);
     const profiles = parseProfiles({ version: RECOMMENDATION_STORAGE_VERSION, profiles: value.profiles }, 5);
@@ -684,6 +695,8 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     const currentPreferences = new Map(current.preferences.map((item) => [item.nodeId, item]));
     const importedHistory = new Map((imported.state.history ?? []).map((item) => [historyIdentity(item), item]));
     const currentHistory = new Map((current.history ?? []).map((item) => [historyIdentity(item), item]));
+    const importedWatchlist = new Map((imported.state.watchlist ?? []).map((item) => [String(item.animeId), item]));
+    const currentWatchlist = new Map((current.watchlist ?? []).map((item) => [String(item.animeId), item]));
     const importedProfiles = new Map(imported.profiles.map((profile) => [profile.name, profile]));
     const overlap = <T>(left: Map<string, T>, right: Map<string, T>): number =>
       [...left.keys()].filter((key) => right.has(key)).length;
@@ -700,6 +713,11 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       keptHistory: mode === "merge" ? overlap(importedHistory, currentHistory) : 0,
       replacedHistory: mode === "replace" ? changed(importedHistory, currentHistory) : 0,
       removedHistory: mode === "replace" ? currentHistory.size - overlap(currentHistory, importedHistory) : 0,
+      importedWatchlist: importedWatchlist.size,
+      addedWatchlist: importedWatchlist.size - overlap(importedWatchlist, currentWatchlist),
+      keptWatchlist: mode === "merge" ? overlap(importedWatchlist, currentWatchlist) : 0,
+      replacedWatchlist: mode === "replace" ? changed(importedWatchlist, currentWatchlist) : 0,
+      removedWatchlist: mode === "replace" ? currentWatchlist.size - overlap(currentWatchlist, importedWatchlist) : 0,
       importedProfiles: importedProfiles.size,
       addedProfiles: importedProfiles.size - overlap(importedProfiles, localProfiles),
       keptProfiles: mode === "merge" ? overlap(importedProfiles, localProfiles) : 0,
@@ -717,6 +735,10 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
     for (const item of imported.state.history ?? []) {
       if (!currentHistory.has(historyIdentity(item))) history.push(item);
     }
+    const watchlist = [...(current.watchlist ?? [])];
+    for (const item of imported.state.watchlist ?? []) {
+      if (!currentWatchlist.has(String(item.animeId))) watchlist.push(item);
+    }
     const addMissing = (local: string[], incoming: string[]): string[] => {
       const next = [...local];
       const seen = new Set(next);
@@ -729,6 +751,7 @@ export function createPersistenceAdapter(runtime: RuntimePorts, storagePrefix: s
       ...current,
       preferences,
       history,
+      watchlist,
       includeCandidates: addMissing(current.includeCandidates ?? [], imported.state.includeCandidates ?? []),
       excludeCandidates: addMissing(current.excludeCandidates ?? [], imported.state.excludeCandidates ?? []),
     }, [RECOMMENDATION_STORAGE_VERSION]);

@@ -10,6 +10,7 @@ import type {
 import type { AnimePreference } from "./preferences";
 import { seenHistoryNodeIds } from "./import-history";
 import type { HistoryEntry } from "./import-history";
+import type { WatchlistEntry } from "./watchlist";
 import { normalizeTitle } from "./title";
 export { normalizeTitle } from "./title";
 
@@ -620,6 +621,8 @@ export interface CandidateEligibilityOptions {
   index: RecommendationIndex;
   preferences: readonly AnimePreference[];
   history: readonly HistoryEntry[];
+  /** All local watchlist statuses are already chosen, including planned titles. */
+  watchlist?: readonly WatchlistEntry[];
   /** An allowlist over already scored candidates; it never creates a score. */
   includeOnlyNodeIds: readonly string[];
   excludeNodeIds: readonly string[];
@@ -649,6 +652,8 @@ export function createCandidateEligibilityPolicy(options: CandidateEligibilityOp
     ...options.excludeNodeIds,
     ...options.preferences.map((item) => item.nodeId),
     ...seenHistoryNodeIds(options.history, index),
+    ...(options.watchlist ?? []).map((item) => index.animeByAnimeId.get(item.animeId)?.nodeId)
+      .filter((nodeId): nodeId is string => nodeId !== undefined),
   ]);
   const requireMetadata = hasActiveRecommendationFilters(filters);
   const genreFilter = filters.genre.trim().toLowerCase();
