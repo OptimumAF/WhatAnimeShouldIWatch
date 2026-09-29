@@ -9,6 +9,7 @@ async function likeCopper(page: import("@playwright/test").Page): Promise<void> 
 
 test("demo prefers known franchise variety and saves the allow-related option with profiles", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await expect(page.locator("#allow-related-titles")).not.toBeChecked();
   await expect(page.locator("#rec-results .rec-title").filter({ hasText: "Quiet Satellite" })).toHaveCount(0);
   await page.locator("#discovery-view").selectOption("quality");
@@ -71,6 +72,7 @@ test("mocked normal metadata withholds a known unwatched sequel without extra pr
     return route.continue();
   });
   await page.goto("http://127.0.0.1:5174/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await likeCopper(page);
   await expect(page.locator("#rec-results .rec-title")).toHaveText(["Moonlit Workshop"]);
   await expect(page.locator("#rec-summary")).toContainText("1 known-unwatched sequel");

@@ -32,6 +32,7 @@ for (const variant of ["absent", "corrupt", "incompatible", "unmapped seed"] as 
         body: variant === "corrupt" ? "{broken" : JSON.stringify(model) });
     });
     await page.goto("/");
+    await page.locator("#advanced-recommendation-settings summary").click();
     await addPreference(page, "Copper Comet", "liked");
     await page.locator("#rec-method").selectOption("hybrid");
     await expect(page.locator("#rec-engine-status")).toContainText("Using graph fallback");
@@ -55,6 +56,7 @@ test("a valid but partial model names its mapped preference coverage", async ({ 
       ? route.fulfill({ status: 404, body: "" })
       : route.fulfill({ contentType: "application/json", body: JSON.stringify(model) }));
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await addPreference(page, "Copper Comet", "liked");
   await addPreference(page, "Ashen Harbor", "disliked");
   await page.locator("#rec-method").selectOption("model");
@@ -67,6 +69,7 @@ test("without graph candidates, missing model uses an eligible catalog coverage 
   await page.route("**/demo-data/model-mf-web.compact.json*", (route) =>
     route.fulfill({ status: 404, body: "" }));
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await addPreference(page, "Copper Comet", "disliked");
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText("Using catalog coverage baseline");

@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("Include Only intersects scored candidates and exclusions win in every engine", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();
@@ -42,6 +43,7 @@ test("Include Only intersects scored candidates and exclusions win in every engi
 
 test("required content filters are applied to graph, model, and hybrid results", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();

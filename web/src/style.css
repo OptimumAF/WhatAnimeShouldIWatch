@@ -580,34 +580,86 @@ button:hover,
 
 .intro-panel {
   margin-bottom: 1rem;
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.2fr) auto;
-  gap: 0.9rem;
-  align-items: center;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--panel) 78%, var(--accent) 22%), var(--panel));
+  padding: 1.25rem;
+  background: linear-gradient(125deg, color-mix(in srgb, var(--panel) 88%, var(--accent) 12%), var(--panel) 55%);
 }
 
 .intro-panel h2 {
   margin: 0;
+  font-size: clamp(1.2rem, 2vw, 1.55rem);
 }
 
 .intro-copy p {
   margin: 0.4rem 0 0;
 }
 
-.intro-steps {
-  margin: 0;
-  padding-left: 1.15rem;
+.intro-copy .intro-eyebrow {
+  margin: 0 0 0.35rem;
+  color: var(--accent-soft);
+  font: 600 0.7rem "IBM Plex Mono", monospace;
+  letter-spacing: 0.1em;
+}
+
+.intro-paths {
   display: grid;
-  gap: 0.25rem;
-  font-size: 0.86rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.intro-path {
+  min-height: 104px;
+  display: grid;
+  align-content: center;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--surface-soft);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.intro-path:hover {
+  border-color: var(--accent-soft);
+  background: var(--surface-active);
+}
+
+.intro-path strong {
+  font-size: 0.98rem;
+}
+
+.intro-path span {
+  color: var(--muted);
+  font-size: 0.83rem;
+  line-height: 1.35;
 }
 
 .intro-actions {
-  display: grid;
-  gap: 0.45rem;
-  justify-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.intro-actions .ghost-btn {
+  min-height: 36px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.manual-entry-heading {
+  margin: 1.1rem 0 0;
+  font-size: 0.98rem;
+}
+
+.advanced-settings {
+  margin-top: 1rem;
+}
+
+.advanced-settings .rec-diversity-control {
+  margin-top: 0.8rem;
 }
 
 .contextual-tip {
@@ -1920,16 +1972,17 @@ input[type="range"] {
   }
 
   .nav-btn {
-    flex: 1 1 180px;
+    flex: 1 1 calc(50% - 0.3rem);
+    min-width: 0;
     justify-content: center;
   }
 
-  .intro-panel {
+  .intro-paths {
     grid-template-columns: 1fr;
   }
 
-  .intro-actions {
-    grid-template-columns: 1fr;
+  .intro-path {
+    min-height: 72px;
   }
 
   .shortcut-hint {

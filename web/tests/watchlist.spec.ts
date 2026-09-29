@@ -37,6 +37,7 @@ test("save a recommendation, change every watch status, rate it, and restore a n
 
 test("status alone supplies no preference; explicit rating affects only local ranking", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#watchlist-input").fill("Copper Comet");
   await page.locator("#watchlist-form button").click();
   await expect(page.locator("#watchlist-count")).toHaveText("1");

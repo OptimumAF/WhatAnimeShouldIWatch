@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("synthetic selection, overrides, mode, and named profile survive reload", async ({ page }) => {
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();

@@ -20,6 +20,7 @@ test("offline demo loads synthetic graph, catalog, and model without provider re
   });
 
   await page.goto("/");
+  await page.locator("#advanced-recommendation-settings summary").click();
   await expect(page.getByText("SYNTHETIC DEMO DATA")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Demo Suggestions" })).toBeVisible();
   await expect(page.locator("#username-import-submit")).toBeDisabled();
