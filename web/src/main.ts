@@ -43,6 +43,7 @@ import { selectFranchiseDiverseRecommendations } from "./franchise-diversity";
 import type { FranchiseSelection } from "./franchise-diversity";
 import { ArtifactLoadError, createArtifactLoader } from "./artifact-loader";
 import { measureLocal, measureLocalAsync } from "./local-performance";
+import { describeGraphScope } from "./graph-scope";
 import { appVersionLabel, dataVersionLabel, diagnosticIssue, modelVersionLabel } from "./diagnostics";
 import type { DiagnosticCode } from "./diagnostics";
 import {
@@ -512,13 +513,21 @@ app.innerHTML = `
           </ul>
         </section>
 
+        <section class="network-scope" aria-label="Graph versions and coverage">
+          <p id="network-versions">Checking graph and model versions...</p>
+          <p id="network-selection">Checking pair-selection coverage...</p>
+          <p id="network-explorer-sample">Checking explorer sample...</p>
+          <p id="network-drawing-limits"></p>
+          <p id="network-scope-caveat"></p>
+        </section>
+
         <button id="network-mobile-toggle" type="button" class="network-mobile-toggle" hidden aria-expanded="false" aria-controls="network-panel">
           Show Controls
         </button>
         <div id="network-layout" class="network-layout">
           <aside id="network-panel" class="panel">
             <h2>Network Explorer</h2>
-            <p class="muted">Interact with the graph, inspect node connections, and filter visible edges.</p>
+            <p class="muted">Inspect the loaded pair evidence and filter visible edges.</p>
 
             <details class="accordion network-controls" open>
               <summary>Visibility Controls</summary>
@@ -541,7 +550,7 @@ app.innerHTML = `
 
               <label class="checkbox">
                 <input id="toggle-users" type="checkbox" />
-                <span>Show user nodes + user-anime edges</span>
+                <span id="toggle-users-label">Show user nodes + user-anime edges</span>
               </label>
             </details>
 
@@ -744,6 +753,11 @@ const networkMobileToggleBtn = mustElement<HTMLButtonElement>("#network-mobile-t
 const networkLayoutEl = mustElement<HTMLDivElement>("#network-layout");
 const networkPanelEl = mustElement<HTMLElement>("#network-panel");
 const networkRenderStatusEl = mustElement<HTMLParagraphElement>("#network-render-status");
+const networkVersionsEl = mustElement<HTMLParagraphElement>("#network-versions");
+const networkSelectionEl = mustElement<HTMLParagraphElement>("#network-selection");
+const networkExplorerSampleEl = mustElement<HTMLParagraphElement>("#network-explorer-sample");
+const networkDrawingLimitsEl = mustElement<HTMLParagraphElement>("#network-drawing-limits");
+const networkScopeCaveatEl = mustElement<HTMLParagraphElement>("#network-scope-caveat");
 const networkNodeFilterEl = mustElement<HTMLInputElement>("#network-node-filter");
 const networkNodeListStatusEl = mustElement<HTMLParagraphElement>("#network-node-list-status");
 const networkNodeListResultsEl = mustElement<HTMLUListElement>("#network-node-list-results");
@@ -757,6 +771,7 @@ const minWeightInput = mustElement<HTMLInputElement>("#min-weight");
 const minWeightValue = mustElement<HTMLOutputElement>("#min-weight-value");
 const toggleAnimeEdges = mustElement<HTMLInputElement>("#toggle-anime-edges");
 const toggleUsers = mustElement<HTMLInputElement>("#toggle-users");
+const toggleUsersLabelEl = mustElement<HTMLSpanElement>("#toggle-users-label");
 const networkSearchForm = mustElement<HTMLFormElement>("#network-search-form");
 const networkSearchInput = mustElement<HTMLInputElement>("#network-search-input");
 const networkNodeOptions = mustElement<HTMLDataListElement>("#network-node-options");
@@ -1602,7 +1617,7 @@ networkSearchForm.addEventListener("submit", (event) => {
   }
   const match = found.match;
   if (!match) {
-    networkSearchMessage.textContent = `No node match found for "${query}".`;
+    networkSearchMessage.textContent = "No match in the loaded recommendation graph. This does not prove no relationship in omitted source data.";
     return;
   }
   networkSearchMessage.textContent = `Focused: ${match.label} (${match.id})`;
@@ -4224,6 +4239,9 @@ function rerenderGraph(): void {
   const minWeight = Number.parseFloat(minWeightInput.value);
   minWeightValue.textContent = minWeight.toFixed(2);
   const showAnimeAnimeEdges = toggleAnimeEdges.checked;
+  if (isCompactGraphData(graphData) && graphData.format === "graph-compact-v3") {
+    toggleUsers.checked = false;
+  }
   const showUsers = toggleUsers.checked;
   const runId = ++graphRenderRunId;
   const renderSource = explorerGraphData ?? graphData;
@@ -4388,10 +4406,12 @@ function renderGraph(
 
   const visibleUsers = countNodesByType(graph, "user");
   const visibleAnime = graph.order - visibleUsers;
+  const scope = updateNetworkScope(graphDataValue);
 
   statsEl.innerHTML = [
     statLine("Generated", new Date(graphDataValue.generatedAt).toLocaleString()),
-    statLine("Visible users", `${visibleUsers} / ${graphDataValue.userCount}`),
+    statLine(scope.userRowsOmitted ? "User rows" : "Visible users",
+      scope.userRowsOmitted ? "omitted from v3" : `${visibleUsers} / ${graphDataValue.userCount}`),
     statLine("Visible anime", `${visibleAnime} / ${graphDataValue.animeCount}`),
     statLine("Visible nodes", String(graph.order)),
     statLine("Visible edges", String(graph.size)),
@@ -4401,6 +4421,9 @@ function renderGraph(
     renderInspectPanel(selectedNodeId);
     focusNodeInRenderer(selectedNodeId);
   } else {
+    if (selectedNodeId) {
+      networkSearchMessage.textContent = "That node is in the recommendation graph but not in the current explorer sample or filter. Its absence here does not prove no relationship.";
+    }
     selectedNodeId = null;
     renderInspectPanel(null);
   }
@@ -4410,6 +4433,28 @@ function renderGraph(
     totalEligibleEdgeCount: selectedEdges.totalEligibleEdgeCount,
     edgeLimitHit: selectedEdges.edgeLimitHit,
   };
+}
+
+function updateNetworkScope(explorer: LoadedGraphData) {
+  const scope = describeGraphScope(graphData, explorer,
+    MAX_RENDERED_ANIME_ANIME_EDGES, MAX_RENDERED_USER_ANIME_EDGES);
+  const modelStatus = diagnosticModelEl.textContent || "Model status unavailable";
+  const expectedDemoModel = demoMode && modelStatus === "Synthetic model not checked"
+    ? " (expected format model-mf-compact-v1 when requested)" : "";
+  networkVersionsEl.textContent = `${scope.versions} Model: ${modelStatus}${expectedDemoModel}.`;
+  networkSelectionEl.textContent = scope.selection;
+  networkExplorerSampleEl.textContent = scope.explorer;
+  networkDrawingLimitsEl.textContent = scope.limits;
+  networkScopeCaveatEl.textContent = scope.caveat;
+  toggleUsers.disabled = scope.userRowsOmitted;
+  toggleUsersLabelEl.textContent = scope.userRowsOmitted
+    ? "User rows omitted from this aggregate-only graph"
+    : "Show sampled user nodes + user-anime edges";
+  networkSearchInput.placeholder = scope.userRowsOmitted
+    ? "Title or anime:ID" : "Title, anime:ID, or user:ID";
+  networkSearchInput.setAttribute("aria-label", scope.userRowsOmitted
+    ? "Search loaded anime nodes" : "Search loaded anime or user nodes");
+  return scope;
 }
 
 function selectRenderableEdges(
@@ -4534,6 +4579,7 @@ async function ensureModelRecommendationIndex(): Promise<ModelRecommendationInde
       .then((model) => {
         diagnosticModelEl.textContent = modelVersionLabel(activeReleaseManifest,
           artifactLoader.getLoadedModelFormat(), model ? "loaded" : "absent", demoMode);
+        if (explorerGraphData) updateNetworkScope(explorerGraphData);
         if (!model && (!activeReleaseManifest || activeReleaseManifest.model)) {
           recordDiagnosticIssue("MODEL-001");
         }
@@ -4544,6 +4590,7 @@ async function ensureModelRecommendationIndex(): Promise<ModelRecommendationInde
           ? error.message
           : "model-mf-web.compact.json: unable to load or verify the optional asset.";
         diagnosticModelEl.textContent = modelVersionLabel(activeReleaseManifest, null, "failed", demoMode);
+        if (explorerGraphData) updateNetworkScope(explorerGraphData);
         recordDiagnosticIssue("MODEL-001");
         console.error("Model artifact load failed [MODEL-001].");
         return null;

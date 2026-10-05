@@ -172,6 +172,9 @@ test("normal mode still loads valid unversioned legacy graph and model artifacts
     if (url.pathname === "/data/model-mf-web.json") {
       return route.fulfill({ contentType: "application/json", body: JSON.stringify(model) });
     }
+    if (url.pathname.startsWith("/data/")) {
+      return route.fulfill({ status: 404, body: "" });
+    }
     if (url.hostname === "api.jikan.moe") {
       return route.fulfill({ contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: '{"data":[]}' });
     }
@@ -191,6 +194,12 @@ test("normal mode still loads valid unversioned legacy graph and model artifacts
   await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations (2 factors)");
   await expect(page.locator("#diagnostic-model")).toContainText("legacy unpinned asset");
   await expect(page.locator("#rec-results li").first()).toBeVisible();
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#network-render-status")).toContainText("nodes");
+  await expect(page.locator("#network-versions")).toContainText("unversioned legacy graph");
+  await expect(page.locator("#network-selection")).toContainText("does not declare source rating or pair-selection coverage");
+  await expect(page.locator("#network-explorer-sample")).toContainText("cannot be verified");
+  await expect(page.locator("#network-scope-caveat")).toContainText("does not prove no relationship");
   expect(pageErrors).toEqual([]);
 });
 

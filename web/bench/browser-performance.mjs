@@ -241,9 +241,11 @@ async function oneRun(browser, baseUrl, profile, proxy) {
     if (await page.locator("#network-mobile-toggle").isVisible()) {
       await page.locator("#network-mobile-toggle").click();
     }
+    const userEdgesAvailable = await page.locator("#toggle-users").isEnabled();
+    const renderToggle = page.locator(userEdgesAvailable ? "#toggle-users" : "#toggle-anime-edges");
     for (let index = 1; index < graphRenders; index += 1) {
       const count = await measureCount(page, "wasiw:network:render");
-      await page.locator("#toggle-users").setChecked(index % 2 === 1);
+      await renderToggle.setChecked(userEdgesAvailable ? index % 2 === 1 : index % 2 === 0);
       graphTimes.push(await waitForMeasure(page, "wasiw:network:render", count));
     }
     const graph = await pageMetrics(page, session);
@@ -258,6 +260,7 @@ async function oneRun(browser, baseUrl, profile, proxy) {
       rankingMeasures: ranking.measures,
       rankingLongTasks: ranking.longTasks,
       graph: { firstNavigationMs: networkReadyMs, renderMs: graphTimes,
+        rerenderControl: userEdgesAvailable ? "sampled user edges" : "aggregate pair edges",
         heapUsedBytes: graph.heapUsedBytes, domNodes: graph.domNodes,
         longTasks: graph.longTasks, measures: graph.measures,
         network: network.phases.interaction },
@@ -386,6 +389,7 @@ try {
       logicalCpus: cpus().length, ramBytes: totalmem() },
     profiles, runs, updatesPerModePerRun: updates,
     graphRendersPerRun: graphRenders,
+    graphRerenderControl: samples.desktop[0].graph.rerenderControl,
     initialAssetSizes,
     initialAssetTotals: {
       plainBytes: initialAssetSizes.reduce((sum, item) => sum + item.plainBytes, 0),
@@ -405,6 +409,7 @@ try {
     workingTreeDirty: report.workingTreeDirty,
     browser: report.browser, host: report.host, profiles: report.profiles,
     runs: report.runs, initialAssetTotals: report.initialAssetTotals,
+    graphRerenderControl: report.graphRerenderControl,
     assetTotals: report.assetTotals, summary: report.summary,
     output: relative(repoRoot, outputPath),
   }, null, 2)}\n`);
