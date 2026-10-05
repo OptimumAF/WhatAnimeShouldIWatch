@@ -4561,13 +4561,10 @@ async function renderGraph(
       overviewGraphCache = { source: graphDataValue, minAbsoluteWeight,
         showAnimeAnimeEdges, showUsers, graph, svg: null,
         totalEligibleEdgeCount: selectedEdges.totalEligibleEdgeCount,
-      edgeLimitHit: selectedEdges.edgeLimitHit };
+        edgeLimitHit: selectedEdges.edgeLimitHit };
     }
   }
-  if (chunkBuild) await runtime.yieldMainThread(signal);
-  throwIfAborted(signal);
-  currentGraph = graph;
-  visibleGraphNodes = [];
+  const nextVisibleGraphNodes: typeof visibleGraphNodes = [];
   const focusedEvidence = new Map<string, { weight: number; support?: number }>();
   const focusedOrder = new Map<string, number>();
   if (focused) {
@@ -4580,7 +4577,7 @@ async function renderGraph(
   }
   measureLocal("wasiw:network:visible-node-map", () => graph.forEachNode((id, attributes) => {
     const label = typeof attributes.label === "string" ? attributes.label : id;
-    visibleGraphNodes.push({
+    nextVisibleGraphNodes.push({
       id,
       label,
       nodeType: attributes.nodeType === "user" ? "user" : "anime",
@@ -4588,10 +4585,14 @@ async function renderGraph(
       evidence: focusedEvidence.get(id),
     });
   }));
-  measureLocal("wasiw:network:visible-node-sort", () => visibleGraphNodes.sort((left, right) =>
+  measureLocal("wasiw:network:visible-node-sort", () => nextVisibleGraphNodes.sort((left, right) =>
     (focused ? (focusedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
       (focusedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER) : 0) ||
     left.label.localeCompare(right.label) || left.id.localeCompare(right.id)));
+  if (chunkBuild) await runtime.yieldMainThread(signal);
+  throwIfAborted(signal);
+  currentGraph = graph;
+  visibleGraphNodes = nextVisibleGraphNodes;
   measureLocal("wasiw:network:visible-node-list", () => renderVisibleNodeList());
 
   measureLocal("wasiw:network:control-update", () => {
