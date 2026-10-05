@@ -129,7 +129,9 @@ test("a valid selected-pair aggregate graph still loads recommendations and the 
   await expect(page.locator("#network-render-status")).toContainText("edges");
   await page.locator("#network-search-input").fill("anime:105");
   await page.locator("#network-search-form button").click();
-  await expect(page.locator("#network-search-message")).toContainText("not in the current explorer sample or filter");
+  await expect(page.locator("#network-search-message")).toContainText("Focused neighborhood");
+  await expect(page.locator("#graph circle[data-node-id='anime:105']")).toBeVisible();
+  await expect(page.locator("#network-mode-status")).toContainText("No retained pair edge meets this filter");
   await page.locator("#network-search-input").fill("anime:999");
   await page.locator("#network-search-form button").click();
   await expect(page.locator("#network-search-message")).toContainText("does not prove no relationship");

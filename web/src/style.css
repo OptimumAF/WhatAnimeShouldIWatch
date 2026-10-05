@@ -23,6 +23,14 @@
   --info: #9ec5e5;
   --graph-bg-start: #091019;
   --graph-bg-end: #101b2a;
+  --graph-positive-edge: #6fffe9bb;
+  --graph-negative-edge: #ff8f7acc;
+  --graph-neutral-edge: #aab4c099;
+  --graph-user-positive-edge: #f4d35ebb;
+  --graph-user-negative-edge: #eaa0d6cc;
+  --graph-dim-edge: #30415655;
+  --graph-selected-node: #ffd166;
+  --graph-dim-node: #4f607388;
 
   font-family: "Space Grotesk", sans-serif;
 }
@@ -50,6 +58,14 @@
   --info: #1d5f96;
   --graph-bg-start: #edf6ff;
   --graph-bg-end: #d8e9fb;
+  --graph-positive-edge: #087a73cc;
+  --graph-negative-edge: #b04431c9;
+  --graph-neutral-edge: #587087aa;
+  --graph-user-positive-edge: #9a6500cc;
+  --graph-user-negative-edge: #913f79cc;
+  --graph-dim-edge: #9eb4c28c;
+  --graph-selected-node: #aa5800;
+  --graph-dim-node: #8ea4b3aa;
 }
 
 :root[data-contrast="high"] {
@@ -1786,6 +1802,7 @@ button:hover,
   min-height: calc(100vh - 132px);
   display: grid;
   grid-template-columns: minmax(280px, 360px) 1fr;
+  align-items: start;
   gap: 1rem;
 }
 
@@ -1815,6 +1832,33 @@ button:hover,
 
 .network-controls {
   margin-top: 0.8rem;
+}
+
+.network-exploration {
+  margin-top: 0.8rem;
+  padding: 0.7rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+}
+
+.network-exploration p {
+  margin: 0 0 0.55rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.network-exploration #network-mode-status {
+  color: var(--text);
+}
+
+.network-exploration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.network-exploration-actions button {
+  min-height: 44px;
 }
 
 .network-controls .stats {
@@ -1989,7 +2033,33 @@ button:hover,
   border: 1px solid var(--panel-border);
   background: linear-gradient(165deg, var(--graph-bg-start) 0%, var(--graph-bg-end) 100%);
   overflow: hidden;
-  min-height: 70vh;
+  height: min(75vh, 800px);
+  min-height: 460px;
+}
+
+.graph-shell:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.graph-viewport-controls {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.graph-viewport-controls button {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .network-render-status {
@@ -2040,13 +2110,11 @@ button:hover,
 #graph {
   width: 100%;
   height: 100%;
-  min-height: 70vh;
 }
 
 .graph-svg {
   width: 100%;
   height: 100%;
-  min-height: 70vh;
   display: block;
 }
 
@@ -2264,9 +2332,9 @@ input[type="range"] {
     min-height: 72vh;
   }
 
-  .graph-shell,
-  #graph {
-    min-height: 60vh;
+  .graph-shell {
+    height: 62vh;
+    min-height: 360px;
   }
 
   .username-import-form {

@@ -200,6 +200,13 @@ test("normal mode still loads valid unversioned legacy graph and model artifacts
   await expect(page.locator("#network-selection")).toContainText("does not declare source rating or pair-selection coverage");
   await expect(page.locator("#network-explorer-sample")).toContainText("cannot be verified");
   await expect(page.locator("#network-scope-caveat")).toContainText("does not prove no relationship");
+  await page.locator("#network-search-input").fill("anime:101");
+  await page.locator("#network-search-form button").click();
+  await expect(page.locator("#network-mode-status")).toContainText("recommendation graph");
+  await expect(page.locator("#toggle-users")).toBeDisabled();
+  await page.locator("#reset-neighborhood").click();
+  await expect(page.locator("#network-mode-status")).toContainText("Explorer sample overview");
+  await expect(page.locator("#toggle-users")).toBeEnabled();
   expect(pageErrors).toEqual([]);
 });
 
