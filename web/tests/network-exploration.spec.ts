@@ -285,9 +285,9 @@ test("large invented node overview keeps every list entry and pointer selection 
   await expect(page.locator("#network-node-list-status")).toContainText("600 visible nodes");
   const firstOverview = await page.locator("#graph svg.graph-svg").elementHandle();
   await page.locator("#toggle-anime-edges").uncheck();
-  await expect(page.locator("#network-mode-status")).toContainText("0 edges visible");
+  await expect(page.locator("#network-render-status")).toContainText("0 nodes, 0 edges");
   await page.locator("#toggle-anime-edges").check();
-  await expect(page.locator("#network-mode-status")).toContainText("600 nodes and 600 edges visible");
+  await expect(page.locator("#network-render-status")).toContainText("600 nodes, 600 edges");
   expect(await firstOverview!.evaluate((element) =>
     element === document.querySelector("#graph svg.graph-svg"))).toBe(true);
 
