@@ -108,7 +108,14 @@ test("bounded local neighborhood keeps sampled overview, keyboard list, viewport
   await expect(page.locator("#graph .graph-edge-layer line")).toHaveCount(8);
   await expect(page.locator("#graph circle")).toHaveCount(9);
   await page.setViewportSize({ width: 320, height: 720 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  const widths = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    viewport: window.innerWidth,
+    extending: [...document.querySelectorAll("#view-network *")]
+      .filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)
+      .slice(0, 8).map((element) => `${element.tagName.toLowerCase()}#${element.id || "-"}`),
+  }));
+  expect(widths.document, JSON.stringify(widths)).toBeLessThanOrEqual(widths.viewport);
   const button = await page.locator("#graph-zoom-in").boundingBox();
   expect(button?.height).toBeGreaterThanOrEqual(44);
   expect(providerRequests).toEqual([]);

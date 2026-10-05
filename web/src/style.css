@@ -1801,9 +1801,15 @@ button:hover,
 .network-layout {
   min-height: calc(100vh - 132px);
   display: grid;
-  grid-template-columns: minmax(280px, 360px) 1fr;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   align-items: start;
   gap: 1rem;
+  min-width: 0;
+}
+
+#network-panel,
+.graph-shell {
+  min-width: 0;
 }
 
 .network-mobile-toggle {
@@ -1845,6 +1851,7 @@ button:hover,
   margin: 0 0 0.55rem;
   font-size: 0.78rem;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .network-exploration #network-mode-status {
@@ -1908,11 +1915,12 @@ button:hover,
 .network-search-form {
   margin-top: 0.45rem;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.45rem;
 }
 
 .network-search-form input {
+  min-width: 0;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: var(--surface-strong);
@@ -1934,6 +1942,7 @@ button:hover,
   color: var(--info);
   font-size: 0.78rem;
   min-height: 1.05rem;
+  overflow-wrap: anywhere;
 }
 
 .network-scope {
@@ -1948,6 +1957,7 @@ button:hover,
 
 .network-scope p {
   margin: 0.2rem 0;
+  overflow-wrap: anywhere;
 }
 
 .network-scope #network-scope-caveat {
@@ -2009,6 +2019,7 @@ button:hover,
   background: var(--surface-soft);
   color: var(--text);
   text-align: left;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
@@ -2067,6 +2078,7 @@ button:hover,
   color: var(--info);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.73rem;
+  overflow-wrap: anywhere;
 }
 
 .graph-loading {
@@ -2300,7 +2312,7 @@ input[type="range"] {
 
   .recommend-layout,
   .network-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .network-mobile-toggle {
