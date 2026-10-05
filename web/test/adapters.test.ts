@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { createArtifactLoader } from "../src/artifact-loader.ts";
 import { parseCompactGraph } from "../src/artifacts.ts";
 import { createPersistenceAdapter } from "../src/persistence.ts";
@@ -14,6 +16,10 @@ const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(name,
 const index = buildRecommendationIndexFromCompact(parseCompactGraph(fixture("graph.compact.json"), "synthetic graph"));
 const jsonResponse = (value: unknown, status = 200): Response =>
   new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+const bytesResponse = (bytes: Uint8Array, headers: Record<string, string> = {}): Response =>
+  new Response(Uint8Array.from(bytes).buffer as ArrayBuffer, { headers });
+const gzipResponse = (value: unknown): Response => bytesResponse(
+  gzipSync(Buffer.from(JSON.stringify(value))), { "Content-Type": "application/gzip" });
 
 function fakeRuntime(
   responder: (url: string, init?: RequestInit) => Promise<Response> | Response,
@@ -509,4 +515,196 @@ test("artifact transport keeps the missing compact to legacy fallback deliberate
     "./data/graph.json.gz", "./data/graph.json",
   ]);
   assert.equal(fake.requests[0].init?.cache, "no-store");
+});
+
+test("gzip-only legacy graph, explorer, and model load through bounded local decompression", async () => {
+  const files = new Map<string, unknown>([
+    ["graph.compact.json.gz", fixture("graph.compact.json")],
+    ["graph-explorer.compact.json.gz", fixture("graph-explorer.compact.json")],
+    ["model-mf-web.compact.json.gz", fixture("model-mf-web.compact.json")],
+  ]);
+  const fake = fakeRuntime((url) => {
+    if (url === "./data/active.json") return jsonResponse({}, 404);
+    const file = files.get(url.replace("./data/", ""));
+    if (file !== undefined) return gzipResponse(file);
+    throw new Error(`Unexpected plain request: ${url}`);
+  });
+  const loader = createArtifactLoader(fake.runtime, false);
+  const graph = await loader.fetchGraph();
+  assert.equal(graph.format, "graph-compact-v2");
+  assert.equal((await loader.fetchExplorerGraph(graph)).role, "visualization");
+  assert.equal((await loader.fetchModelRecommendationIndex())?.factors, 2);
+  assert.equal(fake.requests.length, 4);
+  assert.ok(fake.requests.slice(1).every((request) => request.init?.cache === "no-store"));
+});
+
+test("browser-decoded gzip JSON is parsed once and a missing gzip uses fresh plain JSON", async () => {
+  const graph = fixture("graph.compact.json");
+  const decoded = fakeRuntime((url) => url === "./data/active.json"
+    ? jsonResponse({}, 404)
+    : url === "./data/graph.compact.json.gz"
+      ? new Response(JSON.stringify(graph), { headers: { "Content-Encoding": "gzip" } })
+      : new Response("", { status: 404 }));
+  assert.equal((await createArtifactLoader(decoded.runtime, false).fetchGraph()).format,
+    "graph-compact-v2");
+  assert.deepEqual(decoded.requests.map((request) => request.url), [
+    "./data/active.json", "./data/graph.compact.json.gz",
+  ]);
+  const plain = fakeRuntime((url, init) => {
+    if (url === "./data/active.json") return jsonResponse({}, 404);
+    if (url === "./data/graph.compact.json.gz") return jsonResponse({}, 404);
+    if (url === "./data/graph.compact.json") {
+      assert.equal(init?.cache, "no-store");
+      return jsonResponse(graph);
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  assert.equal((await createArtifactLoader(plain.runtime, false).fetchGraph()).format,
+    "graph-compact-v2");
+});
+
+test("unsupported gzip decompression uses a plain file or names the missing fallback", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "DecompressionStream");
+  Object.defineProperty(globalThis, "DecompressionStream",
+    { configurable: true, writable: true, value: undefined });
+  try {
+    const graph = fixture("graph.compact.json");
+    for (const plainPresent of [true, false]) {
+      const fake = fakeRuntime((url) => {
+        if (url === "./data/active.json") return jsonResponse({}, 404);
+        if (url === "./data/graph.compact.json.gz") return gzipResponse(graph);
+        if (url === "./data/graph.compact.json") {
+          return plainPresent ? jsonResponse(graph) : jsonResponse({}, 404);
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      });
+      const loading = createArtifactLoader(fake.runtime, false).fetchGraph();
+      if (plainPresent) assert.equal((await loading).format, "graph-compact-v2");
+      else await assert.rejects(loading,
+        /graph\.compact\.json\.gz: this browser cannot decompress gzip and graph\.compact\.json is missing/);
+    }
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "DecompressionStream", descriptor);
+    else Reflect.deleteProperty(globalThis, "DecompressionStream");
+  }
+});
+
+test("present malformed gzip and HTTP errors fail without silently taking a plain graph", async () => {
+  const graph = fixture("graph.compact.json");
+  for (const [gzResponse, expected] of [
+    [bytesResponse(new Uint8Array([0x1f, 0x8b, 0, 1, 2])),
+      /graph\.compact\.json\.gz: invalid gzip stream/],
+    [new Response("error", { status: 503 }),
+      /graph\.compact\.json\.gz: unable to load \(503\)/],
+  ] as const) {
+    const fake = fakeRuntime((url) => {
+      if (url === "./data/active.json") return jsonResponse({}, 404);
+      if (url === "./data/graph.compact.json.gz") return gzResponse.clone();
+      if (url === "./data/graph.compact.json") return jsonResponse(graph);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    await assert.rejects(createArtifactLoader(fake.runtime, false).fetchGraph(), expected);
+    assert.deepEqual(fake.requests.map((request) => request.url),
+      ["./data/active.json", "./data/graph.compact.json.gz"]);
+  }
+});
+
+test("a present gzip graph with an invalid field names its transport file", async () => {
+  const graph = structuredClone(fixture("graph.compact.json")) as Record<string, any>;
+  graph.aa[0][1] = graph.anime.length;
+  const fake = fakeRuntime((url) => url === "./data/active.json" ? jsonResponse({}, 404)
+    : url === "./data/graph.compact.json.gz" ? gzipResponse(graph)
+      : jsonResponse({}, 404));
+  await assert.rejects(createArtifactLoader(fake.runtime, false).fetchGraph(),
+    /graph\.compact\.json\.gz: aa\[0\]\[1\] references an index outside/);
+});
+
+test("plain HTTP errors name the file while transport failures remain generic", async () => {
+  for (const [responder, expected] of [
+    [(url: string) => url.endsWith(".gz") ? jsonResponse({}, 404)
+      : new Response("error", { status: 503 }), /Unable to load graph\.compact\.json \(503\)/],
+    [(url: string) => { if (url.endsWith(".gz")) throw new Error("private transport text");
+      return jsonResponse({}, 404); }, /Artifact transport failed/],
+  ] as const) {
+    const fake = fakeRuntime((url) => url === "./data/active.json"
+      ? jsonResponse({}, 404) : responder(url));
+    await assert.rejects(createArtifactLoader(fake.runtime, false).fetchGraph(), expected);
+  }
+});
+
+test("legacy compressed, decoded, and plain size limits stop oversized payloads", async () => {
+  const largeJson = { padding: "x".repeat(4096) };
+  for (const [gz, plain, limits, expected] of [
+    [gzipResponse(largeJson), jsonResponse({}, 404),
+      { compressedBytes: 16, plainBytes: 512 }, /graph\.compact\.json\.gz: byte length exceeds transport limit/],
+    [gzipResponse(largeJson), jsonResponse({}, 404),
+      { compressedBytes: 256, plainBytes: 512 }, /graph\.compact\.json\.gz: byte length exceeds transport limit/],
+    [jsonResponse({}, 404), jsonResponse(largeJson),
+      { compressedBytes: 256, plainBytes: 512 }, /graph\.compact\.json: byte length exceeds transport limit/],
+    [new Response(JSON.stringify(largeJson), { headers: { "Content-Encoding": "gzip" } }),
+      jsonResponse({}, 404), { compressedBytes: 256, plainBytes: 512 },
+      /graph\.compact\.json\.gz: byte length exceeds transport limit/],
+    [new Response("{}", { headers: { "Content-Length": "999" } }),
+      jsonResponse({}, 404), { compressedBytes: 256, plainBytes: 512 },
+      /graph\.compact\.json\.gz: advertised byte length exceeds transport limit/],
+  ] as const) {
+    const fake = fakeRuntime((url) => url === "./data/active.json" ? jsonResponse({}, 404)
+      : url === "./data/graph.compact.json.gz" ? gz.clone() : plain.clone());
+    await assert.rejects(createArtifactLoader(fake.runtime, false, "./", limits).fetchGraph(), expected);
+  }
+  assert.throws(() => createArtifactLoader(fakeRuntime(() => jsonResponse({}, 404)).runtime,
+    false, "./", { plainBytes: 257 * 1024 * 1024 }), /plainBytes: legacy transport limit/);
+});
+
+test("a stale versioned manifest and graph are retried without cache, then hash checked", async () => {
+  const manifestBytes = readFileSync(new URL("release-manifest.json", fixtureRoot));
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  const graphBytes = readFileSync(new URL("graph.compact.json", fixtureRoot));
+  const pointer = { format: "active-release-bundle-v1", tag: manifest.tag,
+    bundleId: manifest.bundleId,
+    manifestSha256: crypto.createHash("sha256").update(manifestBytes).digest("hex") };
+  const prefix = `./data/bundles/${manifest.bundleId}/`;
+  const fake = fakeRuntime((url, init) => {
+    if (url === "./data/active.json") return jsonResponse(pointer);
+    if (url === `${prefix}release-manifest.json`) {
+      return bytesResponse(init?.cache === "no-store" ? manifestBytes : Buffer.from("{}"));
+    }
+    if (url === `${prefix}graph.compact.json`) {
+      return bytesResponse(init?.cache === "no-store" ? graphBytes : Buffer.from("{}"));
+    }
+    throw new Error(`Unexpected legacy request: ${url}`);
+  });
+  assert.equal((await createArtifactLoader(fake.runtime, false).fetchGraph()).format,
+    "graph-compact-v2");
+  assert.deepEqual(fake.requests.map(({ url, init }) => [url, init?.cache ?? "default"]), [
+    ["./data/active.json", "no-store"],
+    [`${prefix}release-manifest.json`, "default"],
+    [`${prefix}release-manifest.json`, "no-store"],
+    [`${prefix}graph.compact.json`, "default"],
+    [`${prefix}graph.compact.json`, "no-store"],
+  ]);
+});
+
+test("a persistently stale manifest or asset fails after one no-store retry", async () => {
+  const manifestBytes = readFileSync(new URL("release-manifest.json", fixtureRoot));
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  const pointer = { format: "active-release-bundle-v1", tag: manifest.tag,
+    bundleId: manifest.bundleId,
+    manifestSha256: crypto.createHash("sha256").update(manifestBytes).digest("hex") };
+  const prefix = `./data/bundles/${manifest.bundleId}/`;
+  for (const badManifest of [true, false]) {
+    const fake = fakeRuntime((url) => {
+      if (url === "./data/active.json") return jsonResponse(pointer);
+      if (url === `${prefix}release-manifest.json`) {
+        return bytesResponse(badManifest ? Buffer.from("{}") : manifestBytes);
+      }
+      if (url === `${prefix}graph.compact.json`) return bytesResponse(Buffer.from("{}"));
+      throw new Error(`Unexpected legacy request: ${url}`);
+    });
+    await assert.rejects(createArtifactLoader(fake.runtime, false).fetchGraph(), badManifest
+      ? /release-manifest\.json: SHA-256 differs from active\.json\.manifestSha256/
+      : /graph\.compact\.json: byte length or SHA-256 differs from release-manifest\.json/);
+    assert.equal(fake.requests.filter((request) => request.init?.cache === "no-store").length, 2);
+    assert.ok(fake.requests.every((request) => !request.url.endsWith(".gz")));
+  }
 });
