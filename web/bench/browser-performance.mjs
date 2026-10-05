@@ -1,4 +1,4 @@
-/** Synthetic built-demo browser baseline. No provider or external request is allowed through. */
+/** Synthetic built-demo browser benchmark. No external request is allowed through. */
 import { chromium } from "@playwright/test";
 import { preview } from "vite";
 import { gzipSync } from "node:zlib";
@@ -8,11 +8,18 @@ import { fileURLToPath } from "node:url";
 import { cpus, platform, release, totalmem } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 
 const webRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(webRoot, "..");
 const distRoot = join(webRoot, "dist");
-const outputPath = join(webRoot, "test-results", "performance-baseline.json");
+const scenarioFlag = process.argv.find((item) => item.startsWith("--scenario="));
+const scenarioName = scenarioFlag ? scenarioFlag.slice("--scenario=".length) : "fixture";
+if (scenarioName !== "fixture" && scenarioName !== "scale") {
+  throw new Error("--scenario must be fixture or scale.");
+}
+const outputPath = join(webRoot, "test-results",
+  scenarioName === "scale" ? "performance-scale.json" : "performance-baseline.json");
 const runs = readPositiveInteger("--runs", 3);
 const updates = readPositiveInteger("--updates", 8);
 const graphRenders = readPositiveInteger("--graph-renders", 4);
@@ -180,11 +187,11 @@ async function oneRun(browser, baseUrl, profile, proxy) {
   await session.send("Performance.enable");
   const network = attachNetwork(session, new URL(baseUrl).origin);
   try {
-    await page.goto(`${baseUrl}?perf=1`, { waitUntil: "load", timeout: 30_000 });
+    await page.goto(`${baseUrl}?perf=1`, { waitUntil: "load", timeout: 60_000 });
     await page.locator(".demo-banner").waitFor({ timeout: 15_000 }).catch(() => {
       throw new Error("Built app is not the synthetic demo; run npm run bench:browser:fixture.");
     });
-    await page.locator("#rec-summary").getByText(/Showing top/).waitFor({ timeout: 15_000 });
+    await page.locator("#rec-summary").getByText(/Showing top/).waitFor({ timeout: 60_000 });
     await page.waitForLoadState("networkidle");
     const cold = await pageMetrics(page, session);
     if (!cold.longTaskSupported) throw new Error("Long Tasks API is unavailable in this browser.");
@@ -194,8 +201,8 @@ async function oneRun(browser, baseUrl, profile, proxy) {
 
     network.setPhase("warm");
     await session.send("Network.setCacheDisabled", { cacheDisabled: false });
-    await page.reload({ waitUntil: "load", timeout: 30_000 });
-    await page.locator("#rec-results .rec-item").first().waitFor({ timeout: 15_000 });
+    await page.reload({ waitUntil: "load", timeout: 60_000 });
+    await page.locator("#rec-results .rec-item").first().waitFor({ timeout: 60_000 });
     await page.waitForLoadState("networkidle");
     const warm = await pageMetrics(page, session);
     const warmFirstRecommendation = warm.measures.find((item) =>
@@ -351,6 +358,21 @@ async function rejectingProxy() {
 }
 
 await readFile(join(distRoot, "index.html"));
+const scenario = scenarioName === "scale"
+  ? JSON.parse(await readFile(join(distRoot, "demo-data", "performance-scenario.json"), "utf8"))
+  : null;
+if (scenarioName === "scale" && scenario.format !== "invented-browser-scale-v1") {
+  throw new Error("The built scale scenario is missing or unsupported.");
+}
+if (scenarioName === "scale") {
+  for (const asset of scenario.assets) {
+    const bytes = await readFile(join(distRoot, "demo-data", asset.name));
+    if (bytes.length !== asset.bytes ||
+        createHash("sha256").update(bytes).digest("hex") !== asset.sha256) {
+      throw new Error(`The built invented scale asset ${asset.name} changed after generation.`);
+    }
+  }
+}
 const server = await preview({
   root: webRoot,
   configFile: join(webRoot, "vite.config.ts"),
@@ -378,12 +400,15 @@ try {
     [profile.name, summarizeProfile(samples[profile.name])]));
   const report = {
     format: "synthetic-browser-performance-v1",
+    scenarioName, scenario,
     sourceRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot,
       encoding: "utf8" }).trim(),
     workingTreeDirty: execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot,
       encoding: "utf8" }).trim().length > 0,
     generatedAt: new Date().toISOString(),
-    build: "vite build --mode demo; vite preview; invented demo assets only",
+    build: scenarioName === "scale"
+      ? "vite build --mode demo; ignored invented scale assets replace built demo assets; vite preview"
+      : "vite build --mode demo; vite preview; invented demo assets only",
     browser: await browser.version(),
     host: { platform: platform(), release: release(), cpu: cpus()[0]?.model ?? "unknown",
       logicalCpus: cpus().length, ramBytes: totalmem() },
@@ -406,6 +431,7 @@ try {
   await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify({
     format: report.format, sourceRevision: report.sourceRevision,
+    scenarioName: report.scenarioName, scenario: report.scenario,
     workingTreeDirty: report.workingTreeDirty,
     browser: report.browser, host: report.host, profiles: report.profiles,
     runs: report.runs, initialAssetTotals: report.initialAssetTotals,

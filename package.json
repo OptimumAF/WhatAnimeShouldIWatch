@@ -35,6 +35,8 @@
     "test:e2e": "npm run test:e2e --workspace web",
     "test:pages": "npm run test:pages --workspace web",
     "bench:browser:fixture": "npm run data:fixture && npm run data:fixture:check && npm run build --workspace web -- --mode demo && node web/bench/browser-performance.mjs",
+    "bench:browser:scale": "npm run data:fixture && npm run data:fixture:check && npm run build --workspace web -- --mode demo && node --import tsx web/bench/generate-performance-scenario.ts && node web/bench/browser-performance.mjs --scenario=scale",
+    "bench:browser:budgets:check": "node web/bench/check-performance-budgets.mjs",
     "pages:prepare": "npm run prepare:pages --workspace pipeline --",
     "pages:build:check": "npm run check:pages-build --workspace pipeline --",
     "eval:user-vector:fixture": "npm run data:fixture:check && npm run eval:user-vector:fixture --workspace web",
