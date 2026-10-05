@@ -4561,9 +4561,11 @@ async function renderGraph(
       overviewGraphCache = { source: graphDataValue, minAbsoluteWeight,
         showAnimeAnimeEdges, showUsers, graph, svg: null,
         totalEligibleEdgeCount: selectedEdges.totalEligibleEdgeCount,
-        edgeLimitHit: selectedEdges.edgeLimitHit };
+      edgeLimitHit: selectedEdges.edgeLimitHit };
     }
   }
+  if (chunkBuild) await runtime.yieldMainThread(signal);
+  throwIfAborted(signal);
   currentGraph = graph;
   visibleGraphNodes = [];
   const focusedEvidence = new Map<string, { weight: number; support?: number }>();
@@ -4592,8 +4594,6 @@ async function renderGraph(
     left.label.localeCompare(right.label) || left.id.localeCompare(right.id)));
   measureLocal("wasiw:network:visible-node-list", () => renderVisibleNodeList());
 
-  if (chunkBuild) await runtime.yieldMainThread(signal);
-  throwIfAborted(signal);
   measureLocal("wasiw:network:control-update", () => {
     const visibleUsers = countNodesByType(graph, "user");
     const visibleAnime = graph.order - visibleUsers;
