@@ -1215,10 +1215,14 @@ networkMobileToggleBtn.addEventListener("click", () => {
   networkControlsHiddenOnMobile = !networkControlsHiddenOnMobile;
   applyNetworkCompactControlsState();
   if (!networkControlsHiddenOnMobile) {
-    networkPanelEl.scrollIntoView({
-      block: "start",
-      behavior: prefersReducedMotion() ? "auto" : "smooth",
-    });
+    runtime.schedule(() => {
+      if (activeView !== "network" || !networkCompactMediaQuery.matches ||
+          networkControlsHiddenOnMobile) return;
+      networkPanelEl.scrollIntoView({
+        block: "start",
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+      });
+    }, 0);
   }
 });
 
@@ -4547,6 +4551,10 @@ async function renderGraph(
   });
 
   throwIfAborted(signal);
+  if (chunkBuild) {
+    await runtime.yieldMainThread(signal);
+    throwIfAborted(signal);
+  }
   if (!cached) {
     measureLocal("wasiw:network:layout", () => applyLayout(graph, focused?.center.id));
     if (!focused && graph.size > CHUNKED_NETWORK_EDGE_THRESHOLD) {
@@ -4568,7 +4576,7 @@ async function renderGraph(
       focusedOrder.set(neighbor, index + 1);
     });
   }
-  graph.forEachNode((id, attributes) => {
+  measureLocal("wasiw:network:visible-node-map", () => graph.forEachNode((id, attributes) => {
     const label = typeof attributes.label === "string" ? attributes.label : id;
     visibleGraphNodes.push({
       id,
@@ -4577,52 +4585,58 @@ async function renderGraph(
       searchText: normalizeTitle(`${label} ${id}`),
       evidence: focusedEvidence.get(id),
     });
-  });
-  visibleGraphNodes.sort((left, right) =>
+  }));
+  measureLocal("wasiw:network:visible-node-sort", () => visibleGraphNodes.sort((left, right) =>
     (focused ? (focusedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
       (focusedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER) : 0) ||
-    left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
-  renderVisibleNodeList();
+    left.label.localeCompare(right.label) || left.id.localeCompare(right.id)));
+  measureLocal("wasiw:network:visible-node-list", () => renderVisibleNodeList());
 
-  const visibleUsers = countNodesByType(graph, "user");
-  const visibleAnime = graph.order - visibleUsers;
-  const scope = measureLocal("wasiw:network:scope", () =>
-    updateNetworkScope(explorerGraphData ?? graphData));
-  const countSource = focused ? graphData : graphDataValue;
-  if (focused) {
-    const budgetNote = focused.omittedByBudget > 0
-      ? ` ${focused.omittedByBudget} matching pair edges omitted by the 25-node/24-edge focus budget.`
-      : "";
-    const noEvidenceNote = focused.eligiblePairEdges === 0
-      ? " No retained pair edge meets this filter; source selection can omit other relationships."
-      : "";
-    networkModeStatusEl.textContent = `Focused on ${focused.center.label} (${focused.center.id}): ` +
-      `${graph.size}/${focused.eligiblePairEdges} retained signed pair edges shown from the recommendation graph.` +
-      budgetNote + noEvidenceNote +
-      (showAnimeAnimeEdges ? "" : " Pair edges are hidden by the visibility control.");
-  } else {
-    networkModeStatusEl.textContent = `Explorer sample overview: ${graph.order} nodes and ${graph.size} edges visible. ` +
-      "Search or select an anime to inspect its bounded recommendation-graph neighborhood.";
-  }
-
-  statsEl.innerHTML = [
-    statLine("Generated", new Date(countSource.generatedAt).toLocaleString()),
-    statLine(scope.userRowsOmitted ? "User rows" : "Visible users",
-      scope.userRowsOmitted ? "omitted from v3" : `${visibleUsers} / ${countSource.userCount}`),
-    statLine("Visible anime", `${visibleAnime} / ${countSource.animeCount}`),
-    statLine("Visible nodes", String(graph.order)),
-    statLine("Visible edges", String(graph.size)),
-  ].join("");
-
-  if (selectedNodeId && graph.hasNode(selectedNodeId)) {
-    renderInspectPanel(selectedNodeId);
-  } else {
-    if (selectedNodeId) {
-      networkSearchMessage.textContent = "That node is in the recommendation graph but not in the current explorer sample or filter. Its absence here does not prove no relationship.";
+  if (chunkBuild) await runtime.yieldMainThread(signal);
+  throwIfAborted(signal);
+  measureLocal("wasiw:network:control-update", () => {
+    const visibleUsers = countNodesByType(graph, "user");
+    const visibleAnime = graph.order - visibleUsers;
+    const scope = measureLocal("wasiw:network:scope", () =>
+      updateNetworkScope(explorerGraphData ?? graphData));
+    const countSource = focused ? graphData : graphDataValue;
+    if (focused) {
+      const budgetNote = focused.omittedByBudget > 0
+        ? ` ${focused.omittedByBudget} matching pair edges omitted by the 25-node/24-edge focus budget.`
+        : "";
+      const noEvidenceNote = focused.eligiblePairEdges === 0
+        ? " No retained pair edge meets this filter; source selection can omit other relationships."
+        : "";
+      networkModeStatusEl.textContent = `Focused on ${focused.center.label} (${focused.center.id}): ` +
+        `${graph.size}/${focused.eligiblePairEdges} retained signed pair edges shown from the recommendation graph.` +
+        budgetNote + noEvidenceNote +
+        (showAnimeAnimeEdges ? "" : " Pair edges are hidden by the visibility control.");
+    } else {
+      networkModeStatusEl.textContent = `Explorer sample overview: ${graph.order} nodes and ${graph.size} edges visible. ` +
+        "Search or select an anime to inspect its bounded recommendation-graph neighborhood.";
     }
-    selectedNodeId = null;
-    renderInspectPanel(null);
-  }
+
+    statsEl.innerHTML = [
+      statLine("Generated", new Date(countSource.generatedAt).toLocaleString()),
+      statLine(scope.userRowsOmitted ? "User rows" : "Visible users",
+        scope.userRowsOmitted ? "omitted from v3" : `${visibleUsers} / ${countSource.userCount}`),
+      statLine("Visible anime", `${visibleAnime} / ${countSource.animeCount}`),
+      statLine("Visible nodes", String(graph.order)),
+      statLine("Visible edges", String(graph.size)),
+    ].join("");
+
+    if (selectedNodeId && graph.hasNode(selectedNodeId)) {
+      renderInspectPanel(selectedNodeId);
+    } else {
+      if (selectedNodeId) {
+        networkSearchMessage.textContent = "That node is in the recommendation graph but not in the current explorer sample or filter. Its absence here does not prove no relationship.";
+      }
+      selectedNodeId = null;
+      renderInspectPanel(null);
+    }
+  });
+  if (chunkBuild) await runtime.yieldMainThread(signal);
+  throwIfAborted(signal);
   await measureLocalAsync("wasiw:network:svg", () => renderSvgGraph(graph, signal));
 
   return {
