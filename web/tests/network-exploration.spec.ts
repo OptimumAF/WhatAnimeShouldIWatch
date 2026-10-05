@@ -236,3 +236,97 @@ test("large invented overview cancels stale builds, draws every signed pair, and
   expect(await edges.locator("path").count()).toBeLessThanOrEqual(3);
   expect(providerRequests).toEqual([]);
 });
+
+test("large invented node overview keeps every list entry and pointer selection with grouped SVG paths", async ({ page }) => {
+  const original = JSON.parse(readFileSync(new URL(
+    "../public/demo-data/graph.aggregate.compact.json", import.meta.url), "utf8",
+  )) as CompactGraphDataV3;
+  const anime = Array.from({ length: 600 }, (_, index) =>
+    [101 + index, `Invented Batch Node ${String(index + 1).padStart(3, "0")}`] as [number, string]);
+  const pairs: [number, number, number, number][] = anime.map((_, index) => {
+    const other = (index + 1) % anime.length;
+    return [Math.min(index, other), Math.max(index, other), index % 3 === 0 ? -1 : 1, 1];
+  });
+  const withoutId = { ...original, anime, aa: pairs, animeCount: anime.length,
+    nodeCount: anime.length, edgeCount: pairs.length,
+    truncation: { ...original.truncation, inputRatings: 600, selectedRatings: 600,
+      potentialPairVisits: 600, pairVisits: 600, candidatePairs: 600,
+      eligiblePairs: 600, selectedPairs: 600 } };
+  const { graphId: _oldGraphId, ...core } = withoutId;
+  const graph = { ...core, graphId: aggregateRecommendationGraphId(core) };
+  const explorer = buildExplorerGraph(graph, 600, 0);
+  const providerRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/api\.jikan\.moe|graphql\.anilist\.co|myanimelist\.net|r\.jina\.ai/.test(new URL(request.url()).hostname)) {
+      providerRequests.push(request.url());
+    }
+  });
+  await page.route("**/*", (route) => {
+    const host = new URL(route.request().url()).hostname;
+    return host === "127.0.0.1" || host === "localhost" ? route.continue() : route.abort();
+  });
+  await page.route("**/demo-data/graph.aggregate.compact.json", (route) => route.fulfill({ json: graph }));
+  await page.route("**/demo-data/graph-explorer.aggregate.compact.json", (route) =>
+    route.fulfill({ json: explorer }));
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await page.locator("#min-weight").evaluate((input: HTMLInputElement) => {
+    input.value = "0";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#network-mode-status")).toContainText("600 nodes and 600 edges visible");
+  const nodeLayer = page.locator("#graph .graph-node-layer");
+  await expect(nodeLayer).toHaveAttribute("data-render-mode", "batched-paths");
+  await expect(nodeLayer.locator("circle")).toHaveCount(0);
+  expect(await nodeLayer.locator("path").evaluateAll((paths) =>
+    paths.reduce((sum, path) => sum + Number(path.getAttribute("data-node-count")), 0))).toBe(600);
+  await expect(page.locator("#network-node-list-status")).toContainText("600 visible nodes");
+  const firstOverview = await page.locator("#graph svg.graph-svg").elementHandle();
+  await page.locator("#toggle-anime-edges").uncheck();
+  await expect(page.locator("#network-mode-status")).toContainText("0 edges visible");
+  await page.locator("#toggle-anime-edges").check();
+  await expect(page.locator("#network-mode-status")).toContainText("600 nodes and 600 edges visible");
+  expect(await firstOverview!.evaluate((element) =>
+    element === document.querySelector("#graph svg.graph-svg"))).toBe(true);
+
+  await page.locator("#network-node-list summary").click();
+  await page.locator("#network-node-filter").fill("Invented Batch Node 001");
+  const choice = page.locator("#network-node-list-results button[data-node-id='anime:101']");
+  await expect(choice).toHaveCount(1);
+  await choice.press("Enter");
+  await expect(choice).toBeFocused();
+  await expect(choice).toHaveAttribute("aria-pressed", "true");
+  const selectedLabel = page.locator("#graph .graph-label-layer text")
+    .filter({ hasText: "Invented Batch Node 001" });
+  await expect(selectedLabel).toHaveCount(1);
+  const targetX = Number(await selectedLabel.getAttribute("x")) - 8;
+  const targetY = Number(await selectedLabel.getAttribute("y")) + 8;
+  await page.locator("#clear-selection").click();
+  const graphPoint = (svg: SVGSVGElement, target: { x: number; y: number }) => {
+    const point = svg.createSVGPoint();
+    point.x = target.x;
+    point.y = target.y;
+    const screen = point.matrixTransform(svg.getScreenCTM()!);
+    return { x: screen.x, y: screen.y };
+  };
+  const offscreenPoint = await page.locator("#graph svg.graph-svg")
+    .evaluate(graphPoint, { x: targetX, y: targetY });
+  await page.evaluate((targetY) => window.scrollBy(0, targetY - innerHeight / 2), offscreenPoint.y);
+  const clickPoint = await page.locator("#graph svg.graph-svg")
+    .evaluate(graphPoint, { x: targetX, y: targetY });
+  await page.mouse.click(clickPoint.x, clickPoint.y);
+  await expect(page.locator("#network-search-message")).toContainText("Invented Batch Node 001 (anime:101)");
+  await expect(choice).toHaveAttribute("aria-pressed", "true");
+  expect(await nodeLayer.locator("path").evaluateAll((paths) =>
+    paths.reduce((sum, path) => sum + Number(path.getAttribute("data-node-count")), 0))).toBe(600);
+  await page.setViewportSize({ width: 320, height: 720 });
+  const pageWidth = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    viewport: window.innerWidth,
+  }));
+  expect(pageWidth.document).toBeLessThanOrEqual(pageWidth.viewport);
+  await expect(choice).toHaveAttribute("aria-pressed", "true");
+  expect(providerRequests).toEqual([]);
+});

@@ -21,9 +21,17 @@ export type LocalPerformanceMetric =
   | "wasiw:recommendation:yield"
   | "wasiw:network:select"
   | "wasiw:network:construct"
+  | "wasiw:network:construct-node-batch"
+  | "wasiw:network:construct-edge-batch"
   | "wasiw:network:layout"
   | "wasiw:network:scope"
   | "wasiw:network:svg"
+  | "wasiw:network:svg-coordinates"
+  | "wasiw:network:svg-edge-batch"
+  | "wasiw:network:svg-paths"
+  | "wasiw:network:svg-node-batch"
+  | "wasiw:network:svg-node-paths"
+  | "wasiw:network:svg-dom-commit"
   | "wasiw:network:render";
 
 const enabled = typeof window !== "undefined" &&
@@ -55,4 +63,9 @@ export function measureLocalAsync<T>(
     record(name, startedAt);
     throw error;
   }
+}
+
+/** Record one synchronous batch; the caller excludes the time spent yielding. */
+export function recordLocalDuration(name: LocalPerformanceMetric, startedAt: number): void {
+  if (enabled) record(name, startedAt);
 }

@@ -42,7 +42,7 @@ import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { selectFranchiseDiverseRecommendations } from "./franchise-diversity";
 import type { FranchiseSelection } from "./franchise-diversity";
 import { ArtifactLoadError, createArtifactLoader } from "./artifact-loader";
-import { measureLocal, measureLocalAsync } from "./local-performance";
+import { measureLocal, measureLocalAsync, recordLocalDuration } from "./local-performance";
 import { describeGraphScope } from "./graph-scope";
 import { selectAnimeNeighborhood } from "./network-neighborhood";
 import { appVersionLabel, dataVersionLabel, diagnosticIssue, modelVersionLabel } from "./diagnostics";
@@ -108,6 +108,7 @@ type CommandMatchReason =
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
 const BATCHED_SVG_EDGE_THRESHOLD = 500;
+const BATCHED_SVG_NODE_THRESHOLD = 500;
 const LARGE_RECOMMENDATION_YIELD_CANDIDATES = 500;
 const CHUNKED_NETWORK_EDGE_THRESHOLD = 500;
 const NETWORK_BUILD_BATCH_SIZE = 1000;
@@ -4354,7 +4355,7 @@ function scrollGraphNodeIntoView(nodeId: string): void {
   const target = graphContainer.querySelector<SVGElement>(
     `[data-node-id="${cssEscapeAttributeValue(nodeId)}"]`,
   );
-  target?.scrollIntoView({
+  (target ?? graphContainer).scrollIntoView({
     block: "center",
     inline: "center",
     behavior: prefersReducedMotion() ? "auto" : "smooth",
@@ -4495,6 +4496,7 @@ async function renderGraph(
     }
 
     const nodes = focused ? focused.nodes : getGraphNodes(graphDataValue);
+    let nodeBatchStartedAt = performance.now();
     for (let index = 0; index < nodes.length; index += 1) {
       const node = nodes[index];
       if ((showUsers || node.nodeType !== "user") && activeNodeIds.has(node.id)) {
@@ -4509,10 +4511,14 @@ async function renderGraph(
         });
       }
       if (chunkBuild && (index + 1) % NETWORK_BUILD_BATCH_SIZE === 0 && index + 1 < nodes.length) {
+        recordLocalDuration("wasiw:network:construct-node-batch", nodeBatchStartedAt);
         await runtime.yieldMainThread(signal);
+        nodeBatchStartedAt = performance.now();
       }
     }
+    recordLocalDuration("wasiw:network:construct-node-batch", nodeBatchStartedAt);
 
+    let edgeBatchStartedAt = performance.now();
     for (let index = 0; index < selectedEdges.edges.length; index += 1) {
       const edge = selectedEdges.edges[index];
       if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
@@ -4532,9 +4538,12 @@ async function renderGraph(
       }
       if (chunkBuild && (index + 1) % NETWORK_BUILD_BATCH_SIZE === 0 &&
           index + 1 < selectedEdges.edges.length) {
+        recordLocalDuration("wasiw:network:construct-edge-batch", edgeBatchStartedAt);
         await runtime.yieldMainThread(signal);
+        edgeBatchStartedAt = performance.now();
       }
     }
+    recordLocalDuration("wasiw:network:construct-edge-batch", edgeBatchStartedAt);
   });
 
   throwIfAborted(signal);
@@ -4924,7 +4933,7 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
   let minY = Number.POSITIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
 
-  graph.forEachNode((node, attributes) => {
+  measureLocal("wasiw:network:svg-coordinates", () => graph.forEachNode((node, attributes) => {
     const x = Number(attributes.x);
     const y = Number(attributes.y);
     minX = Math.min(minX, x);
@@ -4932,7 +4941,7 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
     minY = Math.min(minY, y);
     maxY = Math.max(maxY, y);
     coords.set(node, { x, y });
-  });
+  }));
 
   const spanX = maxX - minX;
   const spanY = maxY - minY;
@@ -4959,6 +4968,7 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
   }
 
   const batchEdges = graph.size > BATCHED_SVG_EDGE_THRESHOLD;
+  const batchNodes = graph.order > BATCHED_SVG_NODE_THRESHOLD && !neighborhoodFocusId;
   const edgePaths = new Map<string, {
     color: string; width: number; sign: string; dashed: boolean;
     segments: string[];
@@ -4966,11 +4976,14 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
   const roundedPathCoordinate = (value: number) => Math.round(value * 10) / 10;
   const edgeKeys = graph.edges();
   const yieldSvgBuild = signal !== undefined && batchEdges;
+  let edgeBatchStartedAt = performance.now();
   for (let edgeIndex = 0; edgeIndex < edgeKeys.length; edgeIndex += 1) {
     if (yieldSvgBuild && edgeIndex > 0 && edgeIndex % NETWORK_SVG_BATCH_SIZE === 0) {
+      recordLocalDuration("wasiw:network:svg-edge-batch", edgeBatchStartedAt);
       await runtime.yieldMainThread(signal);
       throwIfAborted(signal);
       if (svgRunId !== svgRenderRunId) return;
+      edgeBatchStartedAt = performance.now();
     }
     const edgeKey = edgeKeys[edgeIndex];
     const attributes = graph.getEdgeAttributes(edgeKey);
@@ -5021,30 +5034,40 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
     }
     edgeLayer.appendChild(line);
   }
+  recordLocalDuration("wasiw:network:svg-edge-batch", edgeBatchStartedAt);
   if (batchEdges) {
-    edgeLayer.setAttribute("data-render-mode", "batched-paths");
-    for (const group of edgePaths.values()) {
-      const path = document.createElementNS(SVG_NS, "path");
-      path.setAttribute("d", group.segments.join(""));
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", group.color);
-      path.setAttribute("stroke-width", String(group.width));
-      path.setAttribute("stroke-linecap", "round");
-      path.setAttribute("data-edge-count", String(group.segments.length));
-      if (group.sign === "positive" || group.sign === "negative" || group.sign === "neutral") {
-        path.setAttribute("data-edge-sign", group.sign);
+    measureLocal("wasiw:network:svg-paths", () => {
+      edgeLayer.setAttribute("data-render-mode", "batched-paths");
+      for (const group of edgePaths.values()) {
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("d", group.segments.join(""));
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", group.color);
+        path.setAttribute("stroke-width", String(group.width));
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("data-edge-count", String(group.segments.length));
+        if (group.sign === "positive" || group.sign === "negative" || group.sign === "neutral") {
+          path.setAttribute("data-edge-sign", group.sign);
+        }
+        if (group.dashed) path.setAttribute("stroke-dasharray", "3 3");
+        edgeLayer.appendChild(path);
       }
-      if (group.dashed) path.setAttribute("stroke-dasharray", "3 3");
-      edgeLayer.appendChild(path);
-    }
+    });
   }
 
   const nodeKeys = graph.nodes();
+  const nodePaths = new Map<string, {
+    fill: string; priority: number; segments: string[];
+  }>();
+  const nodeHitTargets: Array<{ id: string; x: number; y: number; radius: number }> = [];
+  let nodeBatchStartedAt = performance.now();
   for (let nodeIndex = 0; nodeIndex < nodeKeys.length; nodeIndex += 1) {
     if (yieldSvgBuild && nodeIndex > 0 && nodeIndex % NETWORK_SVG_BATCH_SIZE === 0) {
+      recordLocalDuration("wasiw:network:svg-node-batch", nodeBatchStartedAt);
       await runtime.yieldMainThread(signal);
       throwIfAborted(signal);
       if (svgRunId !== svgRenderRunId) return;
+      nodeBatchStartedAt = performance.now();
     }
     const node = nodeKeys[nodeIndex];
     const attributes = graph.getNodeAttributes(node);
@@ -5062,20 +5085,37 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
     const isConnected = selected !== null && connectedToSelected.has(node);
     const dimmed = selected !== null && !isSelected && !isConnected;
 
-    const circle = document.createElementNS(SVG_NS, "circle");
-    circle.setAttribute("cx", String(x));
-    circle.setAttribute("cy", String(y));
-    circle.setAttribute("r", String(isSelected ? baseSize * 1.5 : baseSize));
-    circle.setAttribute("fill", isSelected ? "var(--graph-selected-node)" : dimmed ? "var(--graph-dim-node)" : baseColor);
-    circle.setAttribute("data-node-id", node);
-    circle.setAttribute("aria-hidden", "true");
-    circle.addEventListener("click", () => {
-      selectedNodeId = node;
-      networkSearchMessage.textContent = `Focused: ${String(nodeAttrs.label ?? node)} (${node})`;
-      renderInspectPanel(node);
-      renderSvgGraph(graph);
-    });
-    nodeLayer.appendChild(circle);
+    const radius = isSelected ? baseSize * 1.5 : baseSize;
+    const fill = isSelected ? "var(--graph-selected-node)" : dimmed ? "var(--graph-dim-node)" : baseColor;
+    if (batchNodes) {
+      nodeHitTargets.push({ id: node, x, y, radius });
+      const priority = isSelected ? 2 : isConnected ? 1 : 0;
+      const key = JSON.stringify([fill, radius, priority]);
+      let group = nodePaths.get(key);
+      if (!group) {
+        group = { fill, priority, segments: [] };
+        nodePaths.set(key, group);
+      }
+      const circleDiameter = roundedPathCoordinate(radius * 2);
+      group.segments.push(`M${roundedPathCoordinate(x - radius)} ${roundedPathCoordinate(y)}` +
+        `a${roundedPathCoordinate(radius)} ${roundedPathCoordinate(radius)} 0 1 0 ${circleDiameter} 0` +
+        `a${roundedPathCoordinate(radius)} ${roundedPathCoordinate(radius)} 0 1 0 -${circleDiameter} 0`);
+    } else {
+      const circle = document.createElementNS(SVG_NS, "circle");
+      circle.setAttribute("cx", String(x));
+      circle.setAttribute("cy", String(y));
+      circle.setAttribute("r", String(radius));
+      circle.setAttribute("fill", fill);
+      circle.setAttribute("data-node-id", node);
+      circle.setAttribute("aria-hidden", "true");
+      circle.addEventListener("click", () => {
+        selectedNodeId = node;
+        networkSearchMessage.textContent = `Focused: ${String(nodeAttrs.label ?? node)} (${node})`;
+        renderInspectPanel(node);
+        renderSvgGraph(graph);
+      });
+      nodeLayer.appendChild(circle);
+    }
 
     if (isSelected || (neighborhoodFocusId ? nodeIndex < 13 : graph.order <= 180)) {
       const label = document.createElementNS(SVG_NS, "text");
@@ -5087,6 +5127,20 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
       label.textContent = String(nodeAttrs.label ?? node);
       labelLayer.appendChild(label);
     }
+  }
+  recordLocalDuration("wasiw:network:svg-node-batch", nodeBatchStartedAt);
+  if (batchNodes) {
+    measureLocal("wasiw:network:svg-node-paths", () => {
+      nodeLayer.setAttribute("data-render-mode", "batched-paths");
+      for (const group of [...nodePaths.values()].sort((left, right) => left.priority - right.priority)) {
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("d", group.segments.join(""));
+        path.setAttribute("fill", group.fill);
+        path.setAttribute("data-node-count", String(group.segments.length));
+        path.setAttribute("aria-hidden", "true");
+        nodeLayer.appendChild(path);
+      }
+    });
   }
 
   let drag: { pointerId: number; clientX: number; clientY: number;
@@ -5124,6 +5178,39 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
       suppressClearClick = false;
       return;
     }
+    if (batchNodes) {
+      const matrix = svg.getScreenCTM();
+      if (matrix) {
+        const point = svg.createSVGPoint();
+        point.x = event.clientX;
+        point.y = event.clientY;
+        const local = point.matrixTransform(matrix.inverse());
+        let nearest: { id: string; distanceSquared: number } | null = null;
+        for (const candidate of nodeHitTargets) {
+          const dx = local.x - candidate.x;
+          const dy = local.y - candidate.y;
+          const distanceSquared = dx * dx + dy * dy;
+          const hitRadius = Math.max(14, candidate.radius + 8);
+          if (distanceSquared <= hitRadius * hitRadius &&
+              (!nearest || distanceSquared < nearest.distanceSquared)) {
+            nearest = { id: candidate.id, distanceSquared };
+          }
+        }
+        if (nearest) {
+          selectedNodeId = nearest.id;
+          const attrs = graph.getNodeAttributes(nearest.id) as Record<string, unknown>;
+          networkSearchMessage.textContent = `Focused: ${String(attrs.label ?? nearest.id)} (${nearest.id})`;
+          renderInspectPanel(nearest.id);
+          renderSvgGraph(graph);
+          return;
+        }
+      }
+      selectedNodeId = null;
+      networkSearchMessage.textContent = "";
+      renderInspectPanel(null);
+      renderSvgGraph(graph);
+      return;
+    }
     if (event.target === svg || event.target === edgeLayer) {
       selectedNodeId = null;
       networkSearchMessage.textContent = "";
@@ -5132,14 +5219,16 @@ async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void>
     }
   });
 
-  svg.append(edgeLayer, nodeLayer, labelLayer);
   throwIfAborted(signal);
   if (svgRunId !== svgRenderRunId) return;
-  graphContainer.replaceChildren(svg);
-  if (selectedNodeId === null && !neighborhoodFocusId && overviewGraphCache?.graph === graph) {
-    overviewGraphCache.svg = svg;
-  }
-  syncVisibleNodeSelection();
+  measureLocal("wasiw:network:svg-dom-commit", () => {
+    svg.append(edgeLayer, nodeLayer, labelLayer);
+    graphContainer.replaceChildren(svg);
+    if (selectedNodeId === null && !neighborhoodFocusId && overviewGraphCache?.graph === graph) {
+      overviewGraphCache.svg = svg;
+    }
+    syncVisibleNodeSelection();
+  });
 }
 
 function scaleGraphCoordinate(

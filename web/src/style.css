@@ -2131,7 +2131,8 @@ button:hover,
 }
 
 .graph-svg .graph-edge-layer line,
-.graph-svg .graph-edge-layer path {
+.graph-svg .graph-edge-layer path,
+.graph-svg .graph-node-layer path {
   pointer-events: none;
 }
 
