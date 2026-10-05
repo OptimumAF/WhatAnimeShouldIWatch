@@ -11,6 +11,18 @@ export type LocalPerformanceMetric =
   | "wasiw:index:graph"
   | "wasiw:index:model"
   | "wasiw:recommendation:update"
+  | "wasiw:recommendation:graph-score"
+  | "wasiw:recommendation:model-score"
+  | "wasiw:recommendation:eligibility"
+  | "wasiw:recommendation:filter-ui"
+  | "wasiw:recommendation:franchise"
+  | "wasiw:recommendation:cards"
+  | "wasiw:recommendation:dom"
+  | "wasiw:network:select"
+  | "wasiw:network:construct"
+  | "wasiw:network:layout"
+  | "wasiw:network:scope"
+  | "wasiw:network:svg"
   | "wasiw:network:render";
 
 const enabled = typeof window !== "undefined" &&

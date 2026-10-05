@@ -15,13 +15,10 @@ function normalizedSeriesTitle(title: string): string {
   return normalizeTitle(title).replace(/\s*[:–—-]\s*/g, " ").trim();
 }
 
-function hasSerialSuffix(title: string): boolean {
-  return /\s+(?:season|part)\s+[1-9]\d*$/i.test(normalizedSeriesTitle(title));
-}
-
-function titleFamilyKey(title: string): string {
+function seriesTitleInfo(title: string): { key: string; serial: boolean } {
   const normalized = normalizedSeriesTitle(title);
-  return normalized.replace(/\s+(?:season|part)\s+[1-9]\d*$/i, "").trim();
+  const serial = /\s+(?:season|part)\s+[1-9]\d*$/i.test(normalized);
+  return { key: normalized.replace(/\s+(?:season|part)\s+[1-9]\d*$/i, "").trim(), serial };
 }
 
 /** Final-list selector. It never adds a candidate or changes a source score/rank. */
@@ -73,10 +70,13 @@ export function selectFranchiseDiverseRecommendations(
   const firstByTitleFamily = new Map<string, number>();
   const bareByTitleFamily = new Map<string, number>();
   const titleFamilyCounts = new Map<string, number>();
+  const titleInfos: { key: string; serial: boolean }[] = [];
   for (const item of eligible) {
-    const key = titleFamilyKey(item.anime.label);
+    const info = seriesTitleInfo(item.anime.label);
+    titleInfos.push(info);
+    const { key } = info;
     titleFamilyCounts.set(key, (titleFamilyCounts.get(key) ?? 0) + 1);
-    if (!hasSerialSuffix(item.anime.label) && !bareByTitleFamily.has(key)) {
+    if (!info.serial && !bareByTitleFamily.has(key)) {
       bareByTitleFamily.set(key, item.anime.animeId);
     }
     const first = firstByTitleFamily.get(key);
@@ -90,7 +90,9 @@ export function selectFranchiseDiverseRecommendations(
   const notesByAnimeId = new Map<number, string>();
   const selectedGroups = new Set<number>();
   const recommendations: RecommendationResult[] = [];
-  for (const item of eligible) {
+  for (let itemIndex = 0; itemIndex < eligible.length; itemIndex += 1) {
+    const item = eligible[itemIndex];
+    const titleInfo = titleInfos[itemIndex];
     const id = item.anime.animeId;
     const metadata = metadataByAnimeId.get(id);
     if (metadata?.relations !== undefined && metadata.relations !== null) relationshipPayloadCount += 1;
@@ -103,14 +105,13 @@ export function selectFranchiseDiverseRecommendations(
           `${title} (${seenAnimeIds.has(prequelId) ? "in watched history" : "not in watched history"})`).join(", ") +
         ". Other prerequisites may be unlisted."
       : "Prerequisites unverified; relationship data may be incomplete.";
-    const titleCue = titleFamilyCounts.get(titleFamilyKey(item.anime.label)) ?? 0;
+    const titleCue = titleFamilyCounts.get(titleInfo.key) ?? 0;
     notesByAnimeId.set(id, knownNote + (titleCue > 1 ? " Possible same-series title match." : ""));
     if (!allowRelatedTitles && unseen.length > 0) {
       knownPrequelHidden += 1;
       continue;
     }
-    if (!allowRelatedTitles && hasSerialSuffix(item.anime.label) &&
-        bareByTitleFamily.has(titleFamilyKey(item.anime.label))) {
+    if (!allowRelatedTitles && titleInfo.serial && bareByTitleFamily.has(titleInfo.key)) {
       repeatedFranchiseHidden += 1;
       continue;
     }

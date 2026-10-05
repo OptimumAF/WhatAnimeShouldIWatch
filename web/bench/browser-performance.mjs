@@ -63,6 +63,23 @@ function measureEntries(measures, name) {
   return measures.filter((item) => item.name === name).map((item) => item.duration);
 }
 
+function phaseSummaries(samples, names, measuresFor, longTasksFor) {
+  return Object.fromEntries(names.map((name) => {
+    const measured = samples.flatMap((sample) =>
+      measuresFor(sample).filter((item) => item.name === name));
+    const overlaps = samples.reduce((sum, sample) => {
+      const phaseMeasures = measuresFor(sample).filter((item) => item.name === name);
+      return sum + longTasksFor(sample).filter((task) => phaseMeasures.some((item) =>
+        task.startTime < item.startTime + item.duration &&
+        task.startTime + task.duration > item.startTime)).length;
+    }, 0);
+    return [name.slice("wasiw:".length), {
+      durationMs: metricSummary(measured.map((item) => item.duration)),
+      longTaskOverlaps: overlaps,
+    }];
+  }));
+}
+
 async function pageMetrics(page, session) {
   const browserMetrics = await page.evaluate(() => ({
     measures: performance.getEntriesByType("measure")
@@ -327,8 +344,18 @@ function summarizeProfile(samples) {
       "wasiw:schema:explorer")[0])),
     rankUpdateMs: Object.fromEntries(["graph", "model", "hybrid"].map((mode) =>
       [mode, metricSummary(flatten((sample) => sample.rankUpdates[mode]))])),
+    recommendationPhases: phaseSummaries(samples, [
+      "wasiw:recommendation:graph-score", "wasiw:recommendation:model-score",
+      "wasiw:recommendation:eligibility", "wasiw:recommendation:filter-ui",
+      "wasiw:recommendation:franchise", "wasiw:recommendation:cards",
+      "wasiw:recommendation:dom",
+    ], (sample) => sample.rankingMeasures, (sample) => sample.rankingLongTasks),
     graphNavigationMs: metricSummary(values((sample) => sample.graph.firstNavigationMs)),
     graphRenderMs: metricSummary(flatten((sample) => sample.graph.renderMs)),
+    graphPhases: phaseSummaries(samples, [
+      "wasiw:network:select", "wasiw:network:construct", "wasiw:network:layout",
+      "wasiw:network:scope", "wasiw:network:svg",
+    ], (sample) => sample.graph.measures, (sample) => sample.graph.longTasks),
     blockedExternalRequests: samples.reduce((sum, sample) =>
       sum + sample.blockedExternalRequests, 0),
   };

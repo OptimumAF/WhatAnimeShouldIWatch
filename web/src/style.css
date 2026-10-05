@@ -2130,7 +2130,8 @@ button:hover,
   display: block;
 }
 
-.graph-svg line {
+.graph-svg .graph-edge-layer line,
+.graph-svg .graph-edge-layer path {
   pointer-events: none;
 }
 
