@@ -108,6 +108,7 @@ type CommandMatchReason =
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
 const BATCHED_SVG_EDGE_THRESHOLD = 500;
+const LARGE_RECOMMENDATION_YIELD_CANDIDATES = 500;
 const NEIGHBORHOOD_MAX_NODES = 25;
 const NEIGHBORHOOD_MAX_EDGES = 24;
 const GRAPH_VIEW_WIDTH = 1200;
@@ -3247,6 +3248,16 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
   const controller = new AbortController();
   recommendationController = controller;
   const runId = ++recommendationRunId;
+  async function yieldForLatestRecommendation(): Promise<boolean> {
+    try {
+      await measureLocalAsync("wasiw:recommendation:yield", () =>
+        runtime.sleep(0, controller.signal));
+    } catch (error) {
+      if (isAbortError(error)) return false;
+      throw error;
+    }
+    return runId === recommendationRunId && !controller.signal.aborted;
+  }
   const filtersActive = hasActiveRecommendationFilters(recommendationFilters);
   const selectedPreferences = selectedAnimeNodeIds
     .map((nodeId) => selectedAnimePreferences.get(nodeId))
@@ -3388,6 +3399,10 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
   }
   showActiveEngine();
 
+  const largeRanking = Math.max(graphRecommendations.length, modelRecommendations.length) >
+    LARGE_RECOMMENDATION_YIELD_CANDIDATES;
+  if (largeRanking && !await yieldForLatestRecommendation()) return;
+
   let initialEligibility = rankCurrentCandidates();
   if (recommendationMode !== "graph" && activeRankingMode !== "graph" &&
       initialEligibility.structurallyEligible.length === 0) {
@@ -3483,6 +3498,9 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
       structuralCandidates = rankCurrentCandidates().structurallyEligible;
       finalEligibility = rankCurrentCandidates();
     }
+  }
+  if (largeRanking) {
+    if (!await yieldForLatestRecommendation()) return;
   }
   let filterCoverageCandidates = finalEligibility.structurallyEligible;
   if (filtersActive && usingFallback && currentFallbackDisplay() === "related" && !demoMode) {

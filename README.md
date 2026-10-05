@@ -60,6 +60,8 @@ To measure the built browser app without provider traffic, run `npm run bench:br
 
 The scale report also separates recommendation scoring, eligibility, franchise selection, card/DOM work, and network selection, construction, layout, scope, and SVG drawing. Its phase durations help locate work; one long task can overlap several nested phases. Large network overviews group signed edge segments into SVG paths while focused views retain individual lines. Main-thread stalls remain, so M7.5 is still open.
 
+Large candidate rankings yield to the browser between scoring, eligibility, and result rendering. A newer preference or setting change aborts a queued continuation. The synthetic scale probe measures this scheduling path; network construction and drawing remain separate M7.5 work.
+
 The user-vector diagnostic calls the same new-user scorer used by the browser and compares it with an evaluation-only ridge fold-in reference on invented held-out ratings. It reports Hit@3, reciprocal rank, and local latency; it is not a production ranking-quality result. [Decision 0010](docs/decisions/0010-user-vector-evaluation.md) records the fixed protocol, results, and why the simpler browser average remains selected.
 
 The [split-first new-user fixture](docs/decisions/0018-new-user-split-first-evaluation.md) fits item factors from an invented training-only snapshot and scores four separate invented users with 1, 3, 5, and 10 supplied ratings through the browser preference mapper, model scorer, and eligibility policy. `npm run eval:new-user:fixture` checks its pinned split and prints validation-only model ranks, displayed fallback engines, and a separate warm-user validation report. It does not inspect the fit-user test partition or claim production ranking quality.
