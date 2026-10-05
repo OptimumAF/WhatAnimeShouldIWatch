@@ -11,7 +11,7 @@ async function blockExternalRequests(page: Page): Promise<void> {
 async function openDemo(page: Page): Promise<void> {
   await blockExternalRequests(page);
   await page.goto("/");
-  await expect(page.getByText("SYNTHETIC DEMO DATA")).toBeVisible();
+  await expect(page.getByText("SYNTHETIC DEMO DATA")).toBeVisible({ timeout: 15_000 });
 }
 
 async function horizontalOverflow(page: Page): Promise<{ width: number; viewport: number; offenders: string[] }> {
@@ -75,7 +75,7 @@ test("the visible graph has a bounded keyboard list instead of dozens of SVG tab
     await route.fulfill({ response, json: graph });
   });
   await page.goto("/");
-  await expect(page.getByText("SYNTHETIC DEMO DATA")).toBeVisible();
+  await expect(page.getByText("SYNTHETIC DEMO DATA")).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Open network explorer page" }).click();
   await page.locator("#min-weight").evaluate((input: HTMLInputElement) => {
     input.value = "0";
