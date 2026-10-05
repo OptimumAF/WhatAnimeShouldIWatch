@@ -25,6 +25,7 @@ export class ArtifactLoadError extends Error {
 }
 
 class UnsupportedGzipError extends ArtifactLoadError {}
+class ArtifactBodyReadError extends ArtifactLoadError {}
 
 export interface LegacyJsonLimits {
   compressedBytes: number;
@@ -361,8 +362,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       const stream = new Response(bytes.buffer as ArrayBuffer).body!.pipeThrough(decompressor);
       plain = await readBoundedResponse(new Response(stream), plainLimit, source);
     } catch (error) {
-      if (error instanceof ArtifactLoadError &&
-          !error.message.endsWith("response body could not be read.")) throw error;
+      if (error instanceof ArtifactLoadError && !(error instanceof ArtifactBodyReadError)) throw error;
       throw new ArtifactLoadError(`${source}: invalid gzip stream.`);
     }
     return parseBoundedJson(plain, source);
@@ -443,7 +443,7 @@ async function readBoundedResponse(response: Response, maximum: number, label: s
     }
   } catch (error) {
     if (error instanceof ArtifactLoadError) throw error;
-    throw new ArtifactLoadError(`${label}: response body could not be read.`);
+    throw new ArtifactBodyReadError(`${label}: response body could not be read.`);
   } finally {
     if (!completed) void reader.cancel().catch(() => undefined);
     reader.releaseLock();
