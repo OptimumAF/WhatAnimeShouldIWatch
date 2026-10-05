@@ -234,7 +234,7 @@ app.innerHTML = `
             </button>
             <button id="quickstart-browse" class="intro-path" type="button" aria-controls="rec-results">
               <strong>Browse without a list</strong>
-              <span>See sampled popularity when available, without adding history.</span>
+              <span>Explore community scores, or sampled counts when available, without adding history.</span>
             </button>
           </div>
           <div class="intro-actions">
@@ -1129,7 +1129,7 @@ quickstartImportBtn.addEventListener("click", () => {
 quickstartBrowseBtn.addEventListener("click", () => {
   favoriteQuickstartActive = false;
   addPreferenceSelect.value = "seen";
-  discoveryViewSelect.value = "popularity";
+  discoveryViewSelect.value = samplePopularityAvailable ? "popularity" : "quality";
   discoveryViewSelect.dispatchEvent(new Event("change", { bubbles: true }));
   recResultsEl.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
 });

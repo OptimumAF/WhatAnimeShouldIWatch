@@ -8,7 +8,7 @@ test("seen is exclusion only; explicit likes and dislikes change the active engi
   await page.locator("#add-anime-form button").click();
   await expect(page.locator("#selected-anime select[data-preference-node-id='anime:101']"))
     .toHaveValue("seen");
-  await expect(page.locator("#rec-engine-status")).toContainText("catalog popularity proxy");
+  await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
   await expect(page.locator("#rec-results .rec-item")).toHaveCount(7);
   await expect(page.locator("#rec-results .rec-title").filter({ hasText: "Copper Comet" })).toHaveCount(0);
   await page.locator("#selected-anime select[data-preference-node-id='anime:101']")
@@ -17,7 +17,7 @@ test("seen is exclusion only; explicit likes and dislikes change the active engi
   await expect(page.locator("#selected-anime .chip-confidence")).toContainText("100% confidence");
   await page.locator("#selected-anime select[data-preference-node-id='anime:101']")
     .selectOption("disliked");
-  await expect(page.locator("#rec-engine-status")).toContainText("catalog popularity proxy");
+  await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
   await expect(page.locator("#rec-results .rec-title").filter({ hasText: "Copper Comet" })).toHaveCount(0);
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-results .rec-item").first()).toBeVisible();

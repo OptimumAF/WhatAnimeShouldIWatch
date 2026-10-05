@@ -242,6 +242,15 @@ test("aggregate-only bundle ranks pairs and labels sampled popularity unavailabl
   const { requests, graphBytes, release } = await routeAggregateBundle(page);
   expect(graphBytes.toString("utf8")).not.toContain("fixture-overlap-a");
   await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
+  expect(requests).toEqual([
+    "/data/active.json",
+    `/data/bundles/${release.bundleId}/release-manifest.json`,
+    `/data/bundles/${release.bundleId}/graph.compact.json`,
+  ]);
+  const initialGraph = JSON.parse(graphBytes.toString("utf8"));
+  expect(initialGraph).toMatchObject({ format: "graph-compact-v3", role: "recommendation",
+    userIds: [], ua: [], userCount: 0 });
   await page.locator("#discovery-view").selectOption("popularity");
   await expect(page.locator("#rec-engine-status")).toContainText(
     "Popularity proxy unavailable in this aggregate-only graph");
@@ -259,6 +268,9 @@ test("aggregate-only graph can serve a pinned item-only model without user histo
   const { requests, release } = await routeAggregateBundle(page, { withModel: true });
   expect(release.model?.coverage.mappedAnimeCount).toBe(8);
   await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-engine-status")).toBeVisible();
+  expect(requests.some((name) => name.includes("model-mf-web") ||
+    name.includes("graph-explorer"))).toBe(false);
   await page.locator("#advanced-recommendation-settings summary").click();
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
@@ -266,5 +278,36 @@ test("aggregate-only graph can serve a pinned item-only model without user histo
   await page.locator("#rec-method").selectOption("model");
   await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations (2 factors)");
   expect(requests).toContain(`/data/bundles/${release.bundleId}/model-mf-web.compact.json`);
+  expect(requests.some((name) => name.includes("graph-explorer"))).toBe(false);
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#network-render-status")).toContainText("nodes");
+  expect(requests).toContain(`/data/bundles/${release.bundleId}/graph-explorer.compact.json`);
   expect(requests.some((name) => name.includes("anonymized-ratings"))).toBe(false);
+});
+
+test("synthetic demo requests aggregate neighborhoods first and defers optional assets", async ({ page }) => {
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.startsWith("/demo-data/")) requests.push(pathname);
+  });
+  await page.goto("/");
+  await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
+  expect(requests).toEqual([
+    "/demo-data/catalog.json", "/demo-data/graph.aggregate.compact.json",
+  ]);
+  const graph = JSON.parse(fixture("graph.aggregate.compact.json").toString("utf8"));
+  expect(graph).toMatchObject({ format: "graph-compact-v3", role: "recommendation",
+    userIds: [], ua: [], userCount: 0 });
+  await page.locator("#advanced-recommendation-settings summary").click();
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await page.locator("#rec-method").selectOption("model");
+  await expect(page.locator("#rec-engine-status")).toContainText("Using ML model recommendations");
+  expect(requests).toContain("/demo-data/model-mf-web.compact.json");
+  expect(requests).not.toContain("/demo-data/graph-explorer.aggregate.compact.json");
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#network-render-status")).toContainText("nodes");
+  expect(requests).toContain("/demo-data/graph-explorer.aggregate.compact.json");
 });

@@ -547,6 +547,17 @@ export function parseCompactGraph(
   return value as CompactGraphData;
 }
 
+/** Demo assets must use the same aggregate-only graph contract as new public bundles. */
+export function parseAggregateDemoGraph(
+  value: unknown, label: string, role: "recommendation" | "visualization",
+): CompactGraphDataV3 {
+  const graph = parseCompactGraph(value, label, role);
+  if (graph.format !== "graph-compact-v3") {
+    invalid(label, "format", "must be graph-compact-v3 for the synthetic demo");
+  }
+  return graph as CompactGraphDataV3;
+}
+
 export function parseLegacyGraph(value: unknown, label: string): GraphData {
   const graph = record(value, label, "root");
   const v2 = graph.format === "graph-legacy-v2";

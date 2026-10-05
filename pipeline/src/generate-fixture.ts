@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { datasetIdentity, recommendationGraphId, recommendationMetadata } from "./core/graph-contract.js";
 import { buildExplorerGraph } from "./core/explorer-graph.js";
+import { projectAggregateGraph } from "./core/aggregate-projection.js";
 import { aggregateAnimePairs } from "./core/pair-aggregation.js";
 import { getRepoRoot } from "./paths.js";
 import { buildReleaseManifest, releaseSha256 } from "./release-manifest.js";
@@ -137,6 +138,10 @@ const graph: CompactGraphDataV2 = {
   graphId: recommendationGraphId(graphWithoutId),
 };
 const explorerGraph = buildExplorerGraph(graph, 10, 10);
+// Keep the invented v2 source for compatibility tests; the served demo uses only
+// the aggregate-only projection and its independently identified explorer sample.
+const aggregateGraph = projectAggregateGraph(graph);
+const aggregateExplorerGraph = buildExplorerGraph(aggregateGraph, 10, 0);
 const catalog = {
   format: "demo-catalog-v1",
   generatedAt,
@@ -168,6 +173,8 @@ const identityCatalog = {
 const outputs = new Map<string, unknown>([
   ["graph.compact.json", graph],
   ["graph-explorer.compact.json", explorerGraph],
+  ["graph.aggregate.compact.json", aggregateGraph],
+  ["graph-explorer.aggregate.compact.json", aggregateExplorerGraph],
   ["catalog.json", catalog],
   ["catalog.identity.json", identityCatalog],
   ["model-mf-web.compact.json", model],

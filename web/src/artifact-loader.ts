@@ -1,5 +1,6 @@
 /** Artifact transport and format selection. Validation remains in artifacts.ts. */
 import {
+  parseAggregateDemoGraph,
   parseCompactGraph,
   parseCompactModel,
   parseActiveReleaseBundle,
@@ -88,10 +89,10 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
   async function fetchGraph(): Promise<LoadedGraphData> {
     if (demoMode) {
       const graph = await fetchPlainJson(
-        "./demo-data/graph.compact.json", "synthetic demo graph", "wasiw:json:graph",
+        "./demo-data/graph.aggregate.compact.json", "synthetic demo graph", "wasiw:json:graph",
       );
       return measureLocal("wasiw:schema:graph", () =>
-        parseCompactGraph(graph, "synthetic demo graph", "recommendation"));
+        parseAggregateDemoGraph(graph, "synthetic demo graph", "recommendation"));
     }
     const bundle = await getActiveBundle();
     if (bundle) {
@@ -123,10 +124,10 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
 
   async function fetchExplorerGraph(graphData: LoadedGraphData): Promise<LoadedGraphData> {
     if (demoMode) {
-      const value = await fetchPlainJson("./demo-data/graph-explorer.compact.json",
+      const value = await fetchPlainJson("./demo-data/graph-explorer.aggregate.compact.json",
         "synthetic demo explorer graph", "wasiw:json:explorer");
       const explorer = measureLocal("wasiw:schema:explorer", () =>
-        parseCompactGraph(value, "synthetic demo explorer graph", "visualization"));
+        parseAggregateDemoGraph(value, "synthetic demo explorer graph", "visualization"));
       assertExplorerMatches(graphData, explorer);
       return explorer;
     }

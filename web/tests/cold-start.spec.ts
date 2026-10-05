@@ -36,15 +36,18 @@ async function mockNormalModeCatalog(page: Page): Promise<() => number> {
   return () => metadataRequests;
 }
 
-test("no-preference demo offers sampled popularity, community quality, and genre exploration", async ({ page }) => {
+test("aggregate-only demo offers community quality and genre exploration without sampled counts", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#watched-count")).toHaveText("0");
-  await expect(page.locator("#rec-engine-status")).toContainText("catalog popularity proxy");
-  await expect(page.locator("#rec-results .rec-title").first()).toHaveText("Copper Comet");
-  await expect(page.locator("#rec-results .rec-score").first()).toHaveText("4 sampled ratings");
-  await expect(page.locator("#rec-summary")).toContainText("loaded recommendation graph");
+  await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
+  await expect(page.locator("#rec-results .rec-title").first()).toHaveText("星の航路");
+  await expect(page.locator("#rec-results .rec-score").first()).toHaveText("8.30 / 10");
+  await expect(page.locator("#rec-summary")).toContainText("community-score exploration");
   const storageBefore = await page.evaluate(() => localStorage.getItem("wasiw.demo.recommendationState.v5"));
 
+  await page.locator("#discovery-view").selectOption("popularity");
+  await expect(page.locator("#rec-engine-status")).toContainText("Popularity proxy unavailable");
+  await expect(page.locator("#rec-results .rec-item")).toHaveCount(0);
   await page.locator("#discovery-view").selectOption("quality");
   await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
   await expect(page.locator("#rec-results .rec-title").first()).toHaveText("星の航路");

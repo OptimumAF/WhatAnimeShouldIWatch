@@ -43,8 +43,8 @@ test("first-use browsing does not add history and advanced ranking controls rema
   await page.goto("/");
   const stateBefore = await page.evaluate(() => localStorage.getItem("wasiw.demo.recommendationState.v5"));
   await page.getByRole("button", { name: /Browse without a list/ }).click();
-  await expect(page.locator("#discovery-view")).toHaveValue("popularity");
-  await expect(page.locator("#rec-engine-status")).toContainText("catalog popularity proxy");
+  await expect(page.locator("#discovery-view")).toHaveValue("quality");
+  await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
   await expect(page.locator("#rec-results .rec-item").first()).toBeVisible();
   await expect(page.locator("#watched-count")).toHaveText("0");
   expect(await page.evaluate(() => localStorage.getItem("wasiw.demo.recommendationState.v5")))

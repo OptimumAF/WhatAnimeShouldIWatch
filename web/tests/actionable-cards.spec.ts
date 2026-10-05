@@ -3,10 +3,10 @@ import { expect, test } from "@playwright/test";
 test("result cards separate ranking evidence from invented community scores", async ({ page }) => {
   await page.goto("/");
   const first = page.locator("#rec-results .rec-item").first();
-  await expect(first.locator(".rec-score-label")).toHaveText("Sample count");
-  await expect(first.locator(".rec-why")).toContainText("not global popularity or personal fit");
-  await expect(first.locator(".rec-meta-details")).toContainText("2021 | TV");
-  await expect(first.locator(".rec-community-score")).toHaveText("Demo community score: 8.10/10");
+  await expect(first.locator(".rec-score-label")).toHaveText("Community score");
+  await expect(first.locator(".rec-why")).toContainText("not a personal prediction");
+  await expect(first.locator(".rec-meta-details")).toContainText("2023");
+  await expect(first.locator(".rec-community-score")).toHaveCount(0);
   await expect(first.locator(".rec-actions button")).toHaveText(["Plan to Watch", "Seen", "Not interested"]);
 
   await page.locator("#anime-input").fill("Copper Comet");
@@ -37,7 +37,7 @@ test("Plan to Watch, Seen, and Not interested save three distinct local states",
     .locator("button[data-card-action='seen']").click();
   await expect(page.locator("#rec-action-status")).toContainText("without treating it as Liked");
   await expect(page.locator("#rec-results .rec-title").filter({ hasText: "Moonlit Workshop" })).toHaveCount(0);
-  await expect(page.locator("#rec-engine-status")).toContainText("catalog popularity proxy");
+  await expect(page.locator("#rec-engine-status")).toContainText("community-score exploration");
 
   await page.locator("#rec-results .rec-item").filter({ hasText: "Ashen Harbor" })
     .locator("button[data-card-action='hide']").click();
@@ -112,7 +112,7 @@ test("result actions stay inside a narrow viewport", async ({ page }) => {
 
 test("untrusted result titles remain text in action labels and status", async ({ page }) => {
   const title = 'Moonlit "<img src=x onerror="window.__cardUnsafe=1">';
-  for (const path of ["graph.compact.json", "graph-explorer.compact.json"]) {
+  for (const path of ["graph.aggregate.compact.json", "graph-explorer.aggregate.compact.json"]) {
     await page.route(`**/demo-data/${path}`, async (route) => {
       const response = await route.fetch();
       const graph = await response.json();

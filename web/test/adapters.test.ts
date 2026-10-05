@@ -416,8 +416,8 @@ test("provider error text and username are not reflected in import errors", asyn
 
 test("artifact loader validates synthetic files through injected local transport", async () => {
   const data = new Map<string, unknown>([
-    ["./demo-data/graph.compact.json", fixture("graph.compact.json")],
-    ["./demo-data/graph-explorer.compact.json", fixture("graph-explorer.compact.json")],
+    ["./demo-data/graph.aggregate.compact.json", fixture("graph.aggregate.compact.json")],
+    ["./demo-data/graph-explorer.aggregate.compact.json", fixture("graph-explorer.aggregate.compact.json")],
     ["./demo-data/catalog.json", fixture("catalog.json")],
     ["./demo-data/model-mf-web.compact.json", fixture("model-mf-web.compact.json")],
   ]);
@@ -428,16 +428,22 @@ test("artifact loader validates synthetic files through injected local transport
   const loader = createArtifactLoader(fake.runtime, true);
   const graph = await loader.fetchGraph();
   assert.equal(graph.animeCount, 8);
+  assert.equal(graph.format, "graph-compact-v3");
+  assert.deepEqual(graph.userIds, []);
+  assert.deepEqual(graph.ua, []);
   const explorer = await loader.fetchExplorerGraph(graph);
   assert.notEqual(explorer, graph);
+  assert.equal(explorer.format, "graph-compact-v3");
+  assert.deepEqual(explorer.userIds, []);
+  assert.deepEqual(explorer.ua, []);
   assert.equal(explorer.edgeCount < graph.edgeCount, true);
   assert.equal((await loader.fetchModelRecommendationIndex())?.factors, 2);
   assert.equal(loader.getLoadedModelFormat(), "model-mf-compact-v1");
   assert.equal(await loader.getActiveReleaseManifest(), null);
   assert.equal((await loader.fetchDemoCatalog()).length, 8);
   assert.deepEqual(fake.requests.map((request) => request.url), [
-    "./demo-data/graph.compact.json",
-    "./demo-data/graph-explorer.compact.json",
+    "./demo-data/graph.aggregate.compact.json",
+    "./demo-data/graph-explorer.aggregate.compact.json",
     "./demo-data/model-mf-web.compact.json",
     "./demo-data/catalog.json",
   ]);
