@@ -67,6 +67,7 @@ test("mocked seasonal provider text is literal and unsafe images are omitted", a
   });
 
   await page.goto("http://127.0.0.1:5174/");
+  await page.locator("#quickstart-seasonal").click();
   await expect(page.locator("#seasonal-list .seasonal-item")).toHaveCount(2);
   await expect(page.locator("#seasonal-list .seasonal-title").first()).toContainText(unsafeMarkup);
   await expect(page.locator("#seasonal-list .seasonal-meta").first()).toContainText(unsafeMarkup);

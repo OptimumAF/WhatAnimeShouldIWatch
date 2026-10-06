@@ -274,6 +274,8 @@ test("large invented node overview keeps every list entry and pointer selection 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#network-versions")).toContainText("(separate loaded asset)");
+  await expect(page.locator("#graph-shell")).toHaveAttribute("aria-busy", "false");
   await page.locator("#min-weight").evaluate((input: HTMLInputElement) => {
     input.value = "0";
     input.dispatchEvent(new Event("input", { bubbles: true }));

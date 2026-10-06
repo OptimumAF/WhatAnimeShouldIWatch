@@ -173,6 +173,42 @@ test("failed card details retry only on explicit action and then show ready meta
   expect(metadataRequests).toBe(2);
 });
 
+test("seasonal requests wait for an explicit action and do not change viewing history", async ({ page }) => {
+  let seasonalRequests = 0;
+  await openMockedApp(page, async (route, url) => {
+    if (url.pathname === "/v4/seasons/now") {
+      seasonalRequests += 1;
+      await jsonRoute(route, { data: [{ mal_id: 102, title: "Moonlit Workshop", year: 2026, score: 8 }] });
+    } else {
+      await jsonRoute(route, {}, 404);
+    }
+  });
+  await expect(page.locator("#seasonal-status")).toHaveAttribute("data-state", "idle");
+  expect(seasonalRequests).toBe(0);
+  const stateBefore = await page.evaluate(() => localStorage.getItem("wasiw.recommendationState.v5"));
+  await page.locator("#quickstart-browse").click();
+  await expect(page.locator("#rec-engine-status")).toContainText("catalog popularity proxy");
+  expect(seasonalRequests).toBe(0);
+  await page.locator("#quickstart-seasonal").click();
+  await expect(page.locator("#seasonal-status")).toHaveAttribute("data-state", "ready");
+  await expect(page.locator("#seasonal-list")).toContainText("Moonlit Workshop");
+  await expect(page.locator("#rec-message")).toContainText("Browsing does not change your watched list");
+  expect(seasonalRequests).toBe(1);
+  await page.locator("#quickstart-seasonal").click();
+  expect(seasonalRequests).toBe(1);
+  await page.locator("#nav-network").click();
+  await expect(page.locator("#view-network")).toBeVisible();
+  await page.locator("#commands-toggle").click();
+  await page.locator("#command-input").fill("Browse Seasonal Ideas");
+  await page.locator(".command-item[data-command-id='seasonal-starter']").click();
+  await expect(page.locator("#view-recommendations")).toBeVisible();
+  await expect(page.locator("#refresh-seasonal")).toBeFocused();
+  expect(seasonalRequests).toBe(1);
+  await expect(page.locator("#watched-count")).toHaveText("0");
+  expect(await page.evaluate(() => localStorage.getItem("wasiw.recommendationState.v5")))
+    .toBe(stateBefore);
+});
+
 test("seasonal status separates empty, unavailable, failed, and ready responses", async ({ page }) => {
   let seasonStatus = 200;
   let seasonItems: unknown[] = [];
@@ -183,6 +219,8 @@ test("seasonal status separates empty, unavailable, failed, and ready responses"
       await jsonRoute(route, {}, 404);
     }
   });
+  await expect(page.locator("#seasonal-status")).toHaveAttribute("data-state", "idle");
+  await page.locator("#quickstart-seasonal").click();
   await expect(page.locator("#seasonal-status")).toHaveAttribute("data-state", "empty");
   seasonStatus = 404;
   await page.locator("#refresh-seasonal").click();
