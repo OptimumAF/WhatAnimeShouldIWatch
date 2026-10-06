@@ -1,0 +1,2 @@
+# Release manifests bind the exact bytes of these generated JSON fixtures.
+desktop/fixtures/*.json text eol=lf

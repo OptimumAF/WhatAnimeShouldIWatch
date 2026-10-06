@@ -1,0 +1,38 @@
+{
+  "format": "anime-catalog-v1",
+  "datasetSha256": "513583994736775625fc17ae70880127ee10a9c5f6044e0de17bda6d0d293a25",
+  "anime": [
+    [
+      101,
+      "Copper Comet"
+    ],
+    [
+      102,
+      "Moonlit Workshop"
+    ],
+    [
+      103,
+      "Ashen Harbor"
+    ],
+    [
+      104,
+      "Glass Orchard"
+    ],
+    [
+      105,
+      "星の航路"
+    ],
+    [
+      106,
+      "Café Nebula"
+    ],
+    [
+      107,
+      "Paper Current"
+    ],
+    [
+      108,
+      "Quiet Satellite"
+    ]
+  ]
+}

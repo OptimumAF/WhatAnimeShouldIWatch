@@ -299,8 +299,8 @@ GitHub Actions workflow included:
 
 ## 5) Desktop graph companion track
 
-[Decision 0042](docs/decisions/0042-desktop-companion-scope.md) keeps desktop as an optional local graph companion; the web app owns recommendations. The current Rust binary still reads relative legacy ratings, rebuilds pairs with different semantics, and silently falls back to a sample. It is not a supported data or release path. See [desktop/README.md](desktop/README.md) for its exact limitations and synthetic-only compilation checks.
+[Decision 0042](docs/decisions/0042-desktop-companion-scope.md) keeps desktop as an optional local graph companion; the web app owns recommendations. The Rust app now starts with no data, offers an explicit invented demo or local v3 manifest picker, and displays precomputed signed pair evidence without reading raw ratings. See [desktop/README.md](desktop/README.md) for the synthetic fixture commands and the limits of local verification.
 
 ## 6) Desktop release hold
 
-The old tag-triggered EXE publisher has been removed. M9.2–M9.6 must establish explicit v3 data selection, compatible graph behavior, verification, packaging, and an outside-repository launch before a new desktop publication route is reviewed. A CI build artifact is an engineering check, not a desktop release.
+The old tag-triggered EXE publisher has been removed. M9.4–M9.6 still require responsive bounded loading, packaging verification, and an outside-repository launch before a new desktop publication route is reviewed. A CI build artifact is an engineering check, not a desktop release.

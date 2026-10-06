@@ -1,0 +1,151 @@
+{
+  "format": "graph-compact-v3",
+  "role": "recommendation",
+  "dataset": {
+    "sha256": "513583994736775625fc17ae70880127ee10a9c5f6044e0de17bda6d0d293a25",
+    "scope": "anonymized-ratings-content-v1",
+    "source": "synthetic-fixture"
+  },
+  "semantics": {
+    "pairWeight": "centered-pair-preference-mean-v1",
+    "support": "co-raters-after-selection-v1",
+    "recommendationUse": "positive-only-v1"
+  },
+  "config": {
+    "seed": 0,
+    "maxRatingsPerUser": 0,
+    "maxAnimeAnimeEdges": 0,
+    "maxPairVisits": 20000000,
+    "maxPairCandidates": 2500000,
+    "minPairSupport": 1,
+    "maxNeighborsPerAnime": 0,
+    "ratingSelectionPolicy": "all-ratings"
+  },
+  "truncation": {
+    "inputRatings": 18,
+    "selectedRatings": 18,
+    "ratingsSkipped": 0,
+    "potentialPairVisits": 22,
+    "pairVisits": 22,
+    "pairVisitsSkipped": 0,
+    "candidatePairs": 11,
+    "eligiblePairs": 11,
+    "selectedPairs": 11,
+    "excludedBySupport": 0,
+    "excludedByNeighborLimit": 0,
+    "excludedByOutputLimit": 0
+  },
+  "projection": {
+    "policy": "omit-user-anime-v1"
+  },
+  "generatedAt": "2026-09-24T00:00:00.000Z",
+  "userIds": [],
+  "anime": [
+    [
+      101,
+      "Copper Comet"
+    ],
+    [
+      102,
+      "Moonlit Workshop"
+    ],
+    [
+      103,
+      "Ashen Harbor"
+    ],
+    [
+      104,
+      "Glass Orchard"
+    ],
+    [
+      105,
+      "星の航路"
+    ],
+    [
+      106,
+      "Café Nebula"
+    ],
+    [
+      107,
+      "Paper Current"
+    ],
+    [
+      108,
+      "Quiet Satellite"
+    ]
+  ],
+  "ua": [],
+  "aa": [
+    [
+      0,
+      1,
+      0.5833,
+      3
+    ],
+    [
+      0,
+      2,
+      -0.0833,
+      3
+    ],
+    [
+      0,
+      3,
+      0,
+      1
+    ],
+    [
+      0,
+      4,
+      0.4167,
+      3
+    ],
+    [
+      1,
+      2,
+      -0.4167,
+      3
+    ],
+    [
+      1,
+      3,
+      -0.5,
+      2
+    ],
+    [
+      1,
+      4,
+      0.625,
+      2
+    ],
+    [
+      1,
+      5,
+      0,
+      1
+    ],
+    [
+      2,
+      3,
+      -3,
+      1
+    ],
+    [
+      2,
+      4,
+      0.625,
+      2
+    ],
+    [
+      3,
+      5,
+      0,
+      1
+    ]
+  ],
+  "userCount": 0,
+  "animeCount": 8,
+  "nodeCount": 8,
+  "edgeCount": 11,
+  "graphId": "24354870c39f6c3d9cb0b4b1ffb0fcb6683095aedf774b5059d19b5f3bb6a421"
+}
