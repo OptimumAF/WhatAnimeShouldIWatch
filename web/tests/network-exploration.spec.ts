@@ -216,11 +216,13 @@ test("large invented overview cancels stale builds, draws every signed pair, and
   await expect(edges.locator("path[data-edge-sign='neutral']"))
     .toHaveAttribute("stroke-dasharray", "3 3");
   await expect(page.locator("#graph circle")).toHaveCount(80);
+  await expect(page.locator("#network-render-status")).toContainText("80 nodes, 1,200 edges");
+  await expect(page.locator("#graph-shell")).toHaveAttribute("aria-busy", "false");
   const firstOverview = await page.locator("#graph svg.graph-svg").elementHandle();
   await page.locator("#toggle-anime-edges").uncheck();
-  await expect(page.locator("#network-mode-status")).toContainText("0 edges visible");
+  await expect(page.locator("#network-render-status")).toContainText("0 nodes, 0 edges");
   await page.locator("#toggle-anime-edges").check();
-  await expect(page.locator("#network-mode-status")).toContainText("1200 edges visible");
+  await expect(page.locator("#network-render-status")).toContainText("80 nodes, 1,200 edges");
   expect(await firstOverview!.evaluate((element) =>
     element === document.querySelector("#graph svg.graph-svg"))).toBe(true);
   await page.locator("#graph circle[data-node-id='anime:101']").click();
@@ -283,6 +285,8 @@ test("large invented node overview keeps every list entry and pointer selection 
   expect(await nodeLayer.locator("path").evaluateAll((paths) =>
     paths.reduce((sum, path) => sum + Number(path.getAttribute("data-node-count")), 0))).toBe(600);
   await expect(page.locator("#network-node-list-status")).toContainText("600 visible nodes");
+  await expect(page.locator("#network-render-status")).toContainText("600 nodes, 600 edges");
+  await expect(page.locator("#graph-shell")).toHaveAttribute("aria-busy", "false");
   const firstOverview = await page.locator("#graph svg.graph-svg").elementHandle();
   await page.locator("#toggle-anime-edges").uncheck();
   await expect(page.locator("#network-render-status")).toContainText("0 nodes, 0 edges");
