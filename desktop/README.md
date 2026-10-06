@@ -34,4 +34,14 @@ python -m unittest discover -s desktop/scripts -p 'test_*.py'
 
 The script writes an ignored `desktop/target/package/anime-graph-desktop-windows-x64.zip`. Its exact five-file inventory is the EXE, a user README, `Launch.cmd`, `Check-Prerequisites.ps1`, and a hash/PE-import manifest. The checker rejects extra files, changed bytes, bad imports, and wrong target/subsystem. After extraction, `Launch.cmd` checks the EXE hash and local runtime prerequisites before opening it. The checker does not fetch or install a runtime. The read-only Windows CI builds and checks the candidate but uploads no artifact. The ZIP and its self-contained manifest establish local consistency, not authenticity or release approval.
 
+To prepare M9.6's invented-only transfer kit after the package and fixture checks:
+
+```powershell
+npm run desktop:fixture:check
+python desktop/scripts/windows_smoke_kit.py build
+python desktop/scripts/windows_smoke_kit.py check
+```
+
+The ignored `desktop/target/package/anime-graph-desktop-smoke-kit-windows-x64.zip` contains the checked five-file package ZIP, four invented v3 fixture JSON files, a manifest-only missing-graph case, and `README.txt` with the clean-host steps. The script validates exact source bytes, manifest hashes, aggregate-only graph fields, and the seven-file outer inventory. Copy this local kit to a separate Windows x64 desktop with no checkout or relative `data/` directory; extract the inner package, run its `Launch.cmd`, and record the four visible states and limitations. The kit is not uploaded by CI. Building or checking it does not satisfy M9.6's independent GUI launch gate.
+
 This local graph check does not verify the other manifest assets, a named predecessor, source rights, or a release approval. M9.6 must launch the extracted package outside the repository with no relative data directory. There is no supported desktop release yet, and private or provider-derived data must not be used without the recorded permissions.

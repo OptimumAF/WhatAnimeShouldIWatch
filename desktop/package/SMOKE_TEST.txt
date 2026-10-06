@@ -1,0 +1,31 @@
+M9.6 invented-data smoke kit — Windows x64
+
+This is a local engineering aid, not an approved desktop release. It contains
+only the checked candidate package and invented v3 data. Do not publish it or
+replace the invented files with a real viewing history.
+
+Candidate package SHA-256: {PACKAGE_SHA256}
+Invented recommendation graph SHA-256: {GRAPH_SHA256}
+
+On a clean Windows x64 desktop session with the documented WebView2 Evergreen
+and Visual C++ x64 runtimes installed:
+
+1. Extract this outer ZIP. Confirm the destination has no repository checkout
+   and no relative data/ directory.
+2. Extract anime-graph-desktop-windows-x64.zip completely. Run the inner
+   anime-graph-desktop/Launch.cmd to check prerequisites and start the app.
+3. Confirm startup says No data and shows no graph.
+4. Choose Open invented demo. Confirm Invented demo, eight anime, eleven signed
+   pairs, and the visible statement that pair weights are not recommendations.
+5. Choose Select local manifest and pick invented-bundle/release-manifest.json.
+   Confirm Loading, then Selected local data, tag data-vsynthetic-desktop-v1,
+   eight anime, eleven pairs, and the statement that other assets and source
+   permissions are not checked.
+6. Select invented-missing/release-manifest.json. Confirm Load failed,
+   graph.compact.json missing or unreadable, and no previous graph remains.
+7. Record the outer and inner ZIP hashes, OS/runtime versions, the four states,
+   and the displayed 300-title/1,400-pair overview limit. Note any mismatch.
+
+Do not record private titles, usernames, ratings, histories, provider payloads,
+or identifiable screenshots. This kit does not fetch or install a runtime,
+authorize a dataset, publish an artifact, or approve a desktop release.
