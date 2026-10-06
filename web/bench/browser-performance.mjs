@@ -19,13 +19,24 @@ if (scenarioName !== "fixture" && scenarioName !== "scale") {
   throw new Error("--scenario must be fixture or scale.");
 }
 const traceGraph = process.argv.includes("--trace-graph");
+// Diagnostic only: element.click() bypasses native pointer activation and focus work.
+const traceGraphDomClick = process.argv.includes("--trace-graph-dom-click");
+const traceGraphTouch = process.argv.includes("--trace-graph-touch");
+if ((traceGraphDomClick || traceGraphTouch) && !traceGraph) {
+  throw new Error("Graph control input diagnostics require --trace-graph.");
+}
+if (traceGraphDomClick && traceGraphTouch) {
+  throw new Error("Choose one graph control input diagnostic at a time.");
+}
+const traceSuffix = traceGraphDomClick ? "-dom-click" : traceGraphTouch ? "-touch" : "";
 const outputPath = join(webRoot, "test-results",
-  traceGraph ? `performance-${scenarioName}-trace.json`
+  traceGraph ? `performance-${scenarioName}-trace${traceSuffix}.json`
     : scenarioName === "scale" ? "performance-scale.json" : "performance-baseline.json");
 const runs = readPositiveInteger("--runs", 3);
 const updates = readPositiveInteger("--updates", 8);
 const graphRenders = readPositiveInteger("--graph-renders", 4);
-const graphTracePath = join(webRoot, "test-results", "performance-graph-trace.json");
+const graphTracePath = join(webRoot, "test-results",
+  `performance-graph-trace${traceSuffix}.json`);
 const profiles = [
   { name: "desktop", viewport: { width: 1365, height: 768 }, deviceScaleFactor: 1,
     cpuRate: 1, latencyMs: 0, downBytesPerSecond: -1, upBytesPerSecond: -1 },
@@ -208,6 +219,7 @@ async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = fals
   const context = await browser.newContext({
     viewport: profile.viewport,
     deviceScaleFactor: profile.deviceScaleFactor,
+    hasTouch: traceGraphTouch && profile.name === "mobile",
     serviceWorkers: "block",
   });
   const blockedBefore = proxy.blockedRequests;
@@ -307,7 +319,16 @@ async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = fals
     const firstGraphEnd = firstGraphEntry.startTime + firstGraphEntry.duration;
     const networkReadyMs = firstGraphEntry.startTime + firstGraphEntry.duration - navStart;
     if (await page.locator("#network-mobile-toggle").isVisible()) {
-      await page.locator("#network-mobile-toggle").click();
+      if (traceGraphDomClick) {
+        await page.locator("#network-mobile-toggle").evaluate((element) => element.click());
+      } else if (traceGraphTouch) {
+        await page.locator("#network-mobile-toggle").tap();
+      } else {
+        await page.locator("#network-mobile-toggle").click();
+      }
+      if (await page.locator("#network-mobile-toggle").getAttribute("aria-expanded") !== "true") {
+        throw new Error("The compact network controls did not open.");
+      }
     }
     if (captureGraphTrace) {
       // Include SVG insertion and the following compact-control interaction.
@@ -524,6 +545,8 @@ try {
       logicalCpus: cpus().length, ramBytes: totalmem() },
     profiles, runs, updatesPerModePerRun: updates,
     graphRendersPerRun: graphRenders,
+    mobileCompactControlInput: traceGraphDomClick ? "DOM click"
+      : traceGraphTouch ? "emulated touch" : "mouse pointer",
     graphRerenderControl: samples.desktop[0].graph.rerenderControl,
     initialAssetSizes,
     initialAssetTotals: {
