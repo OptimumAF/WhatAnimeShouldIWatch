@@ -354,7 +354,11 @@ function summarizeProfile(samples) {
     graphRenderMs: metricSummary(flatten((sample) => sample.graph.renderMs)),
     graphPhases: phaseSummaries(samples, [
       "wasiw:network:select", "wasiw:network:construct", "wasiw:network:layout",
-      "wasiw:network:scope", "wasiw:network:svg",
+      "wasiw:network:construct-node-batch", "wasiw:network:construct-edge-batch",
+      "wasiw:network:scope", "wasiw:network:svg", "wasiw:network:svg-coordinates",
+      "wasiw:network:svg-edge-batch", "wasiw:network:svg-paths",
+      "wasiw:network:svg-node-batch", "wasiw:network:svg-node-paths",
+      "wasiw:network:svg-dom-commit",
     ], (sample) => sample.graph.measures, (sample) => sample.graph.longTasks),
     blockedExternalRequests: samples.reduce((sum, sample) =>
       sum + sample.blockedExternalRequests, 0),
