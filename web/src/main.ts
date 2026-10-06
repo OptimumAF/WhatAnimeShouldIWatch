@@ -78,7 +78,7 @@ import type {
   StoredRecommendationState,
   ThemeMode,
 } from "./persistence";
-import { createBrowserRuntime, isAbortError } from "./runtime";
+import { createBrowserRuntime, isAbortError, throwIfAborted } from "./runtime";
 import { safeExternalImageUrl } from "./safe-url";
 import { searchAnimeTitles } from "./title-search";
 import type { TitleSearchResult } from "./title-search";
@@ -109,6 +109,9 @@ const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
 const BATCHED_SVG_EDGE_THRESHOLD = 500;
 const LARGE_RECOMMENDATION_YIELD_CANDIDATES = 500;
+const CHUNKED_NETWORK_EDGE_THRESHOLD = 500;
+const NETWORK_BUILD_BATCH_SIZE = 1000;
+const NETWORK_SVG_BATCH_SIZE = 1000;
 const NEIGHBORHOOD_MAX_NODES = 25;
 const NEIGHBORHOOD_MAX_EDGES = 24;
 const GRAPH_VIEW_WIDTH = 1200;
@@ -849,6 +852,18 @@ let pendingProfileBackup: {
   memoryRevision: string;
 } | null = null;
 let graphRenderRunId = 0;
+let graphRenderController: AbortController | null = null;
+let svgRenderRunId = 0;
+let overviewGraphCache: {
+  source: LoadedGraphData;
+  minAbsoluteWeight: number;
+  showAnimeAnimeEdges: boolean;
+  showUsers: boolean;
+  graph: Graph;
+  svg: SVGSVGElement | null;
+  totalEligibleEdgeCount: number;
+  edgeLimitHit: boolean;
+} | null = null;
 let modelRecommendationIndexPromise: Promise<ModelRecommendationIndex | null> | null = null;
 let modelLoadError: string | null = null;
 const recommendationFilters: RecommendationFilters = {
@@ -1780,6 +1795,8 @@ function setActiveView(view: AppView, fromHash: boolean): void {
       });
   } else {
     graphRenderRunId += 1;
+    graphRenderController?.abort();
+    graphRenderController = null;
     setGraphLoadingState(false, "Render status: ready.");
   }
 }
@@ -4352,47 +4369,48 @@ function rerenderGraph(): void {
     toggleUsers.checked = false;
   }
   const showUsers = toggleUsers.checked;
+  graphRenderController?.abort();
+  const controller = new AbortController();
+  graphRenderController = controller;
   const runId = ++graphRenderRunId;
   const renderSource = explorerGraphData ?? graphData;
 
   setGraphLoadingState(true, "Render status: rendering network...");
 
   runtime.schedule(() => {
-    if (runId !== graphRenderRunId) {
-      return;
-    }
-
+    if (runId !== graphRenderRunId || controller.signal.aborted) return;
     if (activeView !== "network") {
+      if (graphRenderController === controller) graphRenderController = null;
       setGraphLoadingState(false, "Render status: ready.");
       return;
     }
 
-    const startedAt = runtime.monotonicNow();
-    try {
-      const renderResult = measureLocal("wasiw:network:render", () => renderGraph(
-        renderSource,
-        minWeight,
-        showAnimeAnimeEdges,
-        showUsers,
-      ));
-      if (runId !== graphRenderRunId) {
-        return;
+    void (async () => {
+      const startedAt = runtime.monotonicNow();
+      try {
+        const renderResult = await measureLocalAsync("wasiw:network:render", () => renderGraph(
+          renderSource, minWeight, showAnimeAnimeEdges, showUsers, controller.signal,
+        ));
+        if (runId !== graphRenderRunId || controller.signal.aborted || activeView !== "network") return;
+        const elapsedMs = Math.max(1, Math.round(runtime.monotonicNow() - startedAt));
+        const visibleNodes = currentGraph ? currentGraph.order : 0;
+        const visibleEdges = renderResult.renderedEdgeCount;
+        const limitSuffix = renderResult.edgeLimitHit
+          ? `, capped from ${renderResult.totalEligibleEdgeCount.toLocaleString()} matching edges`
+          : "";
+        setGraphLoadingState(
+          false,
+          `Render status: ${visibleNodes.toLocaleString()} nodes, ${visibleEdges.toLocaleString()} edges (${elapsedMs} ms${limitSuffix}).`,
+        );
+      } catch (error) {
+        if (isAbortError(error) || runId !== graphRenderRunId || controller.signal.aborted) return;
+        setGraphLoadingState(false, "Render status: failed. Reload and reduce visible edges.");
+        recordDiagnosticIssue("RENDER-001");
+        console.error("Graph render failed [RENDER-001].");
+      } finally {
+        if (graphRenderController === controller) graphRenderController = null;
       }
-      const elapsedMs = Math.max(1, Math.round(runtime.monotonicNow() - startedAt));
-      const visibleNodes = currentGraph ? currentGraph.order : 0;
-      const visibleEdges = renderResult.renderedEdgeCount;
-      const limitSuffix = renderResult.edgeLimitHit
-        ? `, capped from ${renderResult.totalEligibleEdgeCount.toLocaleString()} matching edges`
-        : "";
-      setGraphLoadingState(
-        false,
-        `Render status: ${visibleNodes.toLocaleString()} nodes, ${visibleEdges.toLocaleString()} edges (${elapsedMs} ms${limitSuffix}).`,
-      );
-    } catch {
-      setGraphLoadingState(false, "Render status: failed. Reload and reduce visible edges.");
-      recordDiagnosticIssue("RENDER-001");
-      console.error("Graph render failed [RENDER-001].");
-    }
+    })();
   }, 0);
 }
 
@@ -4440,25 +4458,35 @@ function syncVisibleNodeSelection(): void {
   }
 }
 
-function renderGraph(
+async function renderGraph(
   graphDataValue: LoadedGraphData,
   minAbsoluteWeight: number,
   showAnimeAnimeEdges: boolean,
   showUsers: boolean,
-): { renderedEdgeCount: number; totalEligibleEdgeCount: number; edgeLimitHit: boolean } {
-  const graph = new Graph({ multi: true, type: "undirected" });
+  signal: AbortSignal,
+): Promise<{ renderedEdgeCount: number; totalEligibleEdgeCount: number; edgeLimitHit: boolean }> {
+  throwIfAborted(signal);
   const focused = neighborhoodFocusId
     ? selectAnimeNeighborhood(graphData, neighborhoodFocusId,
       NEIGHBORHOOD_MAX_NODES, NEIGHBORHOOD_MAX_EDGES, minAbsoluteWeight)
     : null;
-  const selectedEdges = measureLocal("wasiw:network:select", () => focused
-    ? { edges: showAnimeAnimeEdges ? focused.edges : [],
-      totalEligibleEdgeCount: showAnimeAnimeEdges ? focused.eligiblePairEdges : 0,
-      edgeLimitHit: showAnimeAnimeEdges && focused.omittedByBudget > 0 }
-    : selectRenderableEdges(graphDataValue, minAbsoluteWeight,
-      showAnimeAnimeEdges, showUsers));
+  const cached = !focused && overviewGraphCache?.source === graphDataValue &&
+    overviewGraphCache.minAbsoluteWeight === minAbsoluteWeight &&
+    overviewGraphCache.showAnimeAnimeEdges === showAnimeAnimeEdges &&
+    overviewGraphCache.showUsers === showUsers ? overviewGraphCache : null;
+  const graph = cached?.graph ?? new Graph({ multi: true, type: "undirected" });
+  const selectedEdges = cached
+    ? { edges: [] as GraphEdge[], totalEligibleEdgeCount: cached.totalEligibleEdgeCount,
+      edgeLimitHit: cached.edgeLimitHit }
+    : measureLocal("wasiw:network:select", () => focused
+      ? { edges: showAnimeAnimeEdges ? focused.edges : [],
+        totalEligibleEdgeCount: showAnimeAnimeEdges ? focused.eligiblePairEdges : 0,
+        edgeLimitHit: showAnimeAnimeEdges && focused.omittedByBudget > 0 }
+      : selectRenderableEdges(graphDataValue, minAbsoluteWeight,
+        showAnimeAnimeEdges, showUsers));
+  const chunkBuild = selectedEdges.edges.length > CHUNKED_NETWORK_EDGE_THRESHOLD;
   const activeNodeIds = new Set<string>();
-  measureLocal("wasiw:network:construct", () => {
+  if (!cached) await measureLocalAsync("wasiw:network:construct", async () => {
     if (focused) activeNodeIds.add(focused.center.id);
 
     for (const edge of selectedEdges.edges) {
@@ -4466,41 +4494,59 @@ function renderGraph(
       activeNodeIds.add(edge.target);
     }
 
-    for (const node of focused ? focused.nodes : getGraphNodes(graphDataValue)) {
-      if (!showUsers && node.nodeType === "user") continue;
-      if (!activeNodeIds.has(node.id)) continue;
-
-      const isUser = node.nodeType === "user";
-      graph.addNode(node.id, {
-        label: node.label,
-        nodeType: node.nodeType,
-        size: isUser ? 5.2 : focused ? node.id === focused.center.id ? 8 : 5 : 2.8,
-        color: isUser ? "#ff8a00" : "#0f8b8d",
-        x: runtime.random(),
-        y: runtime.random(),
-      });
+    const nodes = focused ? focused.nodes : getGraphNodes(graphDataValue);
+    for (let index = 0; index < nodes.length; index += 1) {
+      const node = nodes[index];
+      if ((showUsers || node.nodeType !== "user") && activeNodeIds.has(node.id)) {
+        const isUser = node.nodeType === "user";
+        graph.addNode(node.id, {
+          label: node.label,
+          nodeType: node.nodeType,
+          size: isUser ? 5.2 : focused ? node.id === focused.center.id ? 8 : 5 : 2.8,
+          color: isUser ? "#ff8a00" : "#0f8b8d",
+          x: runtime.random(),
+          y: runtime.random(),
+        });
+      }
+      if (chunkBuild && (index + 1) % NETWORK_BUILD_BATCH_SIZE === 0 && index + 1 < nodes.length) {
+        await runtime.yieldMainThread(signal);
+      }
     }
 
-    for (const edge of selectedEdges.edges) {
-      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue;
-
-      const sign = edge.weight > 0 ? "positive" : edge.weight < 0 ? "negative" : "neutral";
-      const color = sign === "neutral" ? "var(--graph-neutral-edge)"
-        : edge.edgeType === "user-anime"
-          ? sign === "positive" ? "var(--graph-user-positive-edge)" : "var(--graph-user-negative-edge)"
-          : sign === "positive" ? "var(--graph-positive-edge)" : "var(--graph-negative-edge)";
-      graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
-        size: focused ? 1.6 : edge.edgeType === "user-anime" ? 1.4 : 0.7,
-        color,
-        weight: Math.max(Math.abs(edge.weight), 0.01),
-        signedWeight: edge.weight,
-        sign,
-        edgeType: edge.edgeType,
-      });
+    for (let index = 0; index < selectedEdges.edges.length; index += 1) {
+      const edge = selectedEdges.edges[index];
+      if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
+        const sign = edge.weight > 0 ? "positive" : edge.weight < 0 ? "negative" : "neutral";
+        const color = sign === "neutral" ? "var(--graph-neutral-edge)"
+          : edge.edgeType === "user-anime"
+            ? sign === "positive" ? "var(--graph-user-positive-edge)" : "var(--graph-user-negative-edge)"
+            : sign === "positive" ? "var(--graph-positive-edge)" : "var(--graph-negative-edge)";
+        graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
+          size: focused ? 1.6 : edge.edgeType === "user-anime" ? 1.4 : 0.7,
+          color,
+          weight: Math.max(Math.abs(edge.weight), 0.01),
+          signedWeight: edge.weight,
+          sign,
+          edgeType: edge.edgeType,
+        });
+      }
+      if (chunkBuild && (index + 1) % NETWORK_BUILD_BATCH_SIZE === 0 &&
+          index + 1 < selectedEdges.edges.length) {
+        await runtime.yieldMainThread(signal);
+      }
     }
   });
 
-  measureLocal("wasiw:network:layout", () => applyLayout(graph, focused?.center.id));
+  throwIfAborted(signal);
+  if (!cached) {
+    measureLocal("wasiw:network:layout", () => applyLayout(graph, focused?.center.id));
+    if (!focused && graph.size > CHUNKED_NETWORK_EDGE_THRESHOLD) {
+      overviewGraphCache = { source: graphDataValue, minAbsoluteWeight,
+        showAnimeAnimeEdges, showUsers, graph, svg: null,
+        totalEligibleEdgeCount: selectedEdges.totalEligibleEdgeCount,
+        edgeLimitHit: selectedEdges.edgeLimitHit };
+    }
+  }
   currentGraph = graph;
   visibleGraphNodes = [];
   const focusedEvidence = new Map<string, { weight: number; support?: number }>();
@@ -4568,7 +4614,7 @@ function renderGraph(
     selectedNodeId = null;
     renderInspectPanel(null);
   }
-  measureLocal("wasiw:network:svg", () => renderSvgGraph(graph));
+  await measureLocalAsync("wasiw:network:svg", () => renderSvgGraph(graph, signal));
 
   return {
     renderedEdgeCount: graph.size,
@@ -4849,9 +4895,22 @@ function panGraphViewport(dx: number, dy: number): void {
   setGraphViewport(graphViewport.x + dx, graphViewport.y + dy, graphViewport.width);
 }
 
-function renderSvgGraph(graph: Graph): void {
-  graphContainer.replaceChildren();
+async function renderSvgGraph(graph: Graph, signal?: AbortSignal): Promise<void> {
+  const svgRunId = ++svgRenderRunId;
+  throwIfAborted(signal);
   if (graph.order === 0) {
+    graphContainer.replaceChildren();
+    syncVisibleNodeSelection();
+    return;
+  }
+
+  const cachedSvg = selectedNodeId === null && !neighborhoodFocusId &&
+    overviewGraphCache?.graph === graph ? overviewGraphCache.svg : null;
+  if (cachedSvg) {
+    cachedSvg.setAttribute("viewBox", `${graphViewport.x} ${graphViewport.y} ` +
+      `${graphViewport.width} ${graphViewport.height}`);
+    cachedSvg.style.touchAction = graphViewport.width < GRAPH_VIEW_WIDTH ? "none" : "auto";
+    graphContainer.replaceChildren(cachedSvg);
     syncVisibleNodeSelection();
     return;
   }
@@ -4905,11 +4964,21 @@ function renderSvgGraph(graph: Graph): void {
     segments: string[];
   }>();
   const roundedPathCoordinate = (value: number) => Math.round(value * 10) / 10;
-  graph.forEachEdge((_edgeKey, attributes, source, target) => {
+  const edgeKeys = graph.edges();
+  const yieldSvgBuild = signal !== undefined && batchEdges;
+  for (let edgeIndex = 0; edgeIndex < edgeKeys.length; edgeIndex += 1) {
+    if (yieldSvgBuild && edgeIndex > 0 && edgeIndex % NETWORK_SVG_BATCH_SIZE === 0) {
+      await runtime.yieldMainThread(signal);
+      throwIfAborted(signal);
+      if (svgRunId !== svgRenderRunId) return;
+    }
+    const edgeKey = edgeKeys[edgeIndex];
+    const attributes = graph.getEdgeAttributes(edgeKey);
+    const [source, target] = graph.extremities(edgeKey);
     const sourceCoord = coords.get(source);
     const targetCoord = coords.get(target);
     if (!sourceCoord || !targetCoord) {
-      return;
+      continue;
     }
     const x1 = scaleGraphCoordinate(sourceCoord.x, minX, spanX, padding, width);
     const y1 = scaleGraphCoordinate(sourceCoord.y, minY, spanY, padding, height);
@@ -4935,7 +5004,7 @@ function renderSvgGraph(graph: Graph): void {
       // A tenth of a viewBox unit is below one screen pixel even at phone width.
       group.segments.push(`M${roundedPathCoordinate(x1)} ${roundedPathCoordinate(y1)}` +
         `L${roundedPathCoordinate(x2)} ${roundedPathCoordinate(y2)}`);
-      return;
+      continue;
     }
 
     const line = document.createElementNS(SVG_NS, "line");
@@ -4951,7 +5020,7 @@ function renderSvgGraph(graph: Graph): void {
       if (dashed) line.setAttribute("stroke-dasharray", "3 3");
     }
     edgeLayer.appendChild(line);
-  });
+  }
   if (batchEdges) {
     edgeLayer.setAttribute("data-render-mode", "batched-paths");
     for (const group of edgePaths.values()) {
@@ -4970,11 +5039,18 @@ function renderSvgGraph(graph: Graph): void {
     }
   }
 
-  let nodeIndex = 0;
-  graph.forEachNode((node, attributes) => {
+  const nodeKeys = graph.nodes();
+  for (let nodeIndex = 0; nodeIndex < nodeKeys.length; nodeIndex += 1) {
+    if (yieldSvgBuild && nodeIndex > 0 && nodeIndex % NETWORK_SVG_BATCH_SIZE === 0) {
+      await runtime.yieldMainThread(signal);
+      throwIfAborted(signal);
+      if (svgRunId !== svgRenderRunId) return;
+    }
+    const node = nodeKeys[nodeIndex];
+    const attributes = graph.getNodeAttributes(node);
     const coord = coords.get(node);
     if (!coord) {
-      return;
+      continue;
     }
 
     const x = scaleGraphCoordinate(coord.x, minX, spanX, padding, width);
@@ -5011,8 +5087,7 @@ function renderSvgGraph(graph: Graph): void {
       label.textContent = String(nodeAttrs.label ?? node);
       labelLayer.appendChild(label);
     }
-    nodeIndex += 1;
-  });
+  }
 
   let drag: { pointerId: number; clientX: number; clientY: number;
     x: number; y: number; width: number; height: number; moved: boolean } | null = null;
@@ -5058,7 +5133,12 @@ function renderSvgGraph(graph: Graph): void {
   });
 
   svg.append(edgeLayer, nodeLayer, labelLayer);
-  graphContainer.appendChild(svg);
+  throwIfAborted(signal);
+  if (svgRunId !== svgRenderRunId) return;
+  graphContainer.replaceChildren(svg);
+  if (selectedNodeId === null && !neighborhoodFocusId && overviewGraphCache?.graph === graph) {
+    overviewGraphCache.svg = svg;
+  }
   syncVisibleNodeSelection();
 }
 

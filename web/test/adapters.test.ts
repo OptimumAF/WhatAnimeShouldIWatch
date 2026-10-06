@@ -8,7 +8,7 @@ import { parseCompactGraph } from "../src/artifacts.ts";
 import { createPersistenceAdapter } from "../src/persistence.ts";
 import { createProviderAdapter } from "../src/providers.ts";
 import { buildRecommendationIndexFromCompact } from "../src/recommendations.ts";
-import { createSeededRandom } from "../src/runtime.ts";
+import { createBrowserRuntime, createSeededRandom } from "../src/runtime.ts";
 import type { RuntimePorts, StoragePort } from "../src/runtime.ts";
 
 const fixtureRoot = new URL("../public/demo-data/", import.meta.url);
@@ -45,6 +45,7 @@ function fakeRuntime(
     monotonicNow: () => 1234 + elapsedMs,
     random: createSeededRandom(seed),
     sleep: async (ms) => { sleeps.push(ms); elapsedMs += ms; },
+    yieldMainThread: async () => {},
     schedule: (callback) => { callback(); },
     frame: (callback) => { callback(1234); },
   };
@@ -59,6 +60,19 @@ test("runtime randomness is repeatable from an injected synthetic seed", () => {
   assert.deepEqual(sequence, [second(), second(), second()]);
   assert.notEqual(sequence[0], other());
   assert.ok(sequence.every((value) => value >= 0 && value < 1));
+});
+
+test("browser task yield rejects cancellation before and during a queued continuation", async () => {
+  const runtime = createBrowserRuntime();
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  await assert.rejects(runtime.yieldMainThread(alreadyAborted.signal), { name: "AbortError" });
+
+  const pending = new AbortController();
+  const continuation = runtime.yieldMainThread(pending.signal);
+  pending.abort();
+  await assert.rejects(continuation, { name: "AbortError" });
+  await runtime.yieldMainThread();
 });
 
 test("project Pages base pins asset URLs even after direct nested navigation", async () => {

@@ -12,6 +12,7 @@ export interface RuntimePorts {
   monotonicNow(): number;
   random(): number;
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
+  yieldMainThread(signal?: AbortSignal): Promise<void>;
   schedule(callback: () => void, ms: number): void;
   frame(callback: FrameRequestCallback): void;
 }
@@ -43,6 +44,28 @@ export function createBrowserRuntime(): RuntimePorts {
       };
       const timer = window.setTimeout(finish, ms);
       signal?.addEventListener("abort", onAbort, { once: true });
+    }),
+    yieldMainThread: (signal) => new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Operation canceled", "AbortError"));
+        return;
+      }
+      const channel = new MessageChannel();
+      const cleanup = () => {
+        signal?.removeEventListener("abort", onAbort);
+        channel.port1.close();
+        channel.port2.close();
+      };
+      const onAbort = () => {
+        cleanup();
+        reject(new DOMException("Operation canceled", "AbortError"));
+      };
+      channel.port1.onmessage = () => {
+        cleanup();
+        resolve();
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      channel.port2.postMessage(undefined);
     }),
     schedule: (callback, ms) => { window.setTimeout(callback, ms); },
     frame: (callback) => { window.requestAnimationFrame(callback); },
