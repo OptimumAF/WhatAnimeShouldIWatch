@@ -29,7 +29,7 @@
     "dev:web": "npm run dev --workspace web",
     "dev:demo": "npm run data:fixture && npm run dev --workspace web -- --mode demo --host 127.0.0.1",
     "typecheck": "npm run typecheck --workspace pipeline && npm run typecheck --workspace web && npm run typecheck:eval --workspace web",
-    "test": "npm run test --workspace pipeline && npm run test:unit --workspace web",
+    "test": "npm run test --workspace pipeline && npm run test:unit --workspace web && node --test web/bench/performance-budget-rules.test.mjs",
     "test:python": "python -m unittest discover -s ml/tests",
     "split:fixture:check": "python ml/raw_interaction_split.py --input fixtures/synthetic-split-input.json --out fixtures/synthetic-split-manifest.json --check",
     "new-user:split:fixture:check": "python ml/raw_interaction_split.py --input fixtures/synthetic-new-user-fit.json --out fixtures/synthetic-new-user-fit-manifest.json --check",
