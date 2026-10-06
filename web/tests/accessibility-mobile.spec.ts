@@ -196,6 +196,22 @@ test("compact controls hand focus to the reveal button when a resize hides them"
   await page.keyboard.press("Enter");
   await expect(page.locator("#network-search-input")).toBeVisible();
   await expect(page.locator("#network-mobile-toggle")).toHaveAttribute("aria-expanded", "true");
+  const scrollCalls = await page.evaluate(async () => {
+    const toggle = document.querySelector<HTMLButtonElement>("#network-mobile-toggle")!;
+    const panel = document.querySelector<HTMLElement>("#network-panel")!;
+    let calls = 0;
+    panel.scrollIntoView = () => { calls += 1; };
+    toggle.click(); // Hide the controls.
+    toggle.click(); // Schedule a scroll for Show.
+    toggle.click(); // Hide again before the scheduled callback runs.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    const afterRapidHide = calls;
+    toggle.click();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    return { afterRapidHide, afterShow: calls };
+  });
+  expect(scrollCalls).toEqual({ afterRapidHide: 0, afterShow: 1 });
+  await expect(page.locator("#network-mobile-toggle")).toHaveAttribute("aria-expanded", "true");
 });
 
 test("normal and high-contrast controls remain readable in light and dark themes", async ({ page }) => {

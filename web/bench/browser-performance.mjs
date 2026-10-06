@@ -18,11 +18,14 @@ const scenarioName = scenarioFlag ? scenarioFlag.slice("--scenario=".length) : "
 if (scenarioName !== "fixture" && scenarioName !== "scale") {
   throw new Error("--scenario must be fixture or scale.");
 }
+const traceGraph = process.argv.includes("--trace-graph");
 const outputPath = join(webRoot, "test-results",
-  scenarioName === "scale" ? "performance-scale.json" : "performance-baseline.json");
+  traceGraph ? `performance-${scenarioName}-trace.json`
+    : scenarioName === "scale" ? "performance-scale.json" : "performance-baseline.json");
 const runs = readPositiveInteger("--runs", 3);
 const updates = readPositiveInteger("--updates", 8);
 const graphRenders = readPositiveInteger("--graph-renders", 4);
+const graphTracePath = join(webRoot, "test-results", "performance-graph-trace.json");
 const profiles = [
   { name: "desktop", viewport: { width: 1365, height: 768 }, deviceScaleFactor: 1,
     cpuRate: 1, latencyMs: 0, downBytesPerSecond: -1, upBytesPerSecond: -1 },
@@ -77,6 +80,33 @@ function phaseSummaries(samples, names, measuresFor, longTasksFor) {
       durationMs: metricSummary(measured.map((item) => item.duration)),
       longTaskOverlaps: overlaps,
     }];
+  }));
+}
+
+function summarizeGraphTrace(events) {
+  const firstRenderStart = events.find((event) =>
+    event.name === "wasiw:network:render" && event.ph === "b")?.ts ?? null;
+  const firstRenderEnd = events.find((event) =>
+    event.name === "wasiw:network:render" && event.ph === "e")?.ts ?? null;
+  return events.filter((event) => event.ph === "X" && event.name === "RunTask" &&
+    event.dur >= 50_000).sort((left, right) => left.ts - right.ts).map((task) => ({
+    window: firstRenderStart !== null && task.ts < firstRenderStart
+      ? "before-first-render"
+      : firstRenderEnd !== null && task.ts < firstRenderEnd
+        ? "first-render" : "after-first-render",
+    durationMs: round(task.dur / 1000),
+    // These trace slices may nest; their durations are not additive.
+    events: events.filter((event) => event.ph === "X" && event !== task &&
+      event.pid === task.pid && event.tid === task.tid &&
+      event.ts >= task.ts && event.ts + event.dur <= task.ts + task.dur &&
+      event.dur >= 1000 &&
+      ["EventDispatch", "FunctionCall", "UpdateLayoutTree", "Layout", "Paint", "PrePaint"]
+        .includes(event.name)).map((event) => ({
+      name: event.name,
+      durationMs: round(event.dur / 1000),
+      ...(event.name === "EventDispatch" && typeof event.args?.data?.type === "string"
+        ? { eventType: event.args.data.type } : {}),
+    })),
   }));
 }
 
@@ -174,7 +204,7 @@ async function localAssetSizes(paths) {
   return rows.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-async function oneRun(browser, baseUrl, profile, proxy) {
+async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = false) {
   const context = await browser.newContext({
     viewport: profile.viewport,
     deviceScaleFactor: profile.deviceScaleFactor,
@@ -247,23 +277,48 @@ async function oneRun(browser, baseUrl, profile, proxy) {
           mode === "model" ? /Using ML model recommendations/ : /Using hybrid recommendations/,
         ).waitFor({ timeout: 15_000 });
       }
+      const firstRelatedState = !(await page.locator("#allow-related-titles").isChecked());
       for (let index = 0; index < updates; index += 1) {
         const count = await measureCount(page, "wasiw:recommendation:update");
-        await page.locator("#allow-related-titles").setChecked(index % 2 === 0);
+        await page.locator("#allow-related-titles").setChecked(
+          index % 2 === 0 ? firstRelatedState : !firstRelatedState);
         rankUpdates[mode].push(await waitForMeasure(page, "wasiw:recommendation:update", count));
       }
     }
     const ranking = await pageMetrics(page, session);
     await clearMeasures(page);
     const graphTimes = [];
+    const traceEvents = [];
+    let graphTrace = null;
+    if (captureGraphTrace) {
+      session.on("Tracing.dataCollected", ({ value }) => traceEvents.push(...value));
+      await session.send("Tracing.start", {
+        categories: "devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline",
+        transferMode: "ReportEvents",
+      });
+    }
     const navStart = await page.evaluate(() => performance.now());
     await page.locator("#nav-network").click();
     graphTimes.push(await waitForMeasure(page, "wasiw:network:render", 0));
     const graphFirst = await pageMetrics(page, session);
     const firstGraphEntry = graphFirst.measures.find((item) => item.name === "wasiw:network:render");
+    if (!firstGraphEntry) throw new Error("First network render timing is missing.");
+    const firstGraphStart = firstGraphEntry.startTime;
+    const firstGraphEnd = firstGraphEntry.startTime + firstGraphEntry.duration;
     const networkReadyMs = firstGraphEntry.startTime + firstGraphEntry.duration - navStart;
     if (await page.locator("#network-mobile-toggle").isVisible()) {
       await page.locator("#network-mobile-toggle").click();
+    }
+    if (captureGraphTrace) {
+      // Include SVG insertion and the following compact-control interaction.
+      // Diagnostic tracing is separate from clean timing/budget runs.
+      await page.waitForTimeout(150);
+      const complete = new Promise((resolve) => session.once("Tracing.tracingComplete", resolve));
+      await session.send("Tracing.end");
+      await complete;
+      await mkdir(resolve(graphTracePath, ".."), { recursive: true });
+      await writeFile(graphTracePath, JSON.stringify({ traceEvents }));
+      graphTrace = summarizeGraphTrace(traceEvents);
     }
     const userEdgesAvailable = await page.locator("#toggle-users").isEnabled();
     const renderToggle = page.locator(userEdgesAvailable ? "#toggle-users" : "#toggle-anime-edges");
@@ -286,8 +341,14 @@ async function oneRun(browser, baseUrl, profile, proxy) {
       graph: { firstNavigationMs: networkReadyMs, renderMs: graphTimes,
         rerenderControl: userEdgesAvailable ? "sampled user edges" : "aggregate pair edges",
         heapUsedBytes: graph.heapUsedBytes, domNodes: graph.domNodes,
-        longTasks: graph.longTasks, measures: graph.measures,
+        longTasks: graph.longTasks,
+        preFirstRenderLongTasks: graph.longTasks.filter((task) => task.startTime < firstGraphStart),
+        firstRenderLongTasks: graph.longTasks.filter((task) =>
+          task.startTime >= firstGraphStart && task.startTime < firstGraphEnd),
+        postFirstRenderLongTasks: graph.longTasks.filter((task) => task.startTime >= firstGraphEnd),
+        measures: graph.measures,
         network: network.phases.interaction },
+      ...(graphTrace ? { graphTrace } : {}),
       assetSizes: await localAssetSizes(resourcePaths),
       blockedExternalRequests: proxy.blockedRequests - blockedBefore,
     };
@@ -322,6 +383,21 @@ function summarizeProfile(samples) {
       durationMs: metricSummary(flatten((sample) => sample.rankingLongTasks.map((task) => task.duration))) },
     graphLongTasks: { count: flatten((sample) => sample.graph.longTasks).length,
       durationMs: metricSummary(stalls("graph")) },
+    preFirstGraphRenderLongTasks: {
+      count: flatten((sample) => sample.graph.preFirstRenderLongTasks).length,
+      durationMs: metricSummary(flatten((sample) =>
+        sample.graph.preFirstRenderLongTasks.map((task) => task.duration))),
+    },
+    firstGraphRenderLongTasks: {
+      count: flatten((sample) => sample.graph.firstRenderLongTasks).length,
+      durationMs: metricSummary(flatten((sample) =>
+        sample.graph.firstRenderLongTasks.map((task) => task.duration))),
+    },
+    postFirstGraphRenderLongTasks: {
+      count: flatten((sample) => sample.graph.postFirstRenderLongTasks).length,
+      durationMs: metricSummary(flatten((sample) =>
+        sample.graph.postFirstRenderLongTasks.map((task) => task.duration))),
+    },
     jsonCatalogMs: metricSummary(values((sample) => measureEntries(sample.cold.measures,
       "wasiw:json:catalog")[0])),
     jsonGraphMs: metricSummary(values((sample) => measureEntries(sample.cold.measures,
@@ -355,6 +431,8 @@ function summarizeProfile(samples) {
     graphPhases: phaseSummaries(samples, [
       "wasiw:network:select", "wasiw:network:construct", "wasiw:network:layout",
       "wasiw:network:construct-node-batch", "wasiw:network:construct-edge-batch",
+      "wasiw:network:visible-node-map", "wasiw:network:visible-node-sort",
+      "wasiw:network:visible-node-list", "wasiw:network:control-update",
       "wasiw:network:scope", "wasiw:network:svg", "wasiw:network:svg-coordinates",
       "wasiw:network:svg-edge-batch", "wasiw:network:svg-paths",
       "wasiw:network:svg-node-batch", "wasiw:network:svg-node-paths",
@@ -421,7 +499,8 @@ try {
   for (const profile of profiles) {
     samples[profile.name] = [];
     for (let run = 0; run < runs; run += 1) {
-      samples[profile.name].push(await oneRun(browser, baseUrl, profile, proxy));
+      samples[profile.name].push(await oneRun(browser, baseUrl, profile, proxy,
+        traceGraph && profile.name === "mobile" && run === 0));
     }
   }
   const assetSizes = samples.desktop[0].assetSizes;
