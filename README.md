@@ -1,20 +1,20 @@
 # WhatAnimeShouldIWatch
 
-End-to-end project for:
+Recommendation and discovery project with an offline synthetic development path. The repository contains:
 
-- Pulling public MyAnimeList user scores.
-- Storing anonymized users + ratings in SQLite.
-- Normalizing scores per user by each user's mean score.
-- Building a weighted bipartite-plus-anime graph.
-- Visualizing the graph in a static GitHub Pages web app.
-- Developing a separate Rust + Dioxus graph companion (currently a legacy prototype).
+- TypeScript collection, SQLite, normalization, and graph-building pipelines.
+- A Vite/TypeScript web app for recommendations, local preferences and watchlists, and graph exploration.
+- Python model experiments and split-first evaluation tools.
+- An optional Rust/Dioxus local graph companion with a checked Windows x64 candidate package. Its independent clean-host launch and release gate remain open.
+
+New provider-derived collection, publication, and deployment remain held pending the source/use and release approvals in [the living plan](docs/DEVELOPMENT_PLAN.md). Use the invented demo below for routine development.
 
 ## Repo Layout
 
 - `pipeline/`: ingestion, anonymization, normalization, graph generation.
 - `data/`: SQLite + exported JSON data.
-- `web/`: Vite TypeScript network graph viewer (GitHub Pages compatible).
-- `desktop/`: Rust/Dioxus desktop prototype; [scope decision](docs/decisions/0042-desktop-companion-scope.md).
+- `web/`: Vite/TypeScript discovery and recommendation app with a network explorer (GitHub Pages compatible).
+- `desktop/`: Rust/Dioxus local graph companion; [scope decision](docs/decisions/0042-desktop-companion-scope.md) and [candidate limits](desktop/README.md).
 
 ## Install
 
@@ -86,9 +86,9 @@ Recommendation cards name the actual source titles and show how many distinct ti
 
 The final list defaults to **Prefer variety**: it withholds a candidate with a known immediate prequel absent from watched history and shows at most one title per known or conservatively title-suggested series. **Allow related titles and known sequels** restores the original eligible ranking and scores; this choice is saved with local state and profiles. Cards show known prequel status or say prerequisites are unverified. Missing, empty, or one-sided relation data may miss a connection, and title similarities can be wrong. The selector uses existing candidate metadata without additional provider requests and never overrides watched, exclusion, Include Only, or metadata filters. [Decision 0013](docs/decisions/0013-franchise-diversity.md) records the invented relevance/diversity comparison; it does not establish production quality.
 
-With no preference signal, **Automatic** discovery lists catalog titles by the number of user-anime rating edges retained in the loaded recommendation graph. This is a sample-based popularity proxy, not a global audience count. The **Community score** view ranks only titles whose metadata has a known score; the genre filter explores titles with known genre metadata. **Shared genres** compares candidates with explicitly Liked titles using exact genre overlap weighted by preference importance and confidence. A sparse Liked history with no eligible graph result can use that content baseline automatically when metadata supports it. All discovery views apply the same watched, exclusion, Include Only, and required-filter rules; browsing never adds a watched or liked title or changes the selected recommendation engine. Seasonal ideas likewise remain browsing-only.
+With no preference signal, **Automatic** discovery uses sampled rating counts for legacy/v1/v2 recommendation graphs that include user-anime edge rows. The count is a proxy for that graph sample, not global popularity. Aggregate-only v3 graphs have no such rows, so Automatic uses **Community score** exploration instead. That view ranks only titles with known score metadata and can show partial coverage or no confirmed match. The genre filter explores titles with known genre metadata. **Shared genres** compares candidates with explicitly Liked titles using exact genre overlap weighted by preference importance and confidence. A sparse Liked history with no eligible graph result can use that content baseline automatically when metadata supports it. All discovery views apply the same watched, exclusion, Include Only, and required-filter rules; browsing never adds a watched or liked title or changes the selected recommendation engine. Seasonal ideas likewise remain browsing-only.
 
-The synthetic demo contains local metadata and makes no provider requests. In normal mode, the no-preference popularity view makes no anime-metadata request. Selecting a metadata-based view, pressing **Check 12 more catalog titles**, or falling back from a sparse Liked title may send the Liked title's anime ID and up to 12 eligible catalog anime IDs through the existing Jikan metadata adapter. The page reports known score/genre coverage. Its bounded check can miss lower-ranked matching titles; M6.4 owns broader catalog completeness.
+The synthetic demo contains local metadata and makes no provider requests. In normal mode, an untouched Automatic discovery view uses only metadata already loaded. Choosing **Browse** or deliberately selecting **Community score** or **Shared genres**, pressing the next-catalog-check control, or falling back from a sparse Liked title may send explicitly Liked source anime IDs and a batch of up to 12 eligible catalog anime IDs through the existing Jikan metadata adapter. The page reports known score/genre coverage and offers bounded follow-up checks across the eligible catalog. A required filter excludes titles whose needed metadata is unknown; a partial scan is labelled rather than reported as a complete no-match. Provider-dependent product use still requires the permissions decision below.
 
 Username import is optional. The entered username goes directly to the selected AniList or MAL provider to read a public list into the same preview. Nothing is applied until the user chooses merge or replace. If direct MAL access fails, the app reports the failure and keeps the current history; it does not try a proxy. A provider field unavailable in a response stays unknown rather than being guessed. AniList history retains the user's declared native score format; sad, neutral, and happy three-point smileys map to Disliked, Seen, and Liked. The M2.1 permissions review still holds provider-dependent product use; fixture tests are not approval for live import, storage, or deployment.
 
