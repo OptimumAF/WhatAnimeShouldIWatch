@@ -504,7 +504,7 @@ app.innerHTML = `
                 <h3>${demoMode ? "Demo Suggestions" : "Seasonal Trending"}</h3>
                 <button id="refresh-seasonal" type="button" class="ghost-btn">Refresh</button>
               </div>
-              <p id="seasonal-status" class="muted" role="status" aria-live="polite" data-state="idle">Seasonal data: idle.</p>
+              <p id="seasonal-status" class="muted" role="status" aria-live="polite" data-state="idle">Choose See seasonal ideas or Refresh to load the current season.</p>
               <ul id="seasonal-list" class="seasonal-list"></ul>
             </section>
           </section>
@@ -988,7 +988,7 @@ minWeightValue.textContent = defaultMinWeight.toFixed(2);
 
 setActiveView(viewFromHash(), true);
 void updateRecommendations();
-void loadSeasonalTrending(false);
+if (demoCatalog) void loadSeasonalTrending(false);
 
 window.addEventListener("hashchange", () => {
   setActiveView(viewFromHash(), true);
@@ -2547,13 +2547,15 @@ function addAnimeToWatchedList(anime: AnimeInfo, prefix: string, sentiment: Pref
 }
 
 function showSeasonalIdeas(): void {
-  if (seasonalItems.length === 0) {
-    recMessageEl.textContent =
-      "Seasonal ideas are not ready yet. Try again in a moment.";
-    return;
+  if (activeView !== "recommendations") {
+    setActiveView("recommendations", false);
   }
-  seasonalListEl.scrollIntoView({ behavior: "smooth", block: "start" });
-  recMessageEl.textContent = "Browse seasonal ideas below. Add a title only if you have seen it; choose its preference explicitly.";
+  seasonalStatusEl.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+  refreshSeasonalBtn.focus({ preventScroll: true });
+  recMessageEl.textContent = "Seasonal ideas appear below when available. Browsing does not change your watched list; mark a title Seen only if you have watched it.";
+  if (seasonalStatusEl.dataset.state === "idle") {
+    void loadSeasonalTrending(false);
+  }
 }
 
 function addAnimeFromInput(): void {
