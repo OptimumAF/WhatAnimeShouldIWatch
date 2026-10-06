@@ -217,7 +217,16 @@ npm run dev:web
 ```
 
 `sync:web` now writes compressed files (`*.json.gz`) to `web/public/data` by default.
-The web app loads gzip first, then falls back to plain JSON.
+For the legacy normal-mode path, the web app tries `.json.gz` first. A 404 selects the
+plain `.json` file; a browser without `DecompressionStream` can also use a plain
+sibling. A gzip-only legacy host therefore requires that browser capability. A
+present malformed gzip file or HTTP error fails with the named asset instead of
+silently using a different copy. Browser-decoded gzip bodies are accepted as JSON.
+Legacy requests bypass the browser cache and are bounded to 64 MiB compressed and
+256 MiB decoded/plain bytes. A pinned versioned bundle checks exact manifest and
+asset hashes, then retries a mismatched cached response once without cache before
+failing closed. These are transport limits, not a claim that provider-derived
+assets are approved for publication.
 
 Optional ML recommendation engine for the web app:
 

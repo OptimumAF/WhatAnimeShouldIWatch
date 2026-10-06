@@ -24,11 +24,31 @@ export class ArtifactLoadError extends Error {
   readonly name = "ArtifactLoadError";
 }
 
+class UnsupportedGzipError extends ArtifactLoadError {}
+class ArtifactBodyReadError extends ArtifactLoadError {}
+
+export interface LegacyJsonLimits {
+  compressedBytes: number;
+  plainBytes: number;
+}
+
+function legacyLimit(value: number | undefined, maximum: number, field: string): number {
+  if (value === undefined) return maximum;
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new ArtifactLoadError(`${field}: legacy transport limit must be within 1 and ${maximum}.`);
+  }
+  return value;
+}
+
 export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
-  publicBasePath = "./") {
+  publicBasePath = "./", legacyLimits: Partial<LegacyJsonLimits> = {}) {
   if (!/^(?:\.\/|\/|\/[A-Za-z0-9._-]+\/)$/.test(publicBasePath)) {
     throw new ArtifactLoadError("Artifact base path must be ./, /, or one absolute project path.");
   }
+  const compressedLimit = legacyLimit(legacyLimits.compressedBytes,
+    RELEASE_BUNDLE_LIMITS.compressedAssetBytes, "compressedBytes");
+  const plainLimit = legacyLimit(legacyLimits.plainBytes,
+    RELEASE_BUNDLE_LIMITS.plainAssetBytes, "plainBytes");
   const publicPath = (relative: string) => `${publicBasePath}${relative.replace(/^\.\//, "")}`;
   let activeBundlePromise: Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> | null = null;
   let loadedModelFormat: string | null = null;
@@ -48,17 +68,10 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     const pointer = parseActiveReleaseBundle(parseBoundedJson(await readBoundedResponse(response,
       RELEASE_BUNDLE_LIMITS.activePointerBytes, "active.json"), "active.json"), "active.json");
     const basePath = publicPath(`./data/bundles/${pointer.bundleId}/`);
-    const manifestResponse = await runtime.fetch(`${basePath}release-manifest.json`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!manifestResponse.ok) {
-      throw new ArtifactLoadError(`release-manifest.json: unable to load (${manifestResponse.status}).`);
-    }
-    const bytes = await readBoundedResponse(manifestResponse,
-      RELEASE_BUNDLE_LIMITS.manifestBytes, "release-manifest.json");
-    if (await sha256Hex(bytes) !== pointer.manifestSha256) {
-      throw new ArtifactLoadError("release-manifest.json: SHA-256 differs from active.json.manifestSha256.");
-    }
+    const bytes = await fetchVerifiedBundleBytes(`${basePath}release-manifest.json`,
+      "release-manifest.json", RELEASE_BUNDLE_LIMITS.manifestBytes,
+      pointer.manifestSha256, undefined,
+      "SHA-256 differs from active.json.manifestSha256.");
     const manifest = parseReleaseManifest(parseBoundedJson(bytes, "release-manifest.json"),
       "release-manifest.json");
     if (manifest.tag !== pointer.tag || manifest.bundleId !== pointer.bundleId) {
@@ -75,15 +88,37 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
 
   async function fetchBundleAsset(bundle: { manifest: ReleaseManifestV1; basePath: string },
     entry: ReleaseManifestAsset): Promise<unknown> {
-    const response = await runtime.fetch(`${bundle.basePath}${entry.path}`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) throw new ArtifactLoadError(`${entry.path}: unable to load (${response.status}).`);
-    const bytes = await readBoundedResponse(response, entry.bytes, entry.path);
-    if (bytes.byteLength !== entry.bytes || await sha256Hex(bytes) !== entry.sha256) {
-      throw new ArtifactLoadError(`${entry.path}: byte length or SHA-256 differs from release-manifest.json.`);
-    }
+    const bytes = await fetchVerifiedBundleBytes(`${bundle.basePath}${entry.path}`, entry.path,
+      entry.bytes, entry.sha256, entry.bytes,
+      "byte length or SHA-256 differs from release-manifest.json.");
     return parseBoundedJson(bytes, entry.path);
+  }
+
+  async function fetchVerifiedBundleBytes(url: string, label: string, maximum: number,
+    expectedSha256: string, expectedBytes: number | undefined, mismatch: string): Promise<Uint8Array> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let response: Response;
+      try {
+        response = await runtime.fetch(url, {
+          headers: { Accept: "application/json" },
+          ...(attempt === 1 ? { cache: "no-store" as const } : {}),
+        });
+      } catch {
+        throw new Error("Artifact transport failed.");
+      }
+      if (!response.ok) throw new ArtifactLoadError(`${label}: unable to load (${response.status}).`);
+      let bytes: Uint8Array;
+      try {
+        bytes = await readBoundedResponse(response, maximum, label);
+      } catch (error) {
+        if (attempt === 0) continue;
+        throw error;
+      }
+      if ((expectedBytes === undefined || bytes.byteLength === expectedBytes) &&
+          await sha256Hex(bytes) === expectedSha256) return bytes;
+      if (attempt === 1) throw new ArtifactLoadError(`${label}: ${mismatch}`);
+    }
+    throw new ArtifactLoadError(`${label}: ${mismatch}`);
   }
 
   async function fetchGraph(): Promise<LoadedGraphData> {
@@ -109,7 +144,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       label: "graph.compact.json",
     });
     if (compactData !== null) {
-      return parseCompactGraph(compactData.value, "graph.compact.json", "recommendation");
+      return parseCompactGraph(compactData.value, compactData.label, "recommendation");
     }
     const legacyData = await fetchJsonWithGzipFallback({
       path: "./data/graph.json",
@@ -119,7 +154,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     if (!legacyData) {
       throw new ArtifactLoadError("Unable to load required graph data.");
     }
-    return parseLegacyGraph(legacyData.value, "graph.json");
+    return parseLegacyGraph(legacyData.value, legacyData.label);
   }
 
   async function fetchExplorerGraph(graphData: LoadedGraphData): Promise<LoadedGraphData> {
@@ -148,7 +183,8 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       label: "graph-explorer.compact.json",
     });
     if (explorerCompactData !== null) {
-      const explorer = parseCompactGraph(explorerCompactData.value, "graph-explorer.compact.json", "visualization");
+      const explorer = parseCompactGraph(explorerCompactData.value,
+        explorerCompactData.label, "visualization");
       assertExplorerMatches(graphData, explorer);
       return explorer;
     }
@@ -159,7 +195,8 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     const bundle = await getActiveBundle();
     const rawCompact = bundle
       ? bundle.manifest.model
-        ? { value: await fetchBundleAsset(bundle, bundle.manifest.model) } : null
+        ? { value: await fetchBundleAsset(bundle, bundle.manifest.model),
+          label: bundle.manifest.model.path } : null
       : demoMode
       ? await fetchOptionalPlainJson("./demo-data/model-mf-web.compact.json",
           "synthetic demo model", "wasiw:json:model")
@@ -183,7 +220,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
 
     if (rawCompact !== null) {
       const model = measureLocal("wasiw:schema:model", () => parseCompactModel(
-        rawCompact.value, demoMode ? "synthetic demo model" : "model-mf-web.compact.json",
+        rawCompact.value, rawCompact.label,
       ));
       loadedModelFormat = model.format;
       generatedAt = model.generatedAt;
@@ -201,7 +238,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
         }
       });
     } else if (rawLegacy !== null) {
-      const model = parseLegacyModel(rawLegacy.value, "model-mf-web.json");
+      const model = parseLegacyModel(rawLegacy.value, rawLegacy.label);
       loadedModelFormat = "legacy-model";
       generatedAt = model.generatedAt;
       factors = model.factors;
@@ -242,12 +279,13 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
   }
 
   async function fetchOptionalPlainJson(url: string, label: string,
-    metric: LocalPerformanceMetric): Promise<{ value: unknown } | null> {
+    metric: LocalPerformanceMetric): Promise<{ value: unknown; label: string } | null> {
     const response = await runtime.fetch(publicPath(url));
     if (response.status === 404) return null;
     if (!response.ok) throw new ArtifactLoadError(`Unable to load ${label} (${response.status}).`);
     try {
-      return { value: await measureLocalAsync(metric, () => response.json()) as unknown };
+      return { value: await measureLocalAsync(metric, () => response.json()) as unknown,
+        label };
     } catch {
       throw new ArtifactLoadError(`${label}: invalid JSON. Rebuild or replace this artifact.`);
     }
@@ -261,55 +299,73 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     path: string;
     required: boolean;
     label: string;
-  }): Promise<{ value: unknown } | null> {
+  }): Promise<{ value: unknown; label: string } | null> {
     const gzPath = publicPath(`${path}.gz`);
-    let gzStatus: number | null = null;
-
+    let gzResponse: Response;
     try {
-      const gzResponse = await runtime.fetch(gzPath);
-      gzStatus = gzResponse.status;
-      if (gzResponse.ok) {
-        try {
-          return { value: await parseGzipJsonResponse(gzResponse, label) };
-        } catch {
-          console.warn(`Failed to parse ${label}.gz; falling back to JSON`);
-        }
-      } else if (gzResponse.status !== 404) {
-        console.warn(`Unable to load ${label}.gz (${gzResponse.status})`);
-      }
+      gzResponse = await runtime.fetch(gzPath, { cache: "no-store" });
     } catch {
-      console.warn(`Fetch failed for ${label}.gz`);
+      throw new Error("Artifact transport failed.");
+    }
+    if (gzResponse.status !== 404) {
+      if (!gzResponse.ok) throw new ArtifactLoadError(`${label}.gz: unable to load (${gzResponse.status}).`);
+      try {
+        return { value: await parseGzipJsonResponse(gzResponse, label), label: `${label}.gz` };
+      } catch (error) {
+        if (!(error instanceof UnsupportedGzipError)) throw error;
+      }
     }
 
-    const response = await runtime.fetch(publicPath(path));
+    let response: Response;
+    try {
+      response = await runtime.fetch(publicPath(path), { cache: "no-store" });
+    } catch {
+      throw new Error("Artifact transport failed.");
+    }
     if (!response.ok) {
-      if (!required && response.status === 404 && (gzStatus === 404 || gzStatus === null)) {
+      if (!required && response.status === 404 && gzResponse.status === 404) {
         return null;
       }
-      throw new ArtifactLoadError(`Unable to load ${label} (${response.status})`);
+      if (response.status === 404 && gzResponse.ok) {
+        throw new ArtifactLoadError(`${label}.gz: this browser cannot decompress gzip and ${label} is missing.`);
+      }
+      throw new ArtifactLoadError(`Unable to load ${label} (${response.status}).`);
     }
-    try {
-      return { value: await response.json() };
-    } catch {
-      throw new ArtifactLoadError(`${label}: invalid JSON. Rebuild or replace this artifact.`);
-    }
+    const bytes = await readBoundedResponse(response, plainLimit, label);
+    return { value: parseBoundedJson(bytes, label), label };
   }
 
   async function parseGzipJsonResponse(
     response: Response,
     label: string,
   ): Promise<unknown> {
+    const source = `${label}.gz`;
+    const bytes = await readBoundedResponse(response, plainLimit, source, compressedLimit);
+    if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
+      try {
+        return parseBoundedJson(bytes, source);
+      } catch {
+        throw new ArtifactLoadError(`${source}: expected gzip bytes or browser-decoded JSON.`);
+      }
+    }
     if (typeof DecompressionStream === "undefined") {
-      throw new ArtifactLoadError(
-        `This browser does not support DecompressionStream for ${label}.gz`,
-      );
+      throw new UnsupportedGzipError(`${source}: this browser does not support gzip decompression.`);
     }
-    if (!response.body) {
-      throw new ArtifactLoadError(`Missing response body for ${label}.gz`);
+    let decompressor: DecompressionStream;
+    try {
+      decompressor = new DecompressionStream("gzip");
+    } catch {
+      throw new UnsupportedGzipError(`${source}: this browser does not support gzip decompression.`);
     }
-    const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
-    const text = await new Response(stream).text();
-    return JSON.parse(text) as unknown;
+    let plain: Uint8Array;
+    try {
+      const stream = new Response(bytes.buffer as ArrayBuffer).body!.pipeThrough(decompressor);
+      plain = await readBoundedResponse(new Response(stream), plainLimit, source);
+    } catch (error) {
+      if (error instanceof ArtifactLoadError && !(error instanceof ArtifactBodyReadError)) throw error;
+      throw new ArtifactLoadError(`${source}: invalid gzip stream.`);
+    }
+    return parseBoundedJson(plain, source);
   }
 
   return { fetchGraph, fetchExplorerGraph, fetchModelRecommendationIndex, fetchDemoCatalog,
@@ -355,26 +411,41 @@ function sameFields<T extends object>(left: T, right: T, fields: (keyof T)[]): b
   return fields.every((field) => left[field] === right[field]);
 }
 
-async function readBoundedResponse(response: Response, maximum: number, label: string): Promise<Uint8Array> {
+async function readBoundedResponse(response: Response, maximum: number, label: string,
+  compressedMaximum?: number): Promise<Uint8Array> {
   const advertised = response.headers.get("content-length");
   if (advertised !== null && /^\d+$/.test(advertised) && Number(advertised) > maximum) {
-    throw new ArtifactLoadError(`${label}: advertised byte length exceeds bundle limit.`);
+    throw new ArtifactLoadError(`${label}: advertised byte length exceeds transport limit.`);
   }
   if (!response.body) throw new ArtifactLoadError(`${label}: response body is missing.`);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
   let completed = false;
+  let firstByte: number | undefined;
+  let secondByte: number | undefined;
   try {
     while (true) {
       const next = await reader.read();
       if (next.done) { completed = true; break; }
+      let prefixIndex = 0;
+      if (firstByte === undefined && next.value.byteLength > prefixIndex) {
+        firstByte = next.value[prefixIndex++];
+      }
+      if (secondByte === undefined && next.value.byteLength > prefixIndex) {
+        secondByte = next.value[prefixIndex];
+      }
       length += next.value.byteLength;
-      if (length > maximum) throw new ArtifactLoadError(`${label}: byte length exceeds bundle limit.`);
+      const limit = firstByte === 0x1f && secondByte === 0x8b && compressedMaximum !== undefined
+        ? compressedMaximum : maximum;
+      if (length > limit) throw new ArtifactLoadError(`${label}: byte length exceeds transport limit.`);
       chunks.push(next.value);
     }
+  } catch (error) {
+    if (error instanceof ArtifactLoadError) throw error;
+    throw new ArtifactBodyReadError(`${label}: response body could not be read.`);
   } finally {
-    if (!completed) await reader.cancel().catch(() => undefined);
+    if (!completed) void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
   const bytes = new Uint8Array(length);
