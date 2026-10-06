@@ -19,13 +19,24 @@ if (scenarioName !== "fixture" && scenarioName !== "scale") {
   throw new Error("--scenario must be fixture or scale.");
 }
 const traceGraph = process.argv.includes("--trace-graph");
+// Diagnostic only: element.click() bypasses native pointer activation and focus work.
+const traceGraphDomClick = process.argv.includes("--trace-graph-dom-click");
+const traceGraphTouch = process.argv.includes("--trace-graph-touch");
+if ((traceGraphDomClick || traceGraphTouch) && !traceGraph) {
+  throw new Error("Graph control input diagnostics require --trace-graph.");
+}
+if (traceGraphDomClick && traceGraphTouch) {
+  throw new Error("Choose one graph control input diagnostic at a time.");
+}
+const traceSuffix = traceGraphDomClick ? "-dom-click" : traceGraphTouch ? "-touch" : "";
 const outputPath = join(webRoot, "test-results",
-  traceGraph ? `performance-${scenarioName}-trace.json`
+  traceGraph ? `performance-${scenarioName}-trace${traceSuffix}.json`
     : scenarioName === "scale" ? "performance-scale.json" : "performance-baseline.json");
 const runs = readPositiveInteger("--runs", 3);
 const updates = readPositiveInteger("--updates", 8);
 const graphRenders = readPositiveInteger("--graph-renders", 4);
-const graphTracePath = join(webRoot, "test-results", "performance-graph-trace.json");
+const graphTracePath = join(webRoot, "test-results",
+  `performance-graph-trace${traceSuffix}.json`);
 const profiles = [
   { name: "desktop", viewport: { width: 1365, height: 768 }, deviceScaleFactor: 1,
     cpuRate: 1, latencyMs: 0, downBytesPerSecond: -1, upBytesPerSecond: -1 },
@@ -85,14 +96,19 @@ function phaseSummaries(samples, names, measuresFor, longTasksFor) {
 
 function summarizeGraphTrace(events) {
   const firstRenderStart = events.find((event) =>
-    event.name === "wasiw:network:render" && event.ph === "b")?.ts ?? null;
+    event.name === "wasiw:network:render" && event.ph === "b");
   const firstRenderEnd = events.find((event) =>
-    event.name === "wasiw:network:render" && event.ph === "e")?.ts ?? null;
+    event.name === "wasiw:network:render" && event.ph === "e" &&
+    event.pid === firstRenderStart?.pid && event.tid === firstRenderStart?.tid);
+  if (!firstRenderStart || !firstRenderEnd) {
+    throw new Error("The graph trace is missing the first renderer-thread render markers.");
+  }
   return events.filter((event) => event.ph === "X" && event.name === "RunTask" &&
+    event.pid === firstRenderStart.pid && event.tid === firstRenderStart.tid &&
     event.dur >= 50_000).sort((left, right) => left.ts - right.ts).map((task) => ({
-    window: firstRenderStart !== null && task.ts < firstRenderStart
+    window: task.ts < firstRenderStart.ts
       ? "before-first-render"
-      : firstRenderEnd !== null && task.ts < firstRenderEnd
+      : task.ts < firstRenderEnd.ts
         ? "first-render" : "after-first-render",
     durationMs: round(task.dur / 1000),
     // These trace slices may nest; their durations are not additive.
@@ -100,7 +116,8 @@ function summarizeGraphTrace(events) {
       event.pid === task.pid && event.tid === task.tid &&
       event.ts >= task.ts && event.ts + event.dur <= task.ts + task.dur &&
       event.dur >= 1000 &&
-      ["EventDispatch", "FunctionCall", "UpdateLayoutTree", "Layout", "Paint", "PrePaint"]
+      ["EventDispatch", "FunctionCall", "UpdateLayoutTree", "Layout", "Paint", "PrePaint",
+        "MajorGC", "MinorGC"]
         .includes(event.name)).map((event) => ({
       name: event.name,
       durationMs: round(event.dur / 1000),
@@ -208,6 +225,7 @@ async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = fals
   const context = await browser.newContext({
     viewport: profile.viewport,
     deviceScaleFactor: profile.deviceScaleFactor,
+    hasTouch: traceGraphTouch && profile.name === "mobile",
     serviceWorkers: "block",
   });
   const blockedBefore = proxy.blockedRequests;
@@ -307,7 +325,16 @@ async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = fals
     const firstGraphEnd = firstGraphEntry.startTime + firstGraphEntry.duration;
     const networkReadyMs = firstGraphEntry.startTime + firstGraphEntry.duration - navStart;
     if (await page.locator("#network-mobile-toggle").isVisible()) {
-      await page.locator("#network-mobile-toggle").click();
+      if (traceGraphDomClick) {
+        await page.locator("#network-mobile-toggle").evaluate((element) => element.click());
+      } else if (traceGraphTouch) {
+        await page.locator("#network-mobile-toggle").tap();
+      } else {
+        await page.locator("#network-mobile-toggle").click();
+      }
+      if (await page.locator("#network-mobile-toggle").getAttribute("aria-expanded") !== "true") {
+        throw new Error("The compact network controls did not open.");
+      }
     }
     if (captureGraphTrace) {
       // Include SVG insertion and the following compact-control interaction.
@@ -524,6 +551,8 @@ try {
       logicalCpus: cpus().length, ramBytes: totalmem() },
     profiles, runs, updatesPerModePerRun: updates,
     graphRendersPerRun: graphRenders,
+    mobileCompactControlInput: traceGraphDomClick ? "DOM click"
+      : traceGraphTouch ? "emulated touch" : "mouse pointer",
     graphRerenderControl: samples.desktop[0].graph.rerenderControl,
     initialAssetSizes,
     initialAssetTotals: {
