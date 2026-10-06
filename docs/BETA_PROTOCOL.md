@@ -45,4 +45,50 @@ Freeze these rules before the first human session. The round is a small diagnost
 
 ## Minimal restricted session record
 
-Use a random session code with no identity mapping in the repository. For consenting sessions, record: protocol/build/bundle IDs; case and device class; consent yes/date; whether any separate quotation opt-in was given; starting path and actual engine; each prompt's unassisted/assisted/incomplete outcome and elapsed minute; explanation pass with one brief paraphrase; eligible first-list count and plausible count; app-marked exclusion leaks; local persistence result; feedback codes (already-seen, disliked, confusing, irrelevant, prerequisite-missing, metadata-wrong, other); and a redacted defect reference if needed. Do not store raw titles, usernames, ratings, private lists, screenshots, or provider responses in this record. M10.3 owns collection and aggregate reporting once sessions are authorized.
+Use a random session code with no identity mapping in the repository. For consenting sessions, record: protocol/build/bundle IDs; case and device class; consent yes/date; whether any separate quotation opt-in was given; starting path and requested/actual engine; each prompt's unassisted/assisted/incomplete outcome and elapsed minute; explanation pass with one brief paraphrase; eligible first-list count and plausible count; app-marked exclusion leaks and separately recalled unrecorded watches; local persistence result; feedback codes (already-seen, disliked, confusing, irrelevant, prerequisite-missing, metadata-wrong, other); and a redacted defect reference if needed. Do not store raw titles, usernames, ratings, private lists, screenshots, or provider responses in this record. M10.3 owns collection and aggregate reporting once sessions are authorized.
+
+## Local aggregate preparation (M10.3, no sessions collected)
+
+`scripts/beta_feedback_summary.py` accepts a strict, bounded JSON subset of the restricted record and writes an aggregate-only JSON report. Keep both files in a restricted local directory **outside the repository**; the command refuses repository paths and will not overwrite an existing report. Run it only after the source/use, release, and consent gates above permit human sessions. A brief explanation paraphrase or local reproduction note stays in separate restricted notes and is never passed to this command. Use an invented equivalent when linking a defect to a regression test. The command makes no release decision.
+
+The input has `format: beta-session-records-v1`, `protocolVersion: 1`, one public build ID, one public bundle ID, and one to eight consented `sessions`. Each session uses exactly the fields in this invented example; no extra title, username, rating, history, quotation, screenshot path, or free-text field is accepted:
+
+```json
+{
+  "format": "beta-session-records-v1",
+  "protocolVersion": 1,
+  "buildId": "invented-build",
+  "bundleId": "invented-bundle",
+  "sessions": [{
+    "sessionCode": "INVENTED01",
+    "consent": {"notesConsent": true, "date": "2026-10-05", "quoteOptIn": false},
+    "case": "sparse-history",
+    "device": "desktop",
+    "startingPath": "manual",
+    "requestedEngine": "graph",
+    "actualEngine": "graph",
+    "prompts": {
+      "start": {"outcome": "unassisted", "minutes": 1},
+      "inspect": {"outcome": "unassisted", "minutes": 1},
+      "filter": {"outcome": "unassisted", "minutes": 1},
+      "correct": {"outcome": "unassisted", "minutes": 1},
+      "save-return": {"outcome": "unassisted", "minutes": 1}
+    },
+    "previewBeforeApply": false,
+    "explanationPass": true,
+    "savedUnseen": true,
+    "savedReturn": "persisted",
+    "firstEligibleShown": 10,
+    "plausibleCount": 3,
+    "appMarkedLeaks": 0,
+    "recalledUnrecorded": 0,
+    "feedbackCodes": ["confusing"],
+    "stopCodes": [],
+    "defectRefs": []
+  }]
+}
+```
+
+Use `broad-history` with `local-import` and an explicit `previewBeforeApply`; `niche-taste` starts manually, and `new-to-anime` starts with `browse` and may request engine `none`. Device is `desktop` or physical `mobile`. Outcomes are `unassisted`, `assisted`, or `incomplete`; minutes are whole numbers from zero to three. The actual engine can be graph, model, hybrid, catalog, exploration by community or genre, or unknown. Feedback codes are the seven labels above. Stop codes are `crash`, `lost-state`, `unauthorized-network`, and `private-data-exposure`. A stop or app-marked exclusion leak needs a redacted `BETA-###` reproduction reference in restricted notes. `recalledUnrecorded` counts a participant-recognized watch that was never marked in the app; it is separate from `appMarkedLeaks`. `firstEligibleShown` counts only genuinely eligible unseen choices among the first ten displayed before filtering/saving; the three counts cannot sum above ten. A marked leak or recalled watch cannot be included among ten eligible unseen choices.
+
+After authorization and consent, run `python scripts/beta_feedback_summary.py --input <restricted-records.json> --output <restricted-aggregate.json>` with both paths outside the checkout. The aggregate contains only fixed build/bundle IDs and counts: cases/devices, requested and actual engines, unassisted core journeys, explanation and assessable 3-of-10 outcomes by case, assistance/incompletion, feedback, exclusion leaks, unrecorded watches, stops, and defect-reference count. Session codes, dates, references, and notes do not leave the restricted input. Review the frozen M10.2 thresholds against the counts and the separate technical gates; an aggregate by itself cannot authorize release or establish human usefulness from invented rehearsal records.
