@@ -5,7 +5,7 @@ Recommendation and discovery project with an offline synthetic development path.
 - TypeScript collection, SQLite, normalization, and graph-building pipelines.
 - A Vite/TypeScript web app for recommendations, local preferences and watchlists, and graph exploration.
 - Python model experiments and split-first evaluation tools.
-- An optional Rust/Dioxus local graph companion with a checked Windows x64 candidate package. Its independent clean-host launch and release gate remain open.
+- An optional Rust/Dioxus local graph companion with a checked Windows x64 candidate package and an invented-data clean-host GUI check. Desktop publication remains held.
 
 New provider-derived collection, publication, and deployment remain held pending the source/use and release approvals in [the living plan](docs/DEVELOPMENT_PLAN.md). Use the invented demo below for routine development.
 
@@ -303,4 +303,4 @@ GitHub Actions workflow included:
 
 ## 6) Desktop release hold
 
-The old tag-triggered EXE publisher has been removed. M9.4 has a local synthetic bounded-loading check. M9.5 now creates and verifies a local Windows x64 candidate ZIP with a pinned Rust toolchain and explicit runtime prerequisites; CI uploads no package. M9.6 still requires an outside-repository launch before any desktop publication route is reviewed.
+The old tag-triggered EXE publisher has been removed. M9.4 has a synthetic bounded-loading check. M9.5 creates and verifies a Windows x64 candidate ZIP with a pinned Rust toolchain and explicit runtime prerequisites. M9.6's invented kit now passes four GUI states in an interactive Windows x64 runner after its checkout is emptied. CI uploads no package. Any desktop publication still needs a separately reviewed release route and permitted graph source.

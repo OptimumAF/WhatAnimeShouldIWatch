@@ -67,3 +67,36 @@ jobs:
           $probe = Join-Path $env:RUNNER_TEMP 'anime-graph-desktop-candidate'
           Expand-Archive -LiteralPath desktop/target/package/anime-graph-desktop-windows-x64.zip -DestinationPath $probe
           & (Join-Path $probe 'anime-graph-desktop/Check-Prerequisites.ps1')
+
+      - name: Smoke packaged GUI without a checkout
+        shell: pwsh
+        run: |
+          $workspaceItem = Get-Item -LiteralPath $env:GITHUB_WORKSPACE -Force
+          $runnerTempItem = Get-Item -LiteralPath $env:RUNNER_TEMP -Force
+          $workspace = $workspaceItem.FullName.TrimEnd('\')
+          $runnerRoot = $runnerTempItem.Parent.FullName.TrimEnd('\')
+          $repositoryName = ($env:GITHUB_REPOSITORY -split '/')[1]
+          if (-not $workspace.StartsWith($runnerRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+              (Split-Path -Leaf $workspace) -ne $repositoryName -or
+              ($workspaceItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'The checkout is not a regular child of the runner workspace.'
+          }
+          $kit = Join-Path $env:RUNNER_TEMP 'anime-graph-m9-clean-kit'
+          $kitArchive = Join-Path $workspace 'desktop/target/package/anime-graph-desktop-smoke-kit-windows-x64.zip'
+          $smokeScript = Join-Path $env:RUNNER_TEMP 'windows_gui_smoke.ps1'
+          Copy-Item -LiteralPath (Join-Path $workspace 'desktop/scripts/windows_gui_smoke.ps1') -Destination $smokeScript
+          Write-Output "Invented smoke kit SHA-256: $((Get-FileHash -LiteralPath $kitArchive -Algorithm SHA256).Hash.ToLowerInvariant())"
+          Expand-Archive -LiteralPath $kitArchive -DestinationPath $kit
+          Set-Location -LiteralPath $kit
+          foreach ($entry in (Get-ChildItem -LiteralPath $workspace -Force)) {
+            $target = [IO.Path]::GetFullPath($entry.FullName)
+            if (-not $target.StartsWith($workspace + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw 'A checkout entry is outside the verified workspace or is a reparse point.'
+            }
+            Remove-Item -LiteralPath $target -Recurse -Force
+          }
+          if (Get-ChildItem -LiteralPath $workspace -Force | Select-Object -First 1) {
+            throw 'The checkout was not emptied before the GUI smoke.'
+          }
+          & $smokeScript -KitDirectory $kit -RequireNoCheckout -ForceKeyboardPicker
