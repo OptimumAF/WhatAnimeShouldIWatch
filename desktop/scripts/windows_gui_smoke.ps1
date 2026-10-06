@@ -112,7 +112,6 @@ function SelectManifest($root, $window, [int] $processId, [string] $path,
             'Desktop smoke did not find the expected file picker.'
         Require ($path -match '^[A-Za-z]:\\[A-Za-z0-9_ .\\-]+$') `
             'The invented manifest path cannot be entered by the keyboard picker.'
-        $dialog.SetFocus()
         [System.Windows.Forms.SendKeys]::SendWait('%n')
         Start-Sleep -Milliseconds 100
         [System.Windows.Forms.SendKeys]::SendWait('^a')
