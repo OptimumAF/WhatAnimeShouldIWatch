@@ -1892,6 +1892,24 @@ button:hover,
   min-height: 1.05rem;
 }
 
+.network-scope {
+  margin: 0 0 0.85rem;
+  padding: 0.7rem 0.9rem;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.network-scope p {
+  margin: 0.2rem 0;
+}
+
+.network-scope #network-scope-caveat {
+  color: var(--text);
+}
+
 .network-node-list {
   margin-top: 0.9rem;
   border: 1px solid var(--line-soft);

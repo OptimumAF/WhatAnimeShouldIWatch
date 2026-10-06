@@ -143,6 +143,13 @@ test("normal mode pins one verified bundle for graph, model, and explorer", asyn
   await expect(page.locator("#diagnostic-model")).toContainText("loaded");
   await page.getByRole("button", { name: "Open network explorer page" }).click();
   await expect(page.locator("#network-render-status")).toContainText("nodes");
+  await expect(page.locator("#network-versions")).toContainText("graph-compact-v2");
+  await expect(page.locator("#network-versions")).toContainText("model-mf-compact-v1");
+  await expect(page.locator("#network-selection")).toContainText("18/18 source ratings selected");
+  await expect(page.locator("#network-explorer-sample")).toContainText("10/11 retained pair edges");
+  await expect(page.locator("#network-explorer-sample")).toContainText("10/18 retained user-anime edges sampled");
+  await expect(page.locator("#toggle-users")).toBeEnabled();
+  await expect(page.locator("#toggle-users")).not.toBeChecked();
   expect(requests.filter((name) => name === "/data/active.json")).toHaveLength(1);
   expect(requests).toContain(`/data/bundles/${manifest.bundleId}/graph.compact.json`);
   expect(requests).toContain(`/data/bundles/${manifest.bundleId}/model-mf-web.compact.json`);

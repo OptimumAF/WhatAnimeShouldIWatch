@@ -55,9 +55,33 @@ test("offline demo loads synthetic graph, catalog, and model without provider re
   await page.getByRole("button", { name: "Open network explorer page" }).click();
   await expect(page.locator("#graph svg")).toBeVisible();
   await expect(page.locator("#network-render-status")).toContainText("nodes");
+  await expect(page.locator("#network-versions")).toContainText("graph-compact-v3");
+  await expect(page.locator("#network-versions")).toContainText("model-mf-compact-v1");
 
   expect(unexpectedRequests).toEqual([]);
   expect(pageErrors).toEqual([]);
+});
+
+test("aggregate explorer labels selected evidence and omissions without implying no users", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await expect(page.locator("#network-render-status")).toContainText("nodes");
+  await expect(page.locator("#network-versions")).toContainText("Recommendation graph: graph-compact-v3");
+  await expect(page.locator("#network-versions")).toContainText("expected format model-mf-compact-v1 when requested");
+  await expect(page.locator("#network-selection")).toContainText("18/18 source ratings selected");
+  await expect(page.locator("#network-selection")).toContainText("11/11 eligible pair edges retained");
+  await expect(page.locator("#network-explorer-sample")).toContainText("10/11 retained pair edges (1 omitted; sample cap 10)");
+  await expect(page.locator("#network-explorer-sample")).toContainText("User rows are deliberately omitted from v3");
+  await expect(page.locator("#network-drawing-limits")).toContainText("12000 pair edges and 4000 user-anime edges");
+  await expect(page.locator("#network-scope-caveat")).toContainText("does not prove no relationship");
+  await expect(page.locator("#toggle-users")).toBeDisabled();
+  await expect(page.locator("#toggle-users-label")).toContainText("User rows omitted");
+  await expect(page.locator("#network-search-input")).toHaveAttribute("aria-label", "Search loaded anime nodes");
+  await expect(page.locator("#stats")).toContainText("User rows");
+  await expect(page.locator("#stats")).toContainText("omitted from v3");
+  await expect(page.locator("#network-scope-caveat")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test("network explorer distinguishes signed v1 pair preference without calling it similarity", async ({ page }) => {
@@ -103,4 +127,10 @@ test("a valid selected-pair aggregate graph still loads recommendations and the 
   await page.getByRole("button", { name: "Open network explorer page" }).click();
   await expect(page.locator("#graph svg")).toBeVisible();
   await expect(page.locator("#network-render-status")).toContainText("edges");
+  await page.locator("#network-search-input").fill("anime:105");
+  await page.locator("#network-search-form button").click();
+  await expect(page.locator("#network-search-message")).toContainText("not in the current explorer sample or filter");
+  await page.locator("#network-search-input").fill("anime:999");
+  await page.locator("#network-search-form button").click();
+  await expect(page.locator("#network-search-message")).toContainText("does not prove no relationship");
 });
