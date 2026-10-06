@@ -2,6 +2,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 const MANIFEST_LIMIT: u64 = 256 * 1024;
@@ -416,8 +417,18 @@ pub fn parse_graph(bytes: &[u8]) -> Result<CompactGraphV3, String> {
     Ok(graph)
 }
 
-fn read_bounded(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>, String> {
-    let length = fs::metadata(path)
+fn read_bounded(
+    path: &Path,
+    limit: u64,
+    label: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<Vec<u8>>, String> {
+    if cancelled() {
+        return Ok(None);
+    }
+    let mut file = fs::File::open(path).map_err(|_| format!("{label}: missing or unreadable"))?;
+    let length = file
+        .metadata()
         .map_err(|_| format!("{label}: missing or unreadable"))?
         .len();
     if length == 0 || length > limit {
@@ -425,15 +436,58 @@ fn read_bounded(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>, String>
             "{label}: byte length is outside the supported bound"
         ));
     }
-    let bytes = fs::read(path).map_err(|_| format!("{label}: missing or unreadable"))?;
-    if bytes.len() as u64 != length || bytes.len() as u64 > limit {
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(length as usize)
+        .map_err(|_| format!("{label}: cannot reserve the declared byte length"))?;
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        if cancelled() {
+            return Ok(None);
+        }
+        let count = file
+            .read(&mut chunk)
+            .map_err(|_| format!("{label}: unreadable during read"))?;
+        if count == 0 {
+            break;
+        }
+        if bytes.len() as u64 + count as u64 > limit {
+            return Err(format!("{label}: byte length exceeds the supported bound"));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    if bytes.len() as u64 != length {
         return Err(format!("{label}: byte length changed during read"));
     }
-    Ok(bytes)
+    if cancelled() {
+        return Ok(None);
+    }
+    Ok(Some(bytes))
 }
 
+#[cfg(test)]
 pub fn load_bundle(manifest_path: &Path) -> Result<LoadedBundle, String> {
-    let manifest_bytes = read_bounded(manifest_path, MANIFEST_LIMIT, "release-manifest.json")?;
+    load_bundle_with_cancel(manifest_path, &|| false)
+        .map(|bundle| bundle.expect("an uncancelled load returns a bundle"))
+}
+
+/// Returns `None` when a newer selection supersedes this local read.
+pub fn load_bundle_with_cancel(
+    manifest_path: &Path,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<LoadedBundle>, String> {
+    let manifest_bytes = match read_bounded(
+        manifest_path,
+        MANIFEST_LIMIT,
+        "release-manifest.json",
+        cancelled,
+    )? {
+        Some(bytes) => bytes,
+        None => return Ok(None),
+    };
+    if cancelled() {
+        return Ok(None);
+    }
     let manifest_value: serde_json::Value = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("release-manifest.json: {error}"))?;
     let object = manifest_value
@@ -448,17 +502,30 @@ pub fn load_bundle(manifest_path: &Path) -> Result<LoadedBundle, String> {
     let directory = manifest_path
         .parent()
         .ok_or("release-manifest.json: no containing directory")?;
-    let graph_bytes = read_bounded(
+    let graph_bytes = match read_bounded(
         &directory.join("graph.compact.json"),
         GRAPH_LIMIT,
         "graph.compact.json",
-    )?;
+        cancelled,
+    )? {
+        Some(bytes) => bytes,
+        None => return Ok(None),
+    };
+    if cancelled() {
+        return Ok(None);
+    }
     if graph_bytes.len() as u64 != manifest.neighborhood.bytes
         || format!("{:x}", Sha256::digest(&graph_bytes)) != manifest.neighborhood.sha256
     {
         return Err("graph.compact.json: byte length or SHA-256 differs from release-manifest.json.neighborhood".into());
     }
+    if cancelled() {
+        return Ok(None);
+    }
     let graph = parse_graph(&graph_bytes)?;
+    if cancelled() {
+        return Ok(None);
+    }
     if graph.graph_id != manifest.neighborhood.graph_id
         || graph.dataset != manifest.dataset
         || graph.anime_count != manifest.catalog.anime_count
@@ -468,11 +535,11 @@ pub fn load_bundle(manifest_path: &Path) -> Result<LoadedBundle, String> {
                 .into(),
         );
     }
-    Ok(LoadedBundle {
+    Ok(Some(LoadedBundle {
         tag: manifest.tag,
         bundle_id: manifest.bundle_id,
         graph,
-    })
+    }))
 }
 
 pub fn load_demo_graph() -> Result<CompactGraphV3, String> {
@@ -483,6 +550,8 @@ pub fn load_demo_graph() -> Result<CompactGraphV3, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::cell::Cell;
+    use std::io::Write;
     use tempfile::TempDir;
 
     fn fixture_path() -> std::path::PathBuf {
@@ -566,5 +635,38 @@ mod tests {
         assert!(load_bundle(&manifest_path)
             .unwrap_err()
             .contains("neighborhood.format"));
+    }
+
+    #[test]
+    fn bounded_reader_stops_a_superseded_large_read_and_rejects_oversize_input() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("invented-large.json");
+        let mut file = fs::File::create(&path).unwrap();
+        for _ in 0..64 {
+            file.write_all(&[b'x'; 64 * 1024]).unwrap();
+        }
+        drop(file);
+        let calls = Cell::new(0);
+        let cancelled = || {
+            calls.set(calls.get() + 1);
+            calls.get() > 5
+        };
+        assert!(
+            read_bounded(&path, GRAPH_LIMIT, "graph.compact.json", &cancelled)
+                .unwrap()
+                .is_none()
+        );
+        assert!(calls.get() > 5);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(MANIFEST_LIMIT + 1)
+            .unwrap();
+        assert!(
+            read_bounded(&path, MANIFEST_LIMIT, "release-manifest.json", &|| false)
+                .unwrap_err()
+                .contains("byte length is outside")
+        );
     }
 }
