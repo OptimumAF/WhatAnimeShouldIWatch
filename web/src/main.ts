@@ -922,6 +922,7 @@ diagnosticModelEl.textContent = modelVersionLabel(activeReleaseManifest, null, "
 const samplePopularityAvailable = !isCompactGraphData(graphData) ||
   graphData.format !== "graph-compact-v3";
 const graphNodes = getGraphNodes(graphData);
+await measureLocalAsync("wasiw:init:yield", () => runtime.yieldMainThread());
 const recommendationIndex = measureLocal("wasiw:index:graph", () =>
   isCompactGraphData(graphData)
     ? buildRecommendationIndexFromCompact(graphData)
@@ -970,8 +971,14 @@ recBlendInput.value = modelBlendWeight.toFixed(2);
 renderModelBlendValue();
 setBlendControlVisibility();
 
-populateAnimeOptions(recommendationIndex.animeList, animeMetadataCache, animeOptions);
-populateNetworkNodeOptions(graphNodes, networkNodeOptions);
+await measureLocalAsync("wasiw:init:yield", () => runtime.yieldMainThread());
+await measureLocalAsync("wasiw:init:anime-options", () =>
+  populateAnimeOptionsChunked(recommendationIndex.animeList, animeMetadataCache, animeOptions));
+await measureLocalAsync("wasiw:init:yield", () => runtime.yieldMainThread());
+await measureLocalAsync("wasiw:init:network-options", () =>
+  populateNetworkNodeOptions(graphNodes, networkNodeOptions));
+await measureLocalAsync("wasiw:init:yield", () => runtime.yieldMainThread());
+const initialUiStartedAt = performance.now();
 renderSelectedAnime();
 renderImportedHistory();
 renderWatchlist();
@@ -984,12 +991,14 @@ renderSeasonalList();
 renderContextualTips();
 syncNetworkCompactMode();
 renderCommandPaletteList();
+recordLocalDuration("wasiw:init:other-ui", initialUiStartedAt);
 
 const defaultMinWeight = getDefaultMinAnimeAnimeWeight(graphData, minWeightInput);
 minWeightInput.value = defaultMinWeight.toFixed(2);
 minWeightValue.textContent = defaultMinWeight.toFixed(2);
 
-setActiveView(viewFromHash(), true);
+measureLocal("wasiw:init:active-view", () => setActiveView(viewFromHash(), true));
+await measureLocalAsync("wasiw:init:yield", () => runtime.yieldMainThread());
 void updateRecommendations();
 if (demoCatalog) void loadSeasonalTrending(false);
 
@@ -4261,35 +4270,68 @@ function showTitleSearchChoices(
   titleSearchResults.querySelector<HTMLButtonElement>("button")?.focus();
 }
 
-function populateAnimeOptions(
+function sortedAnimeOptionValues(
   animeList: AnimeInfo[],
   metadata: ReadonlyMap<number, AnimeMetadata>,
-  datalist: HTMLDataListElement,
-): void {
+): string[] {
   const values = new Set<string>();
   for (const anime of animeList) {
     values.add(anime.label);
     for (const alias of metadata.get(anime.animeId)?.aliases ?? []) values.add(alias);
   }
-  datalist.replaceChildren(...[...values].sort((left, right) => left.localeCompare(right))
-    .slice(0, 8000).map((value) => {
+  return [...values].sort((left, right) => left.localeCompare(right)).slice(0, 8000);
+}
+
+function populateAnimeOptions(
+  animeList: AnimeInfo[],
+  metadata: ReadonlyMap<number, AnimeMetadata>,
+  datalist: HTMLDataListElement,
+): void {
+  datalist.replaceChildren(...sortedAnimeOptionValues(animeList, metadata).map((value) => {
       const option = document.createElement("option");
       option.value = value;
       return option;
     }));
 }
 
-function populateNetworkNodeOptions(nodes: GraphNode[], datalist: HTMLDataListElement): void {
+async function appendOptionValuesChunked(
+  datalist: HTMLDataListElement, values: string[],
+  batchMetric: "wasiw:init:anime-option-batch" | "wasiw:init:network-option-batch",
+): Promise<void> {
+  datalist.replaceChildren();
+  const batchSize = 500;
+  for (let start = 0; start < values.length; start += batchSize) {
+    const startedAt = performance.now();
+    const fragment = document.createDocumentFragment();
+    for (const value of values.slice(start, start + batchSize)) {
+      const option = document.createElement("option");
+      option.value = value;
+      fragment.append(option);
+    }
+    datalist.append(fragment);
+    recordLocalDuration(batchMetric, startedAt);
+    if (start + batchSize < values.length) await runtime.yieldMainThread();
+  }
+}
+
+async function populateAnimeOptionsChunked(
+  animeList: AnimeInfo[],
+  metadata: ReadonlyMap<number, AnimeMetadata>,
+  datalist: HTMLDataListElement,
+): Promise<void> {
+  await appendOptionValuesChunked(datalist, sortedAnimeOptionValues(animeList, metadata),
+    "wasiw:init:anime-option-batch");
+}
+
+async function populateNetworkNodeOptions(nodes: GraphNode[], datalist: HTMLDataListElement): Promise<void> {
   const values: string[] = [];
   for (const node of nodes) {
     values.push(node.label);
     values.push(node.id);
   }
   const uniqueSorted = [...new Set(values)].sort((left, right) => left.localeCompare(right));
-  datalist.innerHTML = uniqueSorted
-    .slice(0, 8000)
-    .map((value) => `<option value="${escapeHtml(value)}"></option>`)
-    .join("");
+  await appendOptionValuesChunked(datalist, uniqueSorted.slice(0, 8000),
+    "wasiw:init:network-option-batch");
 }
 
 function resolveNetworkNodeQuery(

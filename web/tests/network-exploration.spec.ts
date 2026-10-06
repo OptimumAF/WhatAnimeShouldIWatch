@@ -157,6 +157,7 @@ test("large invented overview cancels stale builds, draws every signed pair, and
     route.fulfill({ json: explorer }));
 
   await page.goto("/");
+  await expect(page.locator("#rec-summary")).toContainText("Showing top");
   await page.evaluate(() => {
     const browser = window as Window & {
       graphYieldHeld?: boolean;
@@ -273,6 +274,11 @@ test("large invented node overview keeps every list entry and pointer selection 
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
+  await expect(page.locator("#anime-options option[value='Invented Batch Node 600']"))
+    .toHaveCount(1);
+  await expect(page.locator("#network-node-options option")).toHaveCount(1200);
+  await expect(page.locator("#network-node-options option[value='anime:700']"))
+    .toHaveCount(1);
   await page.getByRole("button", { name: "Open network explorer page" }).click();
   await expect(page.locator("#network-versions")).toContainText("(separate loaded asset)");
   await expect(page.locator("#graph-shell")).toHaveAttribute("aria-busy", "false");
