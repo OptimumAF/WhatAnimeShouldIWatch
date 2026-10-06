@@ -42,6 +42,7 @@ import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { selectFranchiseDiverseRecommendations } from "./franchise-diversity";
 import type { FranchiseSelection } from "./franchise-diversity";
 import { ArtifactLoadError, createArtifactLoader } from "./artifact-loader";
+import { measureLocal, measureLocalAsync } from "./local-performance";
 import { appVersionLabel, dataVersionLabel, diagnosticIssue, modelVersionLabel } from "./diagnostics";
 import type { DiagnosticCode } from "./diagnostics";
 import {
@@ -855,9 +856,10 @@ diagnosticModelEl.textContent = modelVersionLabel(activeReleaseManifest, null, "
 const samplePopularityAvailable = !isCompactGraphData(graphData) ||
   graphData.format !== "graph-compact-v3";
 const graphNodes = getGraphNodes(graphData);
-const recommendationIndex = isCompactGraphData(graphData)
-  ? buildRecommendationIndexFromCompact(graphData)
-  : buildRecommendationIndex(graphData);
+const recommendationIndex = measureLocal("wasiw:index:graph", () =>
+  isCompactGraphData(graphData)
+    ? buildRecommendationIndexFromCompact(graphData)
+    : buildRecommendationIndex(graphData));
 const selectedAnimeNodeIds: string[] = [];
 const selectedAnimePreferences = new Map<string, AnimePreference>();
 const historyEntries: HistoryEntry[] = [];
@@ -3143,7 +3145,12 @@ function franchiseSelectionSummary(selection: FranchiseSelection, eligibleCount:
     `${selection.repeatedFranchiseHidden} repeated known/title-suggested series entry(ies). ${coverage}`;
 }
 
-async function updateRecommendations(checkMoreFilterMetadata = false): Promise<void> {
+function updateRecommendations(checkMoreFilterMetadata = false): Promise<void> {
+  return measureLocalAsync("wasiw:recommendation:update", () =>
+    updateRecommendationsBody(checkMoreFilterMetadata));
+}
+
+async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promise<void> {
   recommendationController?.abort();
   filterMetadataMoreBtn.disabled = true;
   filterMetadataControlsEl.hidden = true;
@@ -4235,12 +4242,12 @@ function rerenderGraph(): void {
 
     const startedAt = runtime.monotonicNow();
     try {
-      const renderResult = renderGraph(
+      const renderResult = measureLocal("wasiw:network:render", () => renderGraph(
         renderSource,
         minWeight,
         showAnimeAnimeEdges,
         showUsers,
-      );
+      ));
       if (runId !== graphRenderRunId) {
         return;
       }

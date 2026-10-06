@@ -15,6 +15,8 @@ import type {
 } from "./artifacts";
 import type { ModelRecommendationIndex } from "./domain";
 import type { RuntimePorts } from "./runtime";
+import { measureLocal, measureLocalAsync } from "./local-performance";
+import type { LocalPerformanceMetric } from "./local-performance";
 
 /** Loader-authored field/path message; never a network or provider exception body. */
 export class ArtifactLoadError extends Error {
@@ -86,9 +88,10 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
   async function fetchGraph(): Promise<LoadedGraphData> {
     if (demoMode) {
       const graph = await fetchPlainJson(
-        "./demo-data/graph.compact.json", "synthetic demo graph",
+        "./demo-data/graph.compact.json", "synthetic demo graph", "wasiw:json:graph",
       );
-      return parseCompactGraph(graph, "synthetic demo graph", "recommendation");
+      return measureLocal("wasiw:schema:graph", () =>
+        parseCompactGraph(graph, "synthetic demo graph", "recommendation"));
     }
     const bundle = await getActiveBundle();
     if (bundle) {
@@ -120,8 +123,10 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
 
   async function fetchExplorerGraph(graphData: LoadedGraphData): Promise<LoadedGraphData> {
     if (demoMode) {
-      const value = await fetchPlainJson("./demo-data/graph-explorer.compact.json", "synthetic demo explorer graph");
-      const explorer = parseCompactGraph(value, "synthetic demo explorer graph", "visualization");
+      const value = await fetchPlainJson("./demo-data/graph-explorer.compact.json",
+        "synthetic demo explorer graph", "wasiw:json:explorer");
+      const explorer = measureLocal("wasiw:schema:explorer", () =>
+        parseCompactGraph(value, "synthetic demo explorer graph", "visualization"));
       assertExplorerMatches(graphData, explorer);
       return explorer;
     }
@@ -155,7 +160,8 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       ? bundle.manifest.model
         ? { value: await fetchBundleAsset(bundle, bundle.manifest.model) } : null
       : demoMode
-      ? await fetchOptionalPlainJson("./demo-data/model-mf-web.compact.json", "synthetic demo model")
+      ? await fetchOptionalPlainJson("./demo-data/model-mf-web.compact.json",
+          "synthetic demo model", "wasiw:json:model")
       : await fetchJsonWithGzipFallback({
           path: "./data/model-mf-web.compact.json",
           required: false,
@@ -175,22 +181,24 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     let globalMean = 0;
 
     if (rawCompact !== null) {
-      const model = parseCompactModel(
+      const model = measureLocal("wasiw:schema:model", () => parseCompactModel(
         rawCompact.value, demoMode ? "synthetic demo model" : "model-mf-web.compact.json",
-      );
+      ));
       loadedModelFormat = model.format;
       generatedAt = model.generatedAt;
       factors = model.factors;
       globalMean = model.globalMean;
-      for (let index = 0; index < model.animeIds.length; index += 1) {
-        const animeId = model.animeIds[index];
-        animeByAnimeId.set(animeId, {
-          animeId,
-          title: model.titles[index],
-          bias: model.biases[index],
-          embedding: model.embeddings[index],
-        });
-      }
+      measureLocal("wasiw:index:model", () => {
+        for (let index = 0; index < model.animeIds.length; index += 1) {
+          const animeId = model.animeIds[index];
+          animeByAnimeId.set(animeId, {
+            animeId,
+            title: model.titles[index],
+            bias: model.biases[index],
+            embedding: model.embeddings[index],
+          });
+        }
+      });
     } else if (rawLegacy !== null) {
       const model = parseLegacyModel(rawLegacy.value, "model-mf-web.json");
       loadedModelFormat = "legacy-model";
@@ -216,27 +224,29 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
 
   async function fetchDemoCatalog(): Promise<DemoCatalogItem[]> {
     const raw = await fetchPlainJson(
-      "./demo-data/catalog.json", "synthetic demo catalog",
+      "./demo-data/catalog.json", "synthetic demo catalog", "wasiw:json:catalog",
     );
-    return parseDemoCatalog(raw, "synthetic demo catalog");
+    return measureLocal("wasiw:schema:catalog", () => parseDemoCatalog(raw, "synthetic demo catalog"));
   }
 
-  async function fetchPlainJson(url: string, label: string): Promise<unknown> {
+  async function fetchPlainJson(url: string, label: string,
+    metric: LocalPerformanceMetric): Promise<unknown> {
     const response = await runtime.fetch(publicPath(url));
     if (!response.ok) throw new ArtifactLoadError(`Unable to load ${label} (${response.status}). Run npm run data:fixture.`);
     try {
-      return await response.json();
+      return await measureLocalAsync(metric, () => response.json());
     } catch {
       throw new ArtifactLoadError(`${label}: invalid JSON. Rebuild or replace this artifact.`);
     }
   }
 
-  async function fetchOptionalPlainJson(url: string, label: string): Promise<{ value: unknown } | null> {
+  async function fetchOptionalPlainJson(url: string, label: string,
+    metric: LocalPerformanceMetric): Promise<{ value: unknown } | null> {
     const response = await runtime.fetch(publicPath(url));
     if (response.status === 404) return null;
     if (!response.ok) throw new ArtifactLoadError(`Unable to load ${label} (${response.status}).`);
     try {
-      return { value: await response.json() as unknown };
+      return { value: await measureLocalAsync(metric, () => response.json()) as unknown };
     } catch {
       throw new ArtifactLoadError(`${label}: invalid JSON. Rebuild or replace this artifact.`);
     }
