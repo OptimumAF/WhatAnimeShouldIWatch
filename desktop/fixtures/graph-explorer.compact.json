@@ -1,0 +1,145 @@
+{
+  "format": "graph-compact-v3",
+  "role": "visualization",
+  "dataset": {
+    "sha256": "513583994736775625fc17ae70880127ee10a9c5f6044e0de17bda6d0d293a25",
+    "scope": "anonymized-ratings-content-v1",
+    "source": "synthetic-fixture"
+  },
+  "semantics": {
+    "pairWeight": "centered-pair-preference-mean-v1",
+    "support": "co-raters-after-selection-v1",
+    "recommendationUse": "positive-only-v1"
+  },
+  "config": {
+    "seed": 0,
+    "maxRatingsPerUser": 0,
+    "maxAnimeAnimeEdges": 0,
+    "maxPairVisits": 20000000,
+    "maxPairCandidates": 2500000,
+    "minPairSupport": 1,
+    "maxNeighborsPerAnime": 0,
+    "ratingSelectionPolicy": "all-ratings"
+  },
+  "truncation": {
+    "inputRatings": 18,
+    "selectedRatings": 18,
+    "ratingsSkipped": 0,
+    "potentialPairVisits": 22,
+    "pairVisits": 22,
+    "pairVisitsSkipped": 0,
+    "candidatePairs": 11,
+    "eligiblePairs": 11,
+    "selectedPairs": 11,
+    "excludedBySupport": 0,
+    "excludedByNeighborLimit": 0,
+    "excludedByOutputLimit": 0
+  },
+  "projection": {
+    "policy": "omit-user-anime-v1"
+  },
+  "generatedAt": "2026-09-24T00:00:00.000Z",
+  "userIds": [],
+  "anime": [
+    [
+      103,
+      "Ashen Harbor"
+    ],
+    [
+      104,
+      "Glass Orchard"
+    ],
+    [
+      102,
+      "Moonlit Workshop"
+    ],
+    [
+      105,
+      "星の航路"
+    ],
+    [
+      101,
+      "Copper Comet"
+    ],
+    [
+      106,
+      "Café Nebula"
+    ]
+  ],
+  "ua": [],
+  "aa": [
+    [
+      0,
+      1,
+      -3,
+      1
+    ],
+    [
+      2,
+      3,
+      0.625,
+      2
+    ],
+    [
+      0,
+      3,
+      0.625,
+      2
+    ],
+    [
+      4,
+      2,
+      0.5833,
+      3
+    ],
+    [
+      2,
+      1,
+      -0.5,
+      2
+    ],
+    [
+      4,
+      3,
+      0.4167,
+      3
+    ],
+    [
+      2,
+      0,
+      -0.4167,
+      3
+    ],
+    [
+      4,
+      0,
+      -0.0833,
+      3
+    ],
+    [
+      4,
+      1,
+      0,
+      1
+    ],
+    [
+      2,
+      5,
+      0,
+      1
+    ]
+  ],
+  "userCount": 0,
+  "animeCount": 6,
+  "nodeCount": 6,
+  "edgeCount": 10,
+  "sourceGraphId": "24354870c39f6c3d9cb0b4b1ffb0fcb6683095aedf774b5059d19b5f3bb6a421",
+  "visualization": {
+    "policy": "abs-weight-top-k-v1",
+    "maxUserAnimeEdges": 0,
+    "maxAnimeAnimeEdges": 10,
+    "excludedUserAnimeEdges": 0,
+    "excludedAnimeAnimeEdges": 1
+  },
+  "graphId": "d4235db6c885d5823521399271a8814f6d4d9377ee69bcbf283f433ef155a100"
+}

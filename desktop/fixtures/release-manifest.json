@@ -1,0 +1,35 @@
+{
+  "format": "release-manifest-v1",
+  "tag": "data-vsynthetic-desktop-v1",
+  "dataset": {
+    "sha256": "513583994736775625fc17ae70880127ee10a9c5f6044e0de17bda6d0d293a25",
+    "scope": "anonymized-ratings-content-v1",
+    "source": "synthetic-fixture"
+  },
+  "catalog": {
+    "path": "catalog.identity.json",
+    "format": "anime-catalog-v1",
+    "sha256": "c46874e1e81dbf119ddfd4b9a1b2e9605d2a49762f186d563f5b0b7115a997a9",
+    "bytes": 508,
+    "animeCount": 8,
+    "itemMapSha256": "17881e3f0dad961697586ed51d2aaa44a73f1e970c8122d47604a57160a91186"
+  },
+  "neighborhood": {
+    "path": "graph.compact.json",
+    "format": "graph-compact-v3",
+    "sha256": "8c682e557012f2502f4d98cff98ae9151e66469d8fd55ac69d9712eacc9387b7",
+    "bytes": 2265,
+    "graphId": "24354870c39f6c3d9cb0b4b1ffb0fcb6683095aedf774b5059d19b5f3bb6a421"
+  },
+  "explorer": {
+    "path": "graph-explorer.compact.json",
+    "format": "graph-compact-v3",
+    "sha256": "36a26abb7d3e8d22c221bddfe76ed75c0f2ce796cbb2547548b9012cc1169852",
+    "bytes": 2396,
+    "graphId": "d4235db6c885d5823521399271a8814f6d4d9377ee69bcbf283f433ef155a100",
+    "sourceGraphId": "24354870c39f6c3d9cb0b4b1ffb0fcb6683095aedf774b5059d19b5f3bb6a421"
+  },
+  "model": null,
+  "lastKnownGood": null,
+  "bundleId": "ad7bff4b962fde4513862c9697729f2820967622670536086aac5f53473456d8"
+}
