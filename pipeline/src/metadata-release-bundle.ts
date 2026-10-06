@@ -208,17 +208,18 @@ function verifyOne(directory: string): { manifest: BrowserReleaseManifest; manif
   return { manifest, manifestBytes };
 }
 
-/** Public-byte check only; the source digest still needs private-source and rights review. */
-export function verifyMetadataReleaseBundle(directory: string, previousDirectory?: string,
-  fixtureGenesis = false): ReleaseManifestV2 {
+/** Local data-only byte check for a v1 or v2 predecessor; this does not verify source rights. */
+export function verifyLocalDataOnlyBundle(directory: string, previousDirectory?: string,
+  fixtureGenesis = false): BrowserReleaseManifest {
   const current = verifyOne(directory);
-  if (current.manifest.format !== "release-manifest-v2") {
-    fail(RELEASE_FILES.manifest, "must be release-manifest-v2");
+  if (current.manifest.neighborhood.format !== "graph-compact-v3" ||
+      current.manifest.model !== null) {
+    fail(RELEASE_FILES.neighborhood, "requires a data-only aggregate graph-compact-v3 bundle");
   }
   const priorLink = current.manifest.lastKnownGood;
   if (priorLink === null) {
     if (!fixtureGenesis || previousDirectory) {
-      fail("lastKnownGood", "first metadata bundle is fixture-only without a reviewed prior");
+      fail("lastKnownGood", "first data-only bundle is fixture-only without a reviewed prior");
     }
     return current.manifest;
   }
@@ -237,6 +238,16 @@ export function verifyMetadataReleaseBundle(directory: string, previousDirectory
     fail("lastKnownGood", "tag, bundleId, or manifest-byte hash differs from predecessor");
   }
   return current.manifest;
+}
+
+/** Public-byte check only; the source digest still needs private-source and rights review. */
+export function verifyMetadataReleaseBundle(directory: string, previousDirectory?: string,
+  fixtureGenesis = false): ReleaseManifestV2 {
+  const manifest = verifyLocalDataOnlyBundle(directory, previousDirectory, fixtureGenesis);
+  if (manifest.format !== "release-manifest-v2") {
+    fail(RELEASE_FILES.manifest, "must be release-manifest-v2");
+  }
+  return manifest;
 }
 
 /** Write once from a separate private source byte stream; no installer or publisher is changed. */

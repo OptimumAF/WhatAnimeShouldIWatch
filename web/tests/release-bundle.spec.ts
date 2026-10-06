@@ -1,9 +1,13 @@
 import crypto from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { projectAggregateGraph } from "../../pipeline/src/core/aggregate-projection";
 import { buildExplorerGraph } from "../../pipeline/src/core/explorer-graph";
-import { buildReleaseManifest } from "../../pipeline/src/release-manifest";
+import { installMetadataReleaseBundle } from "../../pipeline/src/install-metadata-release-bundle";
+import { buildMetadataReleaseManifest } from "../../pipeline/src/metadata-release-bundle";
+import { buildReleaseManifest, releaseSha256 } from "../../pipeline/src/release-manifest";
 
 const normalAppUrl = "http://127.0.0.1:5174/";
 const appVersion = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
@@ -255,6 +259,79 @@ test("browser candidate reads hash-bound invented metadata without provider enri
   await page.locator("#filter-year-min").press("Tab");
   await expect(card).toBeVisible();
   expect(requests.some((name) => name.startsWith("jikan:/v4/anime/"))).toBe(false);
+});
+
+test("browser reads the exact synthetic v2 directory activated by the local installer", async ({ page }) => {
+  const root = mkdtempSync(path.join(tmpdir(), "invented-browser-v2-install-"));
+  try {
+    const storeDir = path.join(root, "data");
+    const sourceBytes = Buffer.from("invented-browser-source-bytes");
+    const files = {
+      neighborhood: fixture("graph.aggregate.compact.json"),
+      explorer: fixture("graph-explorer.aggregate.compact.json"),
+      catalog: fixture("catalog.identity.json"),
+      metadata: Buffer.from(`${JSON.stringify({ format: "anime-metadata-catalog-v1",
+        source: { name: "invented-fixture", snapshotAt: "2026-09-24T00:00:00.000Z",
+          snapshotSha256: releaseSha256(sourceBytes) },
+        anime: [{ animeId: 102, sourceItemId: "invented:102", title: "Moonlit Workshop",
+          aliases: [], genres: ["Adventure"], year: 2022, mediaFormat: "Movie",
+          episodeCount: 1, runtimeMinutes: 95, contentClassification: null,
+          communityScore: 8.1, relations: null }] }, null, 2)}\n`),
+    };
+    const tag = "data-vsynthetic-browser-install";
+    const release = buildMetadataReleaseManifest(files, { tag, fixtureGenesis: true }, sourceBytes);
+    const manifestBytes = Buffer.from(`${JSON.stringify(release, null, 2)}\n`);
+    const assets = new Map<string, Buffer>([
+      ["release-manifest.json", manifestBytes], ["graph.compact.json", files.neighborhood],
+      ["graph-explorer.compact.json", files.explorer],
+      ["catalog.identity.json", files.catalog], ["catalog.metadata.json", files.metadata],
+    ]);
+    const installed = await installMetadataReleaseBundle({ storeDir, tag, fixtureOnly: true,
+      transport: { tag, assets: [...assets.keys()],
+        async fetchAsset(name) {
+          const bytes = assets.get(name);
+          return bytes ? new Response(new Uint8Array(bytes), { status: 200 })
+            : new Response("missing", { status: 404 });
+        } },
+    });
+    const requests: string[] = [];
+    const externalRequests: string[] = [];
+    await page.route("**/*", (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.startsWith("/data/")) {
+        requests.push(url.pathname);
+        const name = url.pathname.slice(`/data/bundles/${release.bundleId}/`.length);
+        const file = url.pathname === "/data/active.json"
+          ? path.join(storeDir, "active.json")
+          : url.pathname.startsWith(`/data/bundles/${release.bundleId}/`) && assets.has(name)
+            ? path.join(installed.bundleDir, name) : null;
+        return file ? route.fulfill({ contentType: "application/json", body: readFileSync(file) })
+          : route.fulfill({ status: 404, body: "" });
+      }
+      if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") {
+        externalRequests.push(`${url.hostname}${url.pathname}`);
+        return route.abort();
+      }
+      return route.continue();
+    });
+    await page.goto(normalAppUrl);
+    await expect(page.locator("#diagnostic-data")).toContainText(tag);
+    await page.locator("#anime-input").fill("Copper Comet");
+    await page.locator("#add-preference").selectOption("liked");
+    await page.locator("#add-anime-form button").click();
+    await expect(page.locator(".rec-item").filter({ hasText: "Moonlit Workshop" }))
+      .toContainText("Catalog community score: 8.10/10");
+    expect(requests).toContain(`/data/bundles/${release.bundleId}/catalog.metadata.json`);
+    expect(requests.some((name) => name.startsWith("/data/graph.compact.json"))).toBe(false);
+    expect(externalRequests.filter((name) => name.startsWith("api.jikan.moe/v4/anime/")))
+      .toEqual([]);
+  } finally {
+    const resolved = path.resolve(root);
+    if (!resolved.startsWith(path.resolve(tmpdir()) + path.sep)) {
+      throw new Error("Refusing cleanup outside temporary directory");
+    }
+    rmSync(resolved, { recursive: true, force: true });
+  }
 });
 
 test("bundled classification is text, never executable card markup", async ({ page }) => {
