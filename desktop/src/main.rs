@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod bundle;
 
 use bundle::{load_bundle_with_cancel, load_demo_graph, CompactGraphV3, LoadedBundle};
