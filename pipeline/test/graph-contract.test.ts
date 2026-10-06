@@ -3,11 +3,24 @@ import fs from "node:fs";
 import test from "node:test";
 import { datasetIdentity, recommendationGraphId } from "../src/core/graph-contract.js";
 import { buildExplorerGraph } from "../src/core/explorer-graph.js";
+import { projectAggregateGraph } from "../src/core/aggregate-projection.js";
 import type { AnonymizedDataset, CompactGraphDataV2 } from "../src/types.js";
 
 const fixture = JSON.parse(fs.readFileSync(
   new URL("../../web/public/demo-data/graph.compact.json", import.meta.url), "utf8",
 )) as CompactGraphDataV2;
+
+test("default demo graph and explorer are exact aggregate-only projections of the invented v2 source", () => {
+  const readDemo = (name: string) => JSON.parse(fs.readFileSync(
+    new URL(`../../web/public/demo-data/${name}`, import.meta.url), "utf8",
+  ));
+  const graph = projectAggregateGraph(fixture);
+  assert.deepEqual(readDemo("graph.aggregate.compact.json"), graph);
+  assert.deepEqual(readDemo("graph-explorer.aggregate.compact.json"), buildExplorerGraph(graph, 10, 0));
+  assert.deepEqual(graph.userIds, []);
+  assert.deepEqual(graph.ua, []);
+  assert.deepEqual(graph.aa, fixture.aa);
+});
 
 test("dataset identity ignores row order and timestamps but detects content changes", () => {
   const dataset: AnonymizedDataset = {

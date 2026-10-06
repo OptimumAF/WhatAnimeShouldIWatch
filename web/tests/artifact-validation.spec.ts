@@ -38,17 +38,28 @@ function legacyModel(): any {
 }
 
 test("a broken graph reference is named before recommendations start", async ({ page }) => {
-  const graph = demoArtifact("graph.compact.json");
-  graph.ua[0][1] = graph.anime.length;
-  await page.route("**/demo-data/graph.compact.json", (route) => route.fulfill({
+  const graph = demoArtifact("graph.aggregate.compact.json");
+  graph.aa[0][1] = graph.anime.length;
+  await page.route("**/demo-data/graph.aggregate.compact.json", (route) => route.fulfill({
     contentType: "application/json", body: JSON.stringify(graph),
   }));
 
   await page.goto("/");
   await expect(page.locator("#rec-message")).toContainText(
-    "synthetic demo graph: ua[0][1] references an index outside",
+    "synthetic demo graph: aa[0][1] references an index outside",
   );
   await expect(page.locator("#rec-engine-status")).toContainText("artifact is repaired");
+});
+
+test("demo refuses a v2 recommendation asset that would reintroduce user rows", async ({ page }) => {
+  const graph = demoArtifact("graph.compact.json");
+  await page.route("**/demo-data/graph.aggregate.compact.json", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify(graph),
+  }));
+  await page.goto("/");
+  await expect(page.locator("#rec-message")).toContainText(
+    "synthetic demo graph: format must be graph-compact-v3 for the synthetic demo",
+  );
 });
 
 test("a duplicate catalog ID reports the affected artifact", async ({ page }) => {

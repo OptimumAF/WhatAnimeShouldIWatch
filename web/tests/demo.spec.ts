@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { buildExplorerGraph } from "../../pipeline/src/core/explorer-graph";
+import { aggregateRecommendationGraphId } from "../../pipeline/src/core/graph-contract";
+import type { CompactGraphDataV3 } from "../../pipeline/src/types";
 
 test("offline demo loads synthetic graph, catalog, and model without provider requests", async ({ page }) => {
   const unexpectedRequests: string[] = [];
@@ -76,23 +80,21 @@ test("network explorer distinguishes signed v1 pair preference without calling i
   await expect(page.locator("#network-edge-legend")).not.toContainText("similarity");
 });
 
-test("a valid selected-rating and selected-pair graph still loads recommendations and the network", async ({ page }) => {
-  let selectedLegacyCompact: Record<string, unknown> | null = null;
-  await page.route("**/demo-data/graph.compact.json", async (route) => {
-    const response = await route.fetch();
-    const graph = await response.json();
-    for (const field of ["role", "graphId", "dataset", "semantics", "config", "truncation"]) delete graph[field];
-    graph.format = "graph-compact-v1";
-    graph.ua = graph.ua.slice(0, -1);
-    graph.aa = [graph.aa[0]];
-    graph.edgeCount = graph.ua.length + graph.aa.length;
-    selectedLegacyCompact = graph;
-    await route.fulfill({ response, json: graph });
-  });
-  await page.route("**/demo-data/graph-explorer.compact.json", async (route) => {
-    if (!selectedLegacyCompact) throw new Error("Selected graph was not loaded before the explorer.");
-    await route.fulfill({ json: selectedLegacyCompact });
-  });
+test("a valid selected-pair aggregate graph still loads recommendations and the network", async ({ page }) => {
+  const original = JSON.parse(readFileSync(
+    new URL("../public/demo-data/graph.aggregate.compact.json", import.meta.url), "utf8",
+  )) as CompactGraphDataV3;
+  const selectedWithoutId = { ...original,
+    config: { ...original.config, maxAnimeAnimeEdges: 1 },
+    truncation: { ...original.truncation, selectedPairs: 1,
+      excludedByOutputLimit: original.truncation.excludedByOutputLimit + original.aa.length - 1 },
+    aa: [original.aa[0]], edgeCount: 1 };
+  const { graphId: _oldGraphId, ...core } = selectedWithoutId;
+  const graph = { ...core, graphId: aggregateRecommendationGraphId(core) };
+  const explorer = buildExplorerGraph(graph, 1, 0);
+  await page.route("**/demo-data/graph.aggregate.compact.json", (route) => route.fulfill({ json: graph }));
+  await page.route("**/demo-data/graph-explorer.aggregate.compact.json", (route) =>
+    route.fulfill({ json: explorer }));
   await page.goto("/");
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");

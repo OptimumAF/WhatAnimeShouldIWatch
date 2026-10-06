@@ -56,7 +56,7 @@ test("keyboard-only favorite and shortlist flow announces the saved result", asy
 test("the visible graph has a bounded keyboard list instead of dozens of SVG tab stops", async ({ page }) => {
   const anime = Array.from({ length: 55 }, (_, index) => [index + 101, `Invented Node ${String(index + 1).padStart(2, "0")}`]);
   await blockExternalRequests(page);
-  await page.route("**/demo-data/graph-explorer.compact.json", async (route) => {
+  await page.route("**/demo-data/graph-explorer.aggregate.compact.json", async (route) => {
     const response = await route.fetch();
     const graph = await response.json();
     graph.anime = anime;

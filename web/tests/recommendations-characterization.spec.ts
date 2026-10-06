@@ -134,7 +134,7 @@ test("hybrid endpoints keep the lowest source item and a missing graph gives the
 
 test("recommendation explanation renders an invented unsafe label as text", async ({ page }) => {
   const unsafeLabel = '<img src=x onerror="window.__unsafe=1">';
-  await page.route("**/demo-data/graph.compact.json", async (route) => {
+  await page.route("**/demo-data/graph.aggregate.compact.json", async (route) => {
     const response = await route.fetch();
     const graph = await response.json();
     graph.anime[0][1] = unsafeLabel;
