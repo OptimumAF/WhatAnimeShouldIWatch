@@ -31,6 +31,13 @@ test("direct project-path navigation loads a pinned data-only release and graph 
     ["catalog.identity.json", files.catalog],
   ]);
   const requested: string[] = [];
+  const fontRequests: string[] = [];
+  const externalRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith(".woff2")) fontRequests.push(url.pathname);
+    if (url.hostname !== "127.0.0.1") externalRequests.push(request.url());
+  });
   await page.route("**/*", (route) => {
     const url = new URL(route.request().url());
     if (url.hostname === "api.jikan.moe") {
@@ -59,6 +66,10 @@ test("direct project-path navigation loads a pinned data-only release and graph 
     `${base}manifest.webmanifest`);
   await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href",
     `${base}icons/apple-touch-icon.png`);
+  await page.evaluate(() => document.fonts.ready);
+  expect(fontRequests.some((path) => path.startsWith(`${base}assets/space-grotesk-`))).toBe(true);
+  expect(fontRequests.some((path) => path.startsWith(`${base}assets/ibm-plex-mono-`))).toBe(true);
+  expect(externalRequests).toEqual([]);
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
   await page.locator("#add-anime-form button").click();

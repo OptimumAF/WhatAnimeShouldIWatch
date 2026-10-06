@@ -166,8 +166,7 @@ for (const legacyVersion of [1, 4] as const) {
         current: localStorage.getItem("wasiw.recommendationProfiles.v5"),
       }), legacyVersion);
       expect(after).toEqual(migrated);
-      expect(blockedExternal.every((url) => new URL(url).hostname === "fonts.googleapis.com"))
-        .toBe(true);
+      expect(blockedExternal).toEqual([]);
     } finally {
       staging.cleanup();
     }
