@@ -1,4 +1,66 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { aggregateRecommendationGraphId } from "../../pipeline/src/core/graph-contract";
+import type { CompactGraphDataV3 } from "../../pipeline/src/types";
+
+test("large invented ranking yields and a rapid option change keeps the latest result", async ({ page }) => {
+  const original = JSON.parse(readFileSync(new URL(
+    "../public/demo-data/graph.aggregate.compact.json", import.meta.url), "utf8",
+  )) as CompactGraphDataV3;
+  const anime: [number, string][] = [
+    [5001, "Invented Root"], [5002, "Invented Orbit"],
+    [5003, "Invented Orbit Season 2"],
+    ...Array.from({ length: 517 }, (_, index) =>
+      [5004 + index, `Invented Candidate ${index + 1}`] as [number, string]),
+  ];
+  const pairs: [number, number, number, number][] = anime.slice(1).map((_, index) =>
+    [0, index + 1, index === 0 ? 2 : index === 1 ? 1.9 : 0.1, 1]);
+  const withoutId = { ...original, anime, aa: pairs, animeCount: anime.length,
+    nodeCount: anime.length, edgeCount: pairs.length,
+    truncation: { ...original.truncation, inputRatings: 520, selectedRatings: 520,
+      potentialPairVisits: pairs.length, pairVisits: pairs.length,
+      candidatePairs: pairs.length, eligiblePairs: pairs.length,
+      selectedPairs: pairs.length } };
+  const { graphId: _oldGraphId, ...core } = withoutId;
+  const graph = { ...core, graphId: aggregateRecommendationGraphId(core) };
+  const providerRequests: string[] = [];
+  await page.route("**/*", (route) => {
+    const host = new URL(route.request().url()).hostname;
+    if (host === "127.0.0.1" || host === "localhost") return route.continue();
+    if (/api\.jikan\.moe|graphql\.anilist\.co|myanimelist\.net|r\.jina\.ai/.test(host)) {
+      providerRequests.push(host);
+    }
+    return route.abort();
+  });
+  await page.route("**/demo-data/graph.aggregate.compact.json", (route) =>
+    route.fulfill({ json: graph }));
+  await page.goto("/?perf=1");
+  await page.locator("#anime-input").fill("Invented Root");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await expect(page.locator("#rec-results .rec-title").first()).toHaveText("Invented Orbit");
+  const yieldCount = await page.evaluate(() =>
+    performance.getEntriesByName("wasiw:recommendation:yield", "measure").length);
+  expect(yieldCount).toBeGreaterThan(0);
+
+  await page.locator("#advanced-recommendation-settings summary").click();
+  const updateCount = await page.evaluate(() =>
+    performance.getEntriesByName("wasiw:recommendation:update", "measure").length);
+  await page.locator("#allow-related-titles").evaluate((element: HTMLInputElement) => {
+    element.checked = true;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.checked = false;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.waitForFunction((count) =>
+    performance.getEntriesByName("wasiw:recommendation:update", "measure").length >= count,
+  updateCount + 2);
+  await expect(page.locator("#allow-related-titles")).not.toBeChecked();
+  await expect(page.locator("#rec-summary")).toContainText("repeated known/title-suggested series entry");
+  await expect(page.locator("#rec-results .rec-title").filter({ hasText: "Invented Orbit Season 2" }))
+    .toHaveCount(0);
+  expect(providerRequests).toEqual([]);
+});
 
 test("synthetic recommendation modes retain their visible ranking and explanations", async ({ page }) => {
   await page.goto("/");

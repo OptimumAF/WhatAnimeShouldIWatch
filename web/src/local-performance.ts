@@ -18,6 +18,7 @@ export type LocalPerformanceMetric =
   | "wasiw:recommendation:franchise"
   | "wasiw:recommendation:cards"
   | "wasiw:recommendation:dom"
+  | "wasiw:recommendation:yield"
   | "wasiw:network:select"
   | "wasiw:network:construct"
   | "wasiw:network:layout"
