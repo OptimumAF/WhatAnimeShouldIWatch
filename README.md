@@ -7,14 +7,14 @@ End-to-end project for:
 - Normalizing scores per user by each user's mean score.
 - Building a weighted bipartite-plus-anime graph.
 - Visualizing the graph in a static GitHub Pages web app.
-- Running a matching local desktop app in Rust + Dioxus.
+- Developing a separate Rust + Dioxus graph companion (currently a legacy prototype).
 
 ## Repo Layout
 
 - `pipeline/`: ingestion, anonymization, normalization, graph generation.
 - `data/`: SQLite + exported JSON data.
 - `web/`: Vite TypeScript network graph viewer (GitHub Pages compatible).
-- `desktop/`: Rust/Dioxus desktop graph app.
+- `desktop/`: Rust/Dioxus desktop prototype; [scope decision](docs/decisions/0042-desktop-companion-scope.md).
 
 ## Install
 
@@ -297,25 +297,10 @@ npm run build:web
 GitHub Actions workflow included:
 `.github/workflows/deploy-web.yml`
 
-## 5) Run Rust/Dioxus Desktop App
+## 5) Desktop graph companion track
 
-Install Rust first, then:
+[Decision 0042](docs/decisions/0042-desktop-companion-scope.md) keeps desktop as an optional local graph companion; the web app owns recommendations. The current Rust binary still reads relative legacy ratings, rebuilds pairs with different semantics, and silently falls back to a sample. It is not a supported data or release path. See [desktop/README.md](desktop/README.md) for its exact limitations and synthetic-only compilation checks.
 
-```bash
-cd desktop
-cargo run
-```
+## 6) Desktop release hold
 
-## 6) Publish Desktop EXE Release
-
-Pushing a version tag (`v*`) triggers a workflow that builds the Windows EXE and attaches:
-
-- `anime_graph_desktop.exe`
-- `anime_graph_desktop.exe.sha256`
-
-Example:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+The old tag-triggered EXE publisher has been removed. M9.2–M9.6 must establish explicit v3 data selection, compatible graph behavior, verification, packaging, and an outside-repository launch before a new desktop publication route is reviewed. A CI build artifact is an engineering check, not a desktop release.
