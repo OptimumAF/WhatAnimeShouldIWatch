@@ -99,4 +99,4 @@ jobs:
           if (Get-ChildItem -LiteralPath $workspace -Force | Select-Object -First 1) {
             throw 'The checkout was not emptied before the GUI smoke.'
           }
-          & $smokeScript -KitDirectory $kit -RequireNoCheckout
+          & $smokeScript -KitDirectory $kit -RequireNoCheckout -ForceKeyboardPicker

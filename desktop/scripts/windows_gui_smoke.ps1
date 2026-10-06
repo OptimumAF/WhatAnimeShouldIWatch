@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)] [string] $KitDirectory,
-    [switch] $RequireNoCheckout
+    [switch] $RequireNoCheckout,
+    [switch] $ForceKeyboardPicker
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,7 +67,8 @@ function InvokeButton($window, [string] $name) {
     $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
-function SelectManifest($root, $window, [int] $processId, [string] $path) {
+function SelectManifest($root, $window, [int] $processId, [string] $path,
+    [bool] $forceKeyboard) {
     InvokeButton $window 'Select local manifest'
     $dialogCondition = [System.Windows.Automation.AndCondition]::new(
         [System.Windows.Automation.PropertyCondition]::new(
@@ -95,14 +97,27 @@ function SelectManifest($root, $window, [int] $processId, [string] $path) {
     )
     $deadline = (Get-Date).AddSeconds(15)
     $edit = $null
-    do {
-        $edit = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
-        if ($null -ne $edit) { break }
-        Start-Sleep -Milliseconds 200
-    } while ((Get-Date) -lt $deadline)
-    Require ($null -ne $edit) 'Desktop smoke cannot find the file name control.'
-    $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($path)
-    $edit.SetFocus()
+    if (-not $forceKeyboard) {
+        do {
+            $edit = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+            if ($null -ne $edit) { break }
+            Start-Sleep -Milliseconds 200
+        } while ((Get-Date) -lt $deadline)
+    }
+    if ($null -ne $edit) {
+        $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($path)
+        $edit.SetFocus()
+    } else {
+        Require ($dialog.Current.Name -eq 'Select release-manifest.json') `
+            'Desktop smoke did not find the expected file picker.'
+        Require ($path -match '^[A-Za-z]:\\[A-Za-z0-9_ .\\-]+$') `
+            'The invented manifest path cannot be entered by the keyboard picker.'
+        $dialog.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('%n')
+        Start-Sleep -Milliseconds 100
+        [System.Windows.Forms.SendKeys]::SendWait('^a')
+        [System.Windows.Forms.SendKeys]::SendWait($path)
+    }
     [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
 }
 
@@ -184,7 +199,7 @@ try {
     Require (-not ($names -contains 'No graph to show.')) 'Demo has no graph.'
     Write-Output 'GUI state passed: Invented demo; 8 anime; 11 pairs; limits and pair semantics.'
 
-    SelectManifest $root $window $app.Id $bundle
+    SelectManifest $root $window $app.Id $bundle $ForceKeyboardPicker.IsPresent
     $names = WaitForText $window 'Selected local data.' 'selected local data'
     RequireStat $names 'Anime' '8'
     RequireStat $names 'Signed pairs' '11'
@@ -193,7 +208,7 @@ try {
     Require (-not ($names -contains 'No graph to show.')) 'Selected local data has no graph.'
     Write-Output 'GUI state passed: selected invented local bundle; 8 anime; 11 pairs; source limits.'
 
-    SelectManifest $root $window $app.Id $missing
+    SelectManifest $root $window $app.Id $missing $ForceKeyboardPicker.IsPresent
     $names = WaitForText $window 'Load failed. No graph is active.' 'missing asset failure'
     RequireText $names 'graph.compact.json: missing or unreadable' 'missing graph error'
     RequireText $names 'No graph to show.' 'cleared graph after failure'
