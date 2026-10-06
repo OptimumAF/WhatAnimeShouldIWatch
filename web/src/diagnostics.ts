@@ -1,5 +1,5 @@
 /** Public release identities and fixed local troubleshooting codes only. */
-import type { ReleaseManifestV1 } from "./artifacts";
+import type { BrowserReleaseManifest } from "./artifacts";
 
 export type DiagnosticCode =
   | "DATA-001" | "DATA-002" | "MODEL-001" | "IMPORT-001"
@@ -32,7 +32,7 @@ export function appVersionLabel(version: string, revision: string): string {
   return `${safeVersion} · source ${build}`;
 }
 
-export function dataVersionLabel(manifest: ReleaseManifestV1 | null, graphFormat: string,
+export function dataVersionLabel(manifest: BrowserReleaseManifest | null, graphFormat: string,
   demoMode: boolean): string {
   const format = safeFormat(graphFormat);
   if (demoMode) return `Synthetic fixture · ${format}`;
@@ -42,7 +42,7 @@ export function dataVersionLabel(manifest: ReleaseManifestV1 | null, graphFormat
   return `${tag} · ${format} · bundle ${shortSha(manifest.bundleId)}`;
 }
 
-export function modelVersionLabel(manifest: ReleaseManifestV1 | null,
+export function modelVersionLabel(manifest: BrowserReleaseManifest | null,
   loadedFormat: string | null, state: "unchecked" | "loaded" | "absent" | "failed",
   demoMode: boolean): string {
   if (manifest && !manifest.model) return "Not included in this data release";

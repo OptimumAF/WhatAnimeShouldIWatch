@@ -42,6 +42,7 @@ import { ProviderUnavailableError, createProviderAdapter } from "./providers";
 import { selectFranchiseDiverseRecommendations } from "./franchise-diversity";
 import type { FranchiseSelection } from "./franchise-diversity";
 import { ArtifactLoadError, createArtifactLoader } from "./artifact-loader";
+import { projectCatalogMetadata } from "./catalog-metadata";
 import { measureLocal, measureLocalAsync, recordLocalDuration } from "./local-performance";
 import { describeGraphScope } from "./graph-scope";
 import { selectAnimeNeighborhood } from "./network-neighborhood";
@@ -476,7 +477,7 @@ app.innerHTML = `
                   </label>
                 </div>
                 <label class="control-inline control-inline-score" for="filter-min-score">
-                  <span>Minimum ${demoMode ? "demo" : "MAL"} score</span>
+                  <span>Minimum ${demoMode ? "demo" : "community"} score</span>
                   <input id="filter-min-score" type="range" min="0" max="10" step="${METADATA_SCORE_STEP}" value="0" />
                   <output id="filter-min-score-value">Any</output>
                 </label>
@@ -910,6 +911,7 @@ applyTheme(activeTheme);
 applyContrast(activeContrast);
 
 const graphData = await loadRequiredArtifact(artifactLoader.fetchGraph());
+const bundledMetadata = await loadRequiredArtifact(artifactLoader.fetchCatalogMetadata(graphData));
 const activeReleaseManifest = await artifactLoader.getActiveReleaseManifest();
 diagnosticDataEl.textContent = dataVersionLabel(activeReleaseManifest,
   isCompactGraphData(graphData) ? graphData.format : "legacy-graph", demoMode);
@@ -921,6 +923,14 @@ const recommendationIndex = measureLocal("wasiw:index:graph", () =>
   isCompactGraphData(graphData)
     ? buildRecommendationIndexFromCompact(graphData)
     : buildRecommendationIndex(graphData));
+if (bundledMetadata) {
+  for (const item of bundledMetadata.anime) {
+    animeMetadataCache.set(item.animeId, projectCatalogMetadata(item));
+  }
+  for (const anime of recommendationIndex.animeList) {
+    if (!animeMetadataCache.has(anime.animeId)) animeMetadataUnavailable.add(anime.animeId);
+  }
+}
 const selectedAnimeNodeIds: string[] = [];
 const selectedAnimePreferences = new Map<string, AnimePreference>();
 const historyEntries: HistoryEntry[] = [];
@@ -3800,7 +3810,9 @@ function renderRecommendationCard(
             `Weighted genre-overlap sum: ${item.score.toFixed(2)}.`;
   const evidenceNote = display === "coverage" ? "Coverage only; this is not a personal ranking or quality score."
     : display === "popularity" ? "Sampled graph count only; not global popularity or personal fit."
-      : display === "quality" ? "Provider community opinion; not a personal prediction."
+      : display === "quality" ? bundledMetadata
+        ? "Bundled catalog community opinion; not a personal prediction."
+        : "Provider community opinion; not a personal prediction."
         : "Exact shared genres from Liked titles; no calibrated confidence interval.";
   const reason = explanation ? formatRecommendationWhyHtml(explanation)
     : `<div class="rec-why-line">${escapeHtml(reasonHeadline)}</div>` +
@@ -3817,7 +3829,7 @@ function renderRecommendationCard(
           : item.fusion ? "Hybrid ranking"
             : item.scoreSource?.kind === "model" ? "Model ranking" : "Graph ranking";
   const communityScore = metadata?.score !== null && metadata?.score !== undefined && display !== "quality"
-    ? `<div class="rec-community-score">${demoMode ? "Demo" : "MAL"} community score: ${metadata.score.toFixed(2)}/10</div>`
+    ? `<div class="rec-community-score">${demoMode ? "Demo" : bundledMetadata ? "Catalog" : "MAL"} community score: ${metadata.score.toFixed(2)}/10</div>`
     : "";
   const supportLine = display === "coverage" ? `Positive graph connections: ${item.supportCount}`
     : display === "popularity" || display === "quality"
@@ -3870,7 +3882,8 @@ function formatRecommendationMetadataMeta(
 ): string {
   if (!metadata) {
     return state === "failed" ? "Details failed to load"
-      : state === "unavailable" ? "Details unavailable from provider" : "Details not loaded";
+      : state === "unavailable" ? bundledMetadata ? "Details unavailable in bundled catalog"
+        : "Details unavailable from provider" : "Details not loaded";
   }
 
   const parts: string[] = [];
@@ -3879,6 +3892,16 @@ function formatRecommendationMetadataMeta(
   }
   if (metadata.mediaFormat) {
     parts.push(metadata.mediaFormat);
+  }
+  if (metadata.episodeCount !== null && metadata.episodeCount !== undefined) {
+    parts.push(`${metadata.episodeCount} episodes`);
+  }
+  if (metadata.runtimeMinutes !== null && metadata.runtimeMinutes !== undefined) {
+    parts.push(`${metadata.runtimeMinutes} min`);
+  }
+  if (metadata.contentClassification) {
+    const rating = metadata.contentClassification;
+    parts.push(`${rating.system} ${rating.value} (${rating.jurisdiction})`);
   }
   if (metadata.studios.length > 0) {
     parts.push(metadata.studios.slice(0, 2).join(", "));
@@ -4023,7 +4046,7 @@ async function ensureAnimeMetadata(animeId: number, signal: AbortSignal): Promis
   if (cached) {
     return cached;
   }
-  if (demoMode) return null;
+  if (demoMode || bundledMetadata) return null;
   if (animeMetadataUnavailable.has(animeId)) {
     return null;
   }

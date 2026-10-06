@@ -127,6 +127,79 @@ async function routeAggregateBundle(page: Page, options: { withModel?: boolean }
   return { requests, graphBytes, release };
 }
 
+async function routeMetadataBundle(page: Page, options: {
+  corruptBytes?: boolean; malformedYear?: boolean; unknownId?: boolean;
+  classificationMarkup?: boolean; catalogGraphMismatch?: boolean;
+} = {}) {
+  const metadata = {
+    format: "anime-metadata-catalog-v1",
+    source: { name: "invented-fixture", snapshotAt: "2026-09-24T00:00:00.000Z",
+      snapshotSha256: "b".repeat(64) },
+    anime: [
+      { animeId: 101, sourceItemId: "invented:101", title: "Copper Comet",
+        aliases: ["Copper Voyage"], genres: ["Adventure"], year: 2021,
+        mediaFormat: "TV", episodeCount: 12, runtimeMinutes: 24,
+        contentClassification: null, communityScore: null, relations: null },
+      { animeId: options.unknownId ? 999 : 102, sourceItemId: "invented:102",
+        title: "Moonlit Workshop", aliases: [], genres: ["Adventure"],
+        year: options.malformedYear ? "unknown" : 2022, mediaFormat: "Movie",
+        episodeCount: 1, runtimeMinutes: 95,
+        contentClassification: { jurisdiction: "Fixtureland", system: "Invented board",
+          value: options.classificationMarkup ? "<img src=x onerror=alert(1)>" : "All" },
+        communityScore: 8.1, relations: null },
+    ],
+  };
+  const metadataBytes = Buffer.from(`${JSON.stringify(metadata, null, 2)}\n`);
+  const identity = JSON.parse(fixture("catalog.identity.json").toString("utf8"));
+  if (options.catalogGraphMismatch) identity.anime[1][1] = "Invented title mismatch";
+  const identityBytes = Buffer.from(`${JSON.stringify(identity, null, 2)}\n`);
+  const itemMapSha256 = crypto.createHash("sha256")
+    .update(JSON.stringify(identity.anime)).digest("hex");
+  const payload = { ...manifest, format: "release-manifest-v2", model: null,
+    catalog: { ...manifest.catalog,
+      sha256: crypto.createHash("sha256").update(identityBytes).digest("hex"),
+      bytes: identityBytes.length, itemMapSha256 },
+    metadata: { path: "catalog.metadata.json", format: "anime-metadata-catalog-v1",
+      sha256: crypto.createHash("sha256").update(metadataBytes).digest("hex"),
+      bytes: metadataBytes.length, animeCount: metadata.anime.length,
+      itemMapSha256,
+      sourceSnapshotSha256: metadata.source.snapshotSha256 } };
+  const { bundleId: _oldId, ...withoutId } = payload;
+  const release = { ...withoutId,
+    bundleId: crypto.createHash("sha256").update(JSON.stringify(withoutId)).digest("hex") };
+  const releaseBytes = Buffer.from(`${JSON.stringify(release, null, 2)}\n`);
+  const active = { format: "active-release-bundle-v1", tag: release.tag,
+    bundleId: release.bundleId,
+    manifestSha256: crypto.createHash("sha256").update(releaseBytes).digest("hex") };
+  const files = new Map<string, Buffer>([
+    ["release-manifest.json", releaseBytes],
+    ["graph.compact.json", fixture("graph.compact.json")],
+    ["catalog.identity.json", identityBytes],
+    ["catalog.metadata.json", options.corruptBytes ? Buffer.from("{}") : metadataBytes],
+  ]);
+  const requests: string[] = [];
+  await page.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/data/")) {
+      requests.push(url.pathname);
+      if (url.pathname === "/data/active.json") {
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify(active) });
+      }
+      const prefix = `/data/bundles/${release.bundleId}/`;
+      const bytes = url.pathname.startsWith(prefix) ? files.get(url.pathname.slice(prefix.length)) : null;
+      return bytes ? route.fulfill({ contentType: "application/json", body: bytes })
+        : route.fulfill({ status: 404, body: "" });
+    }
+    if (url.hostname === "api.jikan.moe") {
+      requests.push(`jikan:${url.pathname}`);
+      return route.abort();
+    }
+    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") return route.abort();
+    return route.continue();
+  });
+  return { requests, release };
+}
+
 test("normal mode pins one verified bundle for graph, model, and explorer", async ({ page }) => {
   const requests = await routeBundle(page);
   await page.goto(normalAppUrl);
@@ -163,6 +236,67 @@ test("normal mode pins one verified bundle for graph, model, and explorer", asyn
   expect(requests).toContain(`/data/bundles/${manifest.bundleId}/graph-explorer.compact.json`);
   expect(requests.some((name) => name === "/data/graph.json" ||
     name === "/data/graph.compact.json.gz")).toBe(false);
+});
+
+test("browser candidate reads hash-bound invented metadata without provider enrichment", async ({ page }) => {
+  const { requests, release } = await routeMetadataBundle(page);
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#diagnostic-data")).toContainText(release.bundleId.slice(0, 12));
+  expect(requests).toContain(`/data/bundles/${release.bundleId}/catalog.identity.json`);
+  expect(requests).toContain(`/data/bundles/${release.bundleId}/catalog.metadata.json`);
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  const card = page.locator(".rec-item").filter({ hasText: "Moonlit Workshop" });
+  await expect(card).toContainText("Invented board All (Fixtureland)");
+  await expect(card).toContainText("95 min");
+  await expect(card).toContainText("Catalog community score: 8.10/10");
+  await page.locator("#filter-year-min").fill("2022");
+  await page.locator("#filter-year-min").press("Tab");
+  await expect(card).toBeVisible();
+  expect(requests.some((name) => name.startsWith("jikan:/v4/anime/"))).toBe(false);
+});
+
+test("bundled classification is text, never executable card markup", async ({ page }) => {
+  await routeMetadataBundle(page, { classificationMarkup: true });
+  await page.goto(normalAppUrl);
+  await page.locator("#anime-input").fill("Copper Comet");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  const card = page.locator(".rec-item").filter({ hasText: "Moonlit Workshop" });
+  await expect(card).toContainText("<img src=x onerror=alert(1)>");
+  await expect(card.locator("img")).toHaveCount(0);
+});
+
+test("present bad metadata bytes fail closed at their named asset", async ({ page }) => {
+  const { requests } = await routeMetadataBundle(page, { corruptBytes: true });
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-message")).toContainText(
+    "catalog.metadata.json: byte length or SHA-256 differs from release-manifest.json");
+  await expect(page.locator("#diagnostic-code")).toContainText("DATA-002");
+  expect(requests.some((name) => name.startsWith("jikan:/v4/anime/"))).toBe(false);
+});
+
+test("present invalid metadata names its field without provider fallback", async ({ page }) => {
+  const { requests } = await routeMetadataBundle(page, { malformedYear: true });
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-message")).toContainText("catalog.metadata.json: anime[1].year");
+  expect(requests.some((name) => name.startsWith("jikan:/v4/anime/"))).toBe(false);
+});
+
+test("metadata mapped outside identity catalog fails before use", async ({ page }) => {
+  const { requests } = await routeMetadataBundle(page, { unknownId: true });
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-message")).toContainText(
+    "catalog.metadata.json: anime[1].animeId is outside catalog.identity.json");
+  expect(requests.some((name) => name.startsWith("jikan:/v4/anime/"))).toBe(false);
+});
+
+test("a declared identity map that differs from the graph fails before metadata use", async ({ page }) => {
+  await routeMetadataBundle(page, { catalogGraphMismatch: true });
+  await page.goto(normalAppUrl);
+  await expect(page.locator("#rec-message")).toContainText(
+    "catalog.identity.json: anime IDs or titles differ from graph.compact.json");
 });
 
 test("a present corrupt bundle graph fails without reading a legacy graph", async ({ page }) => {
