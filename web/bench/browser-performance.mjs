@@ -96,14 +96,19 @@ function phaseSummaries(samples, names, measuresFor, longTasksFor) {
 
 function summarizeGraphTrace(events) {
   const firstRenderStart = events.find((event) =>
-    event.name === "wasiw:network:render" && event.ph === "b")?.ts ?? null;
+    event.name === "wasiw:network:render" && event.ph === "b");
   const firstRenderEnd = events.find((event) =>
-    event.name === "wasiw:network:render" && event.ph === "e")?.ts ?? null;
+    event.name === "wasiw:network:render" && event.ph === "e" &&
+    event.pid === firstRenderStart?.pid && event.tid === firstRenderStart?.tid);
+  if (!firstRenderStart || !firstRenderEnd) {
+    throw new Error("The graph trace is missing the first renderer-thread render markers.");
+  }
   return events.filter((event) => event.ph === "X" && event.name === "RunTask" &&
+    event.pid === firstRenderStart.pid && event.tid === firstRenderStart.tid &&
     event.dur >= 50_000).sort((left, right) => left.ts - right.ts).map((task) => ({
-    window: firstRenderStart !== null && task.ts < firstRenderStart
+    window: task.ts < firstRenderStart.ts
       ? "before-first-render"
-      : firstRenderEnd !== null && task.ts < firstRenderEnd
+      : task.ts < firstRenderEnd.ts
         ? "first-render" : "after-first-render",
     durationMs: round(task.dur / 1000),
     // These trace slices may nest; their durations are not additive.
@@ -111,7 +116,8 @@ function summarizeGraphTrace(events) {
       event.pid === task.pid && event.tid === task.tid &&
       event.ts >= task.ts && event.ts + event.dur <= task.ts + task.dur &&
       event.dur >= 1000 &&
-      ["EventDispatch", "FunctionCall", "UpdateLayoutTree", "Layout", "Paint", "PrePaint"]
+      ["EventDispatch", "FunctionCall", "UpdateLayoutTree", "Layout", "Paint", "PrePaint",
+        "MajorGC", "MinorGC"]
         .includes(event.name)).map((event) => ({
       name: event.name,
       durationMs: round(event.dur / 1000),
