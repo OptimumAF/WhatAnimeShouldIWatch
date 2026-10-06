@@ -46,10 +46,22 @@ function RequireText([string[]] $names, [string] $fragment, [string] $state) {
     Require (@($names | Where-Object { $_.Contains($fragment) }).Count -gt 0) "Desktop smoke missing $state."
 }
 
-function RequireStat([string[]] $names, [string] $label, [string] $expected) {
+function HasStat([string[]] $names, [string] $label, [string] $expected) {
     $index = [Array]::IndexOf($names, $label)
-    Require ($index -ge 0 -and $index + 1 -lt $names.Count -and $names[$index + 1] -eq $expected) `
-        "Desktop smoke has an unexpected $label count."
+    return ($index -ge 0 -and $index + 1 -lt $names.Count -and $names[$index + 1] -eq $expected)
+}
+
+function WaitForCounts($window, [string] $state) {
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        $names = @(TextNames $window)
+        if ((HasStat $names 'Anime' '8') -and (HasStat $names 'Signed pairs' '11')) {
+            return $names
+        }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+    Write-Host "Desktop count diagnostic ($state): Anime label=$($names -contains 'Anime'); 8=$($names -contains '8'); Signed pairs label=$($names -contains 'Signed pairs'); 11=$($names -contains '11')."
+    throw "Desktop smoke timed out waiting for $state counts."
 }
 
 function InvokeButton($window, [string] $name) {
@@ -191,8 +203,7 @@ try {
 
     InvokeButton $window 'Open invented demo'
     $names = WaitForText $window 'Invented demo.' 'Invented demo'
-    RequireStat $names 'Anime' '8'
-    RequireStat $names 'Signed pairs' '11'
+    $names = WaitForCounts $window 'Invented demo'
     RequireText $names 'limited to 300 connected titles and 1,400 pairs' 'overview limit'
     RequireText $names 'not similarity scores' 'pair semantics'
     Require (-not ($names -contains 'No graph to show.')) 'Demo has no graph.'
@@ -200,8 +211,7 @@ try {
 
     SelectManifest $root $window $app.Id $bundle $ForceKeyboardPicker.IsPresent
     $names = WaitForText $window 'Selected local data.' 'selected local data'
-    RequireStat $names 'Anime' '8'
-    RequireStat $names 'Signed pairs' '11'
+    $names = WaitForCounts $window 'selected local data'
     RequireText $names 'data-vsynthetic-desktop-v1' 'invented manifest tag'
     RequireText $names 'other assets and source permissions are not checked here' 'source-permission limit'
     Require (-not ($names -contains 'No graph to show.')) 'Selected local data has no graph.'
