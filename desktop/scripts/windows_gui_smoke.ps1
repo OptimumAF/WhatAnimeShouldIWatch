@@ -90,10 +90,16 @@ function SelectManifest($root, $window, [int] $processId, [string] $path) {
             [System.Windows.Automation.ControlType]::Edit
         ),
         [System.Windows.Automation.PropertyCondition]::new(
-            [System.Windows.Automation.AutomationElement]::NameProperty, 'File name:'
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1148'
         )
     )
-    $edit = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+    $deadline = (Get-Date).AddSeconds(15)
+    $edit = $null
+    do {
+        $edit = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+        if ($null -ne $edit) { break }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
     Require ($null -ne $edit) 'Desktop smoke cannot find the file name control.'
     $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($path)
     $edit.SetFocus()
