@@ -1,6 +1,6 @@
 # 0002 — Provider-data workflow approval gates
 
-**Status:** Proposed for merge, 2026-09-24. No provider-derived training, publication, or deployment use is approved by this record. See [decision 0001](0001-provider-data-permissions.md) for the current source/use holds and the [public artifact audit](../audits/public-artifacts-2026-09-24.md) for the existing exposure.
+**Status:** Implemented on `master` since 2026-09-24. No provider-derived training, publication, or deployment use is approved by this record. See [decision 0001](0001-provider-data-permissions.md) for the current source/use holds and the [public artifact audit](../audits/public-artifacts-2026-09-24.md) for the existing exposure.
 
 ## Gate
 
