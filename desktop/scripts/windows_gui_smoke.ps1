@@ -199,19 +199,23 @@ try {
 
     $names = WaitForText $window 'No data selected.' 'No data'
     RequireText $names 'No graph to show.' 'empty initial graph'
+    RequireText $names 'does not rank recommendations or import viewing history' 'desktop scope'
     Write-Output 'GUI state passed: No data; no graph.'
 
     InvokeButton $window 'Open invented demo'
     $names = WaitForText $window 'Invented demo.' 'Invented demo'
     $names = WaitForCounts $window 'Invented demo'
+    RequireText $names 'graph-compact-v3' 'aggregate-only graph format'
     RequireText $names 'limited to 300 connected titles and 1,400 pairs' 'overview limit'
     RequireText $names 'not similarity scores' 'pair semantics'
+    RequireText $names 'graph keeps no user rows' 'aggregate-only graph limit'
     Require (-not ($names -contains 'No graph to show.')) 'Demo has no graph.'
     Write-Output 'GUI state passed: Invented demo; 8 anime; 11 pairs; limits and pair semantics.'
 
     SelectManifest $root $window $app.Id $bundle $ForceKeyboardPicker.IsPresent
     $names = WaitForText $window 'Selected local data.' 'selected local data'
     $names = WaitForCounts $window 'selected local data'
+    RequireText $names 'graph-compact-v3' 'selected graph format'
     RequireText $names 'data-vsynthetic-desktop-v1' 'invented manifest tag'
     RequireText $names 'other assets and source permissions are not checked here' 'source-permission limit'
     Require (-not ($names -contains 'No graph to show.')) 'Selected local data has no graph.'
