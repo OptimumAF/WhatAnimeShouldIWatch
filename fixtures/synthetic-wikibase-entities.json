@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "Q910000101": {
+      "id": "Q910000101", "type": "item",
+      "labels": {"en": {"language": "en", "value": "Copper Comet"}},
+      "aliases": {"en": [{"language": "en", "value": "Copper Voyage"}], "ja": [{"language": "ja", "value": "銅の彗星"}]},
+      "claims": {
+        "P4086": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P4086", "datatype": "external-id", "datavalue": {"type": "string", "value": "101"}}}],
+        "P31": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P31", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910001001"}}}}],
+        "P136": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P136", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910002001"}}}}],
+        "P577": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P577", "datatype": "time", "datavalue": {"type": "time", "value": {"time": "+2021-00-00T00:00:00Z", "timezone": 0, "before": 0, "after": 0, "precision": 9, "calendarmodel": "http://www.wikidata.org/entity/Q1985727"}}}}],
+        "P1113": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P1113", "datatype": "quantity", "datavalue": {"type": "quantity", "value": {"amount": "+12", "unit": "1"}}}}],
+        "P2047": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P2047", "datatype": "quantity", "datavalue": {"type": "quantity", "value": {"amount": "+24", "unit": "http://www.wikidata.org/entity/Q910003001"}}}}],
+        "P156": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P156", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910000102"}}}}],
+        "P18": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P18", "datatype": "commonsMedia", "datavalue": {"type": "string", "value": "Invented cover.jpg"}}}]
+      }
+    },
+    "Q910000102": {
+      "id": "Q910000102", "type": "item",
+      "labels": {"en": {"language": "en", "value": "Moonlit Workshop"}},
+      "aliases": {"en": []},
+      "claims": {
+        "P4086": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P4086", "datatype": "external-id", "datavalue": {"type": "string", "value": "102"}}}],
+        "P31": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P31", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910001002"}}}}],
+        "P136": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P136", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910002001"}}}}],
+        "P577": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P577", "datatype": "time", "datavalue": {"type": "time", "value": {"time": "+2022-06-01T00:00:00Z", "timezone": 0, "before": 0, "after": 0, "precision": 11, "calendarmodel": "http://www.wikidata.org/entity/Q1985727"}}}}],
+        "P1113": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P1113", "datatype": "quantity", "datavalue": {"type": "quantity", "value": {"amount": "+1", "unit": "1"}}}}],
+        "P2047": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P2047", "datatype": "quantity", "datavalue": {"type": "quantity", "value": {"amount": "+5700", "unit": "http://www.wikidata.org/entity/Q910003002"}}}}],
+        "P2756": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P2756", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910004001"}}}}],
+        "P155": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P155", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910000101"}}}}]
+      }
+    },
+    "Q910000103": {
+      "id": "Q910000103", "type": "item",
+      "labels": {"en": {"language": "en", "value": "Glass Harbor"}},
+      "aliases": {"en": [{"language": "en", "value": "Copper Voyage"}]},
+      "claims": {
+        "P4086": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P4086", "datatype": "external-id", "datavalue": {"type": "string", "value": "103"}}}],
+        "P31": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P31", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910001001"}}}}],
+        "P136": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P136", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910002999"}}}}],
+        "P179": [{"type": "statement", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P179", "datatype": "wikibase-item", "datavalue": {"type": "wikibase-entityid", "value": {"entity-type": "item", "id": "Q910009001"}}}}]
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@ import { buildExplorerGraph } from "../../pipeline/src/core/explorer-graph";
 import { installMetadataReleaseBundle } from "../../pipeline/src/install-metadata-release-bundle";
 import { buildMetadataReleaseManifest } from "../../pipeline/src/metadata-release-bundle";
 import { buildReleaseManifest, releaseSha256 } from "../../pipeline/src/release-manifest";
+import { mapWikibaseMetadata, type WikibaseMappingPolicy } from "../../pipeline/src/wikibase-metadata";
 
 const normalAppUrl = "http://127.0.0.1:5174/";
 const appVersion = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
@@ -133,9 +134,9 @@ async function routeAggregateBundle(page: Page, options: { withModel?: boolean }
 
 async function routeMetadataBundle(page: Page, options: {
   corruptBytes?: boolean; malformedYear?: boolean; unknownId?: boolean;
-  classificationMarkup?: boolean; catalogGraphMismatch?: boolean;
+  classificationMarkup?: boolean; catalogGraphMismatch?: boolean; mappedSource?: boolean;
 } = {}) {
-  const metadata = {
+  const authoredMetadata = {
     format: "anime-metadata-catalog-v1",
     source: { name: "invented-fixture", snapshotAt: "2026-09-24T00:00:00.000Z",
       snapshotSha256: "b".repeat(64) },
@@ -153,6 +154,13 @@ async function routeMetadataBundle(page: Page, options: {
         communityScore: 8.1, relations: null },
     ],
   };
+  const metadata = options.mappedSource ? (() => {
+    const raw = JSON.parse(readFileSync(new URL("../../fixtures/synthetic-wikibase-entities.json", import.meta.url), "utf8"));
+    raw.entities.Q910000101.labels.en.value = "Invented Copper Sky";
+    return mapWikibaseMetadata(Buffer.from(JSON.stringify(raw)), [101, 102, 103, 104],
+      JSON.parse(readFileSync(new URL("../../fixtures/synthetic-wikibase-policy.json", import.meta.url), "utf8")) as WikibaseMappingPolicy,
+      { name: "invented-wikibase-fixture", snapshotAt: "2026-10-06T00:00:00.000Z" }).snapshot!;
+  })() : authoredMetadata;
   const metadataBytes = Buffer.from(`${JSON.stringify(metadata, null, 2)}\n`);
   const identity = JSON.parse(fixture("catalog.identity.json").toString("utf8"));
   if (options.catalogGraphMismatch) identity.anime[1][1] = "Invented title mismatch";
@@ -259,6 +267,29 @@ test("browser candidate reads hash-bound invented metadata without provider enri
   await page.locator("#filter-year-min").press("Tab");
   await expect(card).toBeVisible();
   expect(requests.some((name) => name.startsWith("jikan:/v4/anime/"))).toBe(false);
+});
+
+test("mapped invented Wikibase statements reach browser filters with unknown community scores", async ({ page }) => {
+  const { requests } = await routeMetadataBundle(page, { mappedSource: true });
+  await page.goto(normalAppUrl);
+  await page.locator("#anime-input").fill("Invented Copper Sky");
+  await page.locator("#add-preference").selectOption("liked");
+  await page.locator("#add-anime-form button").click();
+  await expect(page.locator("#selected-anime .chip-title")).toHaveText("Copper Comet");
+  const card = page.locator(".rec-item").filter({ hasText: "Moonlit Workshop" });
+  await expect(card).toContainText("Invented board All (Fixtureland)");
+  await expect(card).toContainText("95 min");
+  await expect(card.locator(".rec-community-score")).toHaveCount(0);
+  await page.locator("#filter-genre").selectOption("adventure");
+  await page.locator("#filter-year-min").fill("2022");
+  await page.locator("#filter-year-min").press("Tab");
+  await expect(card).toBeVisible();
+  await page.locator("#filter-min-score").evaluate((input: HTMLInputElement) => {
+    input.value = "1";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#rec-results .rec-item")).toHaveCount(0);
+  expect(requests.some((name) => name.startsWith("jikan:"))).toBe(false);
 });
 
 test("browser reads the exact synthetic v2 directory activated by the local installer", async ({ page }) => {

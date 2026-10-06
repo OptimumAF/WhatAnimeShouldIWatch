@@ -188,6 +188,7 @@ export interface ReleaseIdentityCatalog {
 export interface CatalogMetadataItemV1 {
   animeId: number;
   sourceItemId: string;
+  /** Source canonical label; browser projection retains it as a known alias of the stable graph ID. */
   title: string;
   /** Null means unavailable; an empty array means checked with no values. */
   aliases: string[] | null;

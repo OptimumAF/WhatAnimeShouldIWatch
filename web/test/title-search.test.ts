@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { parseCompactGraph, parseDemoCatalog } from "../src/artifacts.ts";
+import { parseCatalogMetadataSnapshot, parseCompactGraph, parseDemoCatalog } from "../src/artifacts.ts";
+import { projectCatalogMetadata } from "../src/catalog-metadata.ts";
 import { buildRecommendationIndexFromCompact } from "../src/recommendations.ts";
 import { searchAnimeTitles } from "../src/title-search.ts";
 
@@ -42,4 +43,21 @@ test("an exact canonical title colliding with another title's alias is not auto-
 test("unknown title and ID do not invent a catalog mapping", () => {
   assert.equal(searchAnimeTitles("Unmapped Invented Title", index, metadata).total, 0);
   assert.equal(searchAnimeTitles("anime:999", index, metadata).automatic, null);
+});
+
+test("a different source canonical label remains searchable and collisions require a choice", () => {
+  const candidate = { format: "anime-metadata-catalog-v1",
+    source: { name: "invented-fixture", snapshotAt: "2026-10-06T00:00:00.000Z", snapshotSha256: "a".repeat(64) },
+    anime: [{ animeId: 101, sourceItemId: "invented:101", title: "Invented Copper Sky",
+      aliases: null, genres: null, year: null, mediaFormat: null, episodeCount: null,
+      runtimeMinutes: null, contentClassification: null, communityScore: null, relations: null }] };
+  const changed = new Map(metadata);
+  changed.set(101, projectCatalogMetadata(parseCatalogMetadataSnapshot(candidate, "invented metadata").anime[0]));
+  assert.equal(searchAnimeTitles("Invented Copper Sky", index, changed).automatic?.animeId, 101);
+  assert.equal(searchAnimeTitles("Copper Comet", index, changed).automatic?.animeId, 101);
+  candidate.anime[0].title = "Moonlit Workshop";
+  changed.set(101, projectCatalogMetadata(parseCatalogMetadataSnapshot(candidate, "invented metadata").anime[0]));
+  const collision = searchAnimeTitles("Moonlit Workshop", index, changed);
+  assert.equal(collision.automatic, null);
+  assert.deepEqual(collision.matches.map((match) => match.anime.animeId).sort(), [101, 102]);
 });
