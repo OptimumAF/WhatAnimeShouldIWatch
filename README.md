@@ -35,6 +35,8 @@ npm run dev:demo
 
 Open `http://127.0.0.1:5173/`. The banner says **SYNTHETIC DEMO DATA**. This mode generates a catalog, aggregate-only v3 recommendation graph, linked v3 explorer, and tiny synthetic model in ignored `web/public/demo-data/`. The default view loads the catalog and aggregate graph; the model and explorer load when opened. A separate invented v2 graph remains there for compatibility tests and fixture manifest construction; the demo never requests it for ranking. Sample-based popularity is unavailable on v3, so browsing starts with invented community scores. Demo mode makes no live metadata or seasonal requests. Preferences use separate local storage keys, and username import is disabled. A missing fixture is an error; regular `dev:web` still requires its normal data files.
 
+The web fonts are bundled with the site, so the demo's first view needs no external font service. Their redistribution notices are in [`web/public/licenses/`](web/public/licenses/).
+
 Run the fast checks separately:
 
 ```bash

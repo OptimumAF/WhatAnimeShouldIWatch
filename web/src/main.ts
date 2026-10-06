@@ -85,6 +85,9 @@ import { searchAnimeTitles } from "./title-search";
 import type { TitleSearchResult } from "./title-search";
 import { mergeWatchlistFeedback, validateWatchlist, watchedWatchlistAnimeIds } from "./watchlist";
 import type { WatchlistEntry, WatchlistStatus } from "./watchlist";
+import "@fontsource-variable/space-grotesk/wght.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
 import "./style.css";
 
 const runtime = createBrowserRuntime();

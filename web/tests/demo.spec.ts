@@ -4,13 +4,13 @@ import { buildExplorerGraph } from "../../pipeline/src/core/explorer-graph";
 import { aggregateRecommendationGraphId } from "../../pipeline/src/core/graph-contract";
 import type { CompactGraphDataV3 } from "../../pipeline/src/types";
 
-test("offline demo loads synthetic graph, catalog, and model without provider requests", async ({ page }) => {
+test("offline demo loads synthetic graph, catalog, and model without external requests", async ({ page }) => {
   const unexpectedRequests: string[] = [];
   const pageErrors: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/data/") ||
-        /api\.jikan\.moe|graphql\.anilist\.co|myanimelist\.net|r\.jina\.ai/.test(url.hostname)) {
+        (url.hostname !== "127.0.0.1" && url.hostname !== "localhost")) {
       unexpectedRequests.push(request.url());
     }
   });
@@ -30,6 +30,13 @@ test("offline demo loads synthetic graph, catalog, and model without provider re
   await expect(page.locator("#username-import-submit")).toBeDisabled();
   await expect(page.locator("#username-import-status")).toHaveAttribute("data-state", "demo");
   await expect(page.locator("#seasonal-status")).toHaveAttribute("data-state", "demo");
+  const loadedFonts = await page.evaluate(async () => {
+    await document.fonts.ready;
+    return Array.from(document.fonts).filter((face) => face.status === "loaded")
+      .map((face) => face.family);
+  });
+  expect(loadedFonts).toContain("Space Grotesk Variable");
+  expect(loadedFonts).toContain("IBM Plex Mono");
 
   await page.locator("#anime-input").fill("Copper Comet");
   await page.locator("#add-preference").selectOption("liked");
