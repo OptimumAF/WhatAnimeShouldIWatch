@@ -103,8 +103,13 @@ function SelectManifest($root, $window, [int] $processId, [string] $path) {
 $kit = [IO.Path]::GetFullPath($KitDirectory)
 Require (Test-Path -LiteralPath $kit -PathType Container) 'Desktop smoke kit directory is missing.'
 if ($RequireNoCheckout) {
-    Require (-not (Test-Path -LiteralPath $env:GITHUB_WORKSPACE)) `
-        'The checkout still exists on the clean smoke runner.'
+    if (Test-Path -LiteralPath $env:GITHUB_WORKSPACE) {
+        $checkoutEntry = Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Force |
+            Select-Object -First 1
+        Require ($null -eq $checkoutEntry) 'The checkout still exists on the clean smoke runner.'
+    }
+    Require ([IO.Path]::GetFullPath((Get-Location).Path) -eq $kit) `
+        'The app is not launching from the isolated smoke directory.'
 }
 Require (-not (Test-Path -LiteralPath (Join-Path $kit 'data'))) `
     'The smoke kit unexpectedly contains a relative data directory.'

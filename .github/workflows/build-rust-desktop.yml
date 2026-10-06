@@ -88,9 +88,15 @@ jobs:
           Write-Output "Invented smoke kit SHA-256: $((Get-FileHash -LiteralPath $kitArchive -Algorithm SHA256).Hash.ToLowerInvariant())"
           Expand-Archive -LiteralPath $kitArchive -DestinationPath $kit
           Set-Location -LiteralPath $kit
-          Remove-Item -LiteralPath $workspace -Recurse -Force
-          try {
-            & $smokeScript -KitDirectory $kit -RequireNoCheckout
-          } finally {
-            New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+          foreach ($entry in (Get-ChildItem -LiteralPath $workspace -Force)) {
+            $target = [IO.Path]::GetFullPath($entry.FullName)
+            if (-not $target.StartsWith($workspace + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw 'A checkout entry is outside the verified workspace or is a reparse point.'
+            }
+            Remove-Item -LiteralPath $target -Recurse -Force
           }
+          if (Get-ChildItem -LiteralPath $workspace -Force | Select-Object -First 1) {
+            throw 'The checkout was not emptied before the GUI smoke.'
+          }
+          & $smokeScript -KitDirectory $kit -RequireNoCheckout
