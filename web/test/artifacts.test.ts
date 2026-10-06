@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   ArtifactValidationError,
   parseActiveReleaseBundle,
+  parseBrowserReleaseManifest,
   parseCompactGraph,
   parseCompactModel,
   catalogMetadataCoverage,
@@ -14,6 +15,7 @@ import {
   parseReleaseIdentityCatalog,
   parseReleaseManifest,
 } from "../src/artifacts.ts";
+import { projectCatalogMetadata } from "../src/catalog-metadata.ts";
 
 const fixtureRoot = new URL("../public/demo-data/", import.meta.url);
 const fixture = (name: string): any => JSON.parse(readFileSync(new URL(name, fixtureRoot), "utf8"));
@@ -318,6 +320,13 @@ test("metadata candidate keeps unknown fields explicit and reports bounded cover
     ],
   };
   assert.equal(parseCatalogMetadataSnapshot(snapshot, "metadata candidate"), snapshot);
+  assert.deepEqual(projectCatalogMetadata(snapshot.anime[0]), {
+    animeId: 101, aliases: ["Galaxy Route"], mediaFormat: "TV", year: 2021,
+    score: null, genres: ["Adventure"], studios: [], synopsis: "", imageUrl: "",
+    season: null, relations: [{ kind: "sequel", animeId: 102, title: "Moonlit Workshop" }],
+    episodeCount: 12, runtimeMinutes: 24, contentClassification: null,
+  });
+  assert.deepEqual(projectCatalogMetadata(snapshot.anime[1]).genres, []);
   const coverage = catalogMetadataCoverage(snapshot, [101, 102, 103]);
   assert.equal(coverage.total, 3);
   assert.equal(coverage.missingItems, 1);
@@ -357,6 +366,30 @@ test("metadata candidate keeps unknown fields explicit and reports bounded cover
     mutate(changed);
     assert.throws(() => parseCatalogMetadataSnapshot(changed, "metadata candidate"), pattern, name);
   }
+});
+
+test("browser-only metadata manifest binds a separate asset without weakening v1", () => {
+  const base = fixture("release-manifest.json");
+  const candidate: any = { ...base, format: "release-manifest-v2", metadata: {
+    path: "catalog.metadata.json", format: "anime-metadata-catalog-v1",
+    sha256: "a".repeat(64), bytes: 500, animeCount: 2,
+    itemMapSha256: base.catalog.itemMapSha256, sourceSnapshotSha256: "b".repeat(64),
+  } };
+  assert.equal(parseBrowserReleaseManifest(base, "release-manifest.json"), base);
+  assert.equal(parseBrowserReleaseManifest(candidate, "release-manifest.json"), candidate);
+  assert.throws(() => parseReleaseManifest(candidate, "release-manifest.json"), /root.metadata.*unsupported/);
+  const wrongMap = copy(candidate);
+  wrongMap.metadata.itemMapSha256 = "c".repeat(64);
+  assert.throws(() => parseBrowserReleaseManifest(wrongMap, "release-manifest.json"),
+    /metadata.itemMapSha256.*catalog.itemMapSha256/);
+  const extra = copy(candidate);
+  extra.metadata.userCount = 1;
+  assert.throws(() => parseBrowserReleaseManifest(extra, "release-manifest.json"),
+    /metadata.userCount.*unsupported/);
+  const tooMany = copy(candidate);
+  tooMany.metadata.animeCount = base.catalog.animeCount + 1;
+  assert.throws(() => parseBrowserReleaseManifest(tooMany, "release-manifest.json"),
+    /metadata.animeCount.*catalog.animeCount/);
 });
 
 test("validation errors identify the artifact and field without echoing content", () => {

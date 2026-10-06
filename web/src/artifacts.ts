@@ -137,6 +137,10 @@ export interface AnimeMetadata {
   season: string | null;
   /** Missing or null means unchecked; even [] is not proof that prerequisites do not exist. */
   relations?: AnimeRelation[] | null;
+  /** Optional fields from a verified bundled metadata snapshot. */
+  episodeCount?: number | null;
+  runtimeMinutes?: number | null;
+  contentClassification?: { jurisdiction: string; system: string; value: string } | null;
 }
 
 export interface DemoCatalogItem extends AnimeMetadata {
@@ -242,6 +246,18 @@ export interface ReleaseManifestV1 {
   }) | null;
   lastKnownGood: { tag: string; bundleId: string; manifestSha256: string } | null;
 }
+
+/** Browser candidate only. Existing release installers and publishers still accept v1. */
+export interface ReleaseManifestV2 extends Omit<ReleaseManifestV1, "format"> {
+  format: "release-manifest-v2";
+  metadata: ReleaseManifestAsset & {
+    animeCount: number;
+    itemMapSha256: string;
+    sourceSnapshotSha256: string;
+  };
+}
+
+export type BrowserReleaseManifest = ReleaseManifestV1 | ReleaseManifestV2;
 
 export interface ActiveReleaseBundleV1 {
   format: "active-release-bundle-v1";
@@ -945,6 +961,40 @@ export function parseReleaseManifest(value: unknown, label: string): ReleaseMani
     sha256(previous.manifestSha256, label, "lastKnownGood.manifestSha256");
   }
   return value as ReleaseManifestV1;
+}
+
+/** Accepts the existing release contract plus a metadata-bearing browser candidate. */
+export function parseBrowserReleaseManifest(value: unknown, label: string): BrowserReleaseManifest {
+  const root = record(value, label, "root");
+  if (root.format === "release-manifest-v1") return parseReleaseManifest(value, label);
+  if (root.format !== "release-manifest-v2") {
+    invalid(label, "format", "is unsupported");
+  }
+  exactFields(root, ["format", "tag", "bundleId", "dataset", "catalog", "neighborhood",
+    "explorer", "model", "lastKnownGood", "metadata"], label, "root");
+  const { metadata, ...v1Fields } = root;
+  const base = parseReleaseManifest({ ...v1Fields, format: "release-manifest-v1" }, label);
+  const entry = record(metadata, label, "metadata");
+  exactFields(entry, ["path", "format", "sha256", "bytes", "animeCount",
+    "itemMapSha256", "sourceSnapshotSha256"], label, "metadata");
+  if (entry.path !== "catalog.metadata.json") {
+    invalid(label, "metadata.path", "must be catalog.metadata.json");
+  }
+  if (entry.format !== "anime-metadata-catalog-v1") {
+    invalid(label, "metadata.format", "must be anime-metadata-catalog-v1");
+  }
+  sha256(entry.sha256, label, "metadata.sha256");
+  safeInteger(entry.bytes, label, "metadata.bytes", 1);
+  const count = safeInteger(entry.animeCount, label, "metadata.animeCount", 1);
+  if (count > base.catalog.animeCount) {
+    invalid(label, "metadata.animeCount", "cannot exceed catalog.animeCount");
+  }
+  sha256(entry.itemMapSha256, label, "metadata.itemMapSha256");
+  if (entry.itemMapSha256 !== base.catalog.itemMapSha256) {
+    invalid(label, "metadata.itemMapSha256", "must match catalog.itemMapSha256");
+  }
+  sha256(entry.sourceSnapshotSha256, label, "metadata.sourceSnapshotSha256");
+  return value as ReleaseManifestV2;
 }
 
 export function parseActiveReleaseBundle(value: unknown, label: string): ActiveReleaseBundleV1 {

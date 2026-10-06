@@ -1,18 +1,22 @@
 /** Artifact transport and format selection. Validation remains in artifacts.ts. */
 import {
   parseAggregateDemoGraph,
+  isCompactGraphData,
+  parseBrowserReleaseManifest,
+  parseCatalogMetadataSnapshot,
   parseCompactGraph,
   parseCompactModel,
   parseActiveReleaseBundle,
   parseDemoCatalog,
   parseLegacyGraph,
   parseLegacyModel,
-  parseReleaseManifest,
+  parseReleaseIdentityCatalog,
   RELEASE_BUNDLE_LIMITS,
 } from "./artifacts";
 import type {
-  CompactGraphDataV2, CompactGraphDataV3, DemoCatalogItem, GraphDataV2,
-  LoadedGraphData, ModelRecommendationAnime, ReleaseManifestAsset, ReleaseManifestV1,
+  BrowserReleaseManifest, CatalogMetadataSnapshotV1, CompactGraphDataV2,
+  CompactGraphDataV3, DemoCatalogItem, GraphDataV2, LoadedGraphData,
+  ModelRecommendationAnime, ReleaseManifestAsset,
 } from "./artifacts";
 import type { ModelRecommendationIndex } from "./domain";
 import type { RuntimePorts } from "./runtime";
@@ -50,16 +54,16 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
   const plainLimit = legacyLimit(legacyLimits.plainBytes,
     RELEASE_BUNDLE_LIMITS.plainAssetBytes, "plainBytes");
   const publicPath = (relative: string) => `${publicBasePath}${relative.replace(/^\.\//, "")}`;
-  let activeBundlePromise: Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> | null = null;
+  let activeBundlePromise: Promise<{ manifest: BrowserReleaseManifest; basePath: string } | null> | null = null;
   let loadedModelFormat: string | null = null;
 
-  async function getActiveBundle(): Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> {
+  async function getActiveBundle(): Promise<{ manifest: BrowserReleaseManifest; basePath: string } | null> {
     if (demoMode) return null;
     activeBundlePromise ??= loadActiveBundle();
     return activeBundlePromise;
   }
 
-  async function loadActiveBundle(): Promise<{ manifest: ReleaseManifestV1; basePath: string } | null> {
+  async function loadActiveBundle(): Promise<{ manifest: BrowserReleaseManifest; basePath: string } | null> {
     const response = await runtime.fetch(publicPath("./data/active.json"), {
       headers: { Accept: "application/json" }, cache: "no-store",
     });
@@ -72,12 +76,13 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       "release-manifest.json", RELEASE_BUNDLE_LIMITS.manifestBytes,
       pointer.manifestSha256, undefined,
       "SHA-256 differs from active.json.manifestSha256.");
-    const manifest = parseReleaseManifest(parseBoundedJson(bytes, "release-manifest.json"),
+    const manifest = parseBrowserReleaseManifest(parseBoundedJson(bytes, "release-manifest.json"),
       "release-manifest.json");
     if (manifest.tag !== pointer.tag || manifest.bundleId !== pointer.bundleId) {
       throw new ArtifactLoadError("release-manifest.json: tag or bundleId differs from active.json.");
     }
     const entries = [manifest.neighborhood, manifest.explorer, manifest.catalog,
+      ...(manifest.format === "release-manifest-v2" ? [manifest.metadata] : []),
       ...(manifest.model ? [manifest.model] : [])];
     if (entries.some((entry) => entry.bytes > RELEASE_BUNDLE_LIMITS.plainAssetBytes) ||
         entries.reduce((sum, entry) => sum + entry.bytes, 0) > RELEASE_BUNDLE_LIMITS.totalPlainBytes) {
@@ -86,7 +91,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
     return { manifest, basePath };
   }
 
-  async function fetchBundleAsset(bundle: { manifest: ReleaseManifestV1; basePath: string },
+  async function fetchBundleAsset(bundle: { manifest: BrowserReleaseManifest; basePath: string },
     entry: ReleaseManifestAsset): Promise<unknown> {
     const bytes = await fetchVerifiedBundleBytes(`${bundle.basePath}${entry.path}`, entry.path,
       entry.bytes, entry.sha256, entry.bytes,
@@ -155,6 +160,40 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
       throw new ArtifactLoadError("Unable to load required graph data.");
     }
     return parseLegacyGraph(legacyData.value, legacyData.label);
+  }
+
+  /** The v2 candidate is browser-readable but not accepted by release publishers/installers. */
+  async function fetchCatalogMetadata(graphData: LoadedGraphData): Promise<CatalogMetadataSnapshotV1 | null> {
+    const bundle = await getActiveBundle();
+    if (!bundle || bundle.manifest.format !== "release-manifest-v2") return null;
+    const { catalog: catalogEntry, metadata: metadataEntry } = bundle.manifest;
+    const catalog = parseReleaseIdentityCatalog(await fetchBundleAsset(bundle, catalogEntry),
+      catalogEntry.path);
+    if (catalog.datasetSha256 !== bundle.manifest.dataset.sha256 ||
+        catalog.anime.length !== catalogEntry.animeCount) {
+      throw new ArtifactLoadError(`${catalogEntry.path}: datasetSha256 or anime count differs from release-manifest.json.catalog.`);
+    }
+    const mapDigest = await sha256Hex(new TextEncoder().encode(JSON.stringify(catalog.anime)));
+    if (mapDigest !== catalogEntry.itemMapSha256) {
+      throw new ArtifactLoadError(`${catalogEntry.path}: item map differs from release-manifest.json.catalog.itemMapSha256.`);
+    }
+    if (!isCompactGraphData(graphData) || graphData.format !== bundle.manifest.neighborhood.format ||
+        JSON.stringify(graphData.anime) !== JSON.stringify(catalog.anime)) {
+      throw new ArtifactLoadError(`${catalogEntry.path}: anime IDs or titles differ from graph.compact.json.`);
+    }
+    const snapshot = parseCatalogMetadataSnapshot(await fetchBundleAsset(bundle, metadataEntry),
+      metadataEntry.path);
+    if (snapshot.anime.length !== metadataEntry.animeCount ||
+        snapshot.source.snapshotSha256 !== metadataEntry.sourceSnapshotSha256) {
+      throw new ArtifactLoadError(`${metadataEntry.path}: anime count or source.snapshotSha256 differs from release-manifest.json.metadata.`);
+    }
+    const knownIds = new Set(catalog.anime.map(([id]) => id));
+    for (let index = 0; index < snapshot.anime.length; index += 1) {
+      if (!knownIds.has(snapshot.anime[index].animeId)) {
+        throw new ArtifactLoadError(`${metadataEntry.path}: anime[${index}].animeId is outside catalog.identity.json.`);
+      }
+    }
+    return snapshot;
   }
 
   async function fetchExplorerGraph(graphData: LoadedGraphData): Promise<LoadedGraphData> {
@@ -369,6 +408,7 @@ export function createArtifactLoader(runtime: RuntimePorts, demoMode: boolean,
   }
 
   return { fetchGraph, fetchExplorerGraph, fetchModelRecommendationIndex, fetchDemoCatalog,
+    fetchCatalogMetadata,
     getActiveReleaseManifest: async () => (await getActiveBundle())?.manifest ?? null,
     getLoadedModelFormat: () => loadedModelFormat };
 }
