@@ -107,6 +107,7 @@ type CommandMatchReason =
 
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
+const BATCHED_SVG_EDGE_THRESHOLD = 500;
 const NEIGHBORHOOD_MAX_NODES = 25;
 const NEIGHBORHOOD_MAX_EDGES = 24;
 const GRAPH_VIEW_WIDTH = 1200;
@@ -3272,7 +3273,8 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
   }
   discoveryMetadataControlsEl.hidden = true;
 
-  const graphRecommendations = buildGraphRecommendationsForPreferences(preferences, recommendationIndex);
+  const graphRecommendations = measureLocal("wasiw:recommendation:graph-score", () =>
+    buildGraphRecommendationsForPreferences(preferences, recommendationIndex));
   let modelRecommendations: RecommendationResult[] = [];
   let activeRankingMode: EligibilityRankingMode = recommendationMode;
   let usingFallback = false;
@@ -3285,6 +3287,9 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
     model: RecommendationResult[];
     fallback: RecommendationResult[];
   } = { graph: graphRecommendations, model: modelRecommendations, fallback: [] };
+  const rankCurrentCandidates = () => measureLocal("wasiw:recommendation:eligibility", () =>
+    rankEligibleCandidates(activeRankingMode, sources, eligibilityPolicy,
+      animeMetadataCache, modelBlendWeight));
   function showActiveEngine(): void {
     if (activeRankingMode === "fallback") {
       recEngineStatusEl.textContent = fallbackDisplay === "related"
@@ -3370,7 +3375,8 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
       if (mappedSignals < signals.length) {
         modelCoverageNote = `; model mapped ${mappedSignals}/${signals.length} preference signals`;
       }
-      modelRecommendations = buildModelRecommendationsForPreferences(preferences, recommendationIndex, modelIndex);
+      modelRecommendations = measureLocal("wasiw:recommendation:model-score", () =>
+        buildModelRecommendationsForPreferences(preferences, recommendationIndex, modelIndex));
       sources.model = modelRecommendations;
       if (eligibilityPolicy.evaluate(modelRecommendations, animeMetadataCache).structurallyEligible.length === 0) {
         fallbackReason = mappedSignals === 0
@@ -3382,31 +3388,23 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
   }
   showActiveEngine();
 
-  let initialEligibility = rankEligibleCandidates(
-    activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-  );
+  let initialEligibility = rankCurrentCandidates();
   if (recommendationMode !== "graph" && activeRankingMode !== "graph" &&
       initialEligibility.structurallyEligible.length === 0) {
     activeRankingMode = "graph";
     fallbackReason = "No ML candidates passed catalog and eligibility rules.";
     showActiveEngine();
-    initialEligibility = rankEligibleCandidates(
-      activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-    );
+    initialEligibility = rankCurrentCandidates();
   }
   if (fallbackReason && initialEligibility.structurallyEligible.length === 0) {
     if (!await primeSparseContentMetadata()) return;
     selectCatalogBaseline();
-    initialEligibility = rankEligibleCandidates(
-      activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-    );
+    initialEligibility = rankCurrentCandidates();
   }
   if (recommendationMode === "graph" && initialEligibility.structurallyEligible.length === 0) {
     if (!await primeSparseContentMetadata()) return;
     if (selectContentBaseline()) {
-      initialEligibility = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      );
+      initialEligibility = rankCurrentCandidates();
     }
   }
   let structuralCandidates = initialEligibility.structurallyEligible;
@@ -3450,9 +3448,7 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
     return;
   }
 
-  let finalEligibility = rankEligibleCandidates(
-    activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-  );
+  let finalEligibility = rankCurrentCandidates();
   if (recommendationMode !== "graph" && !usingFallback &&
       finalEligibility.recommendations.length === 0 &&
       (!filtersActive || unresolvedMetadataCount(candidateMetadataCoverage(
@@ -3461,30 +3457,22 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
       activeRankingMode = "graph";
       fallbackReason = "No ML candidates passed catalog and required filters.";
       showActiveEngine();
-      structuralCandidates = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      ).structurallyEligible;
+      structuralCandidates = rankCurrentCandidates().structurallyEligible;
       if (!await hydrateRankedCandidates(structuralCandidates)) {
         return;
       }
-      finalEligibility = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      );
+      finalEligibility = rankCurrentCandidates();
     }
     if (finalEligibility.recommendations.length === 0 &&
         (!filtersActive || unresolvedMetadataCount(candidateMetadataCoverage(
           finalEligibility.structurallyEligible)) === 0)) {
       if (!await primeSparseContentMetadata()) return;
       selectCatalogBaseline();
-      structuralCandidates = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      ).structurallyEligible;
+      structuralCandidates = rankCurrentCandidates().structurallyEligible;
       if (!await hydrateRankedCandidates(structuralCandidates)) {
         return;
       }
-      finalEligibility = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      );
+      finalEligibility = rankCurrentCandidates();
     }
   }
   if (recommendationMode === "graph" && finalEligibility.recommendations.length === 0 && !usingFallback &&
@@ -3492,12 +3480,8 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
         finalEligibility.structurallyEligible)) === 0)) {
     if (!await primeSparseContentMetadata()) return;
     if (selectContentBaseline()) {
-      structuralCandidates = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      ).structurallyEligible;
-      finalEligibility = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      );
+      structuralCandidates = rankCurrentCandidates().structurallyEligible;
+      finalEligibility = rankCurrentCandidates();
     }
   }
   let filterCoverageCandidates = finalEligibility.structurallyEligible;
@@ -3508,24 +3492,23 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
     if (checkMoreFilterMetadata) {
       if (!await hydrateRankedCandidates(eligibleCatalog)) return;
       sources.fallback = buildGenreOverlapExploration(preferences, recommendationIndex, animeMetadataCache);
-      finalEligibility = rankEligibleCandidates(
-        activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-      );
+      finalEligibility = rankCurrentCandidates();
       if (recommendationMode !== "graph" && finalEligibility.recommendations.length === 0 &&
           unresolvedMetadataCount(candidateMetadataCoverage(eligibleCatalog)) === 0) {
         selectCatalogBaseline();
-        finalEligibility = rankEligibleCandidates(
-          activeRankingMode, sources, eligibilityPolicy, animeMetadataCache, modelBlendWeight,
-        );
+        finalEligibility = rankCurrentCandidates();
       }
     }
     filterCoverageCandidates = usingFallback && currentFallbackDisplay() === "related"
       ? eligibleCatalog : finalEligibility.structurallyEligible;
   }
-  updateGenreFilterOptions(filterCoverageCandidates);
-  const filterCoverage = renderRankedFilterMetadataCoverage(filterCoverageCandidates);
+  const filterCoverage = measureLocal("wasiw:recommendation:filter-ui", () => {
+    updateGenreFilterOptions(filterCoverageCandidates);
+    return renderRankedFilterMetadataCoverage(filterCoverageCandidates);
+  });
   const filterScanIncomplete = filtersActive && unresolvedMetadataCount(filterCoverage) > 0;
-  const franchiseSelection = selectVisibleFranchises(finalEligibility.recommendations);
+  const franchiseSelection = measureLocal("wasiw:recommendation:franchise", () =>
+    selectVisibleFranchises(finalEligibility.recommendations));
   const filteredRecommendations = franchiseSelection.recommendations;
   const effectiveFusion = activeRankingMode === "hybrid" ? filteredRecommendations[0]?.fusion : undefined;
   if (effectiveFusion &&
@@ -3574,11 +3557,14 @@ async function updateRecommendationsBody(checkMoreFilterMetadata = false): Promi
   recSummaryEl.textContent = `Showing top ${Math.min(MAX_RECOMMENDATIONS, filteredRecommendations.length)} recommendations from ${finalEligibility.recommendations.length} eligible candidates (${methodLabel})${filterSummary}. ${franchiseSelectionSummary(franchiseSelection, finalEligibility.recommendations.length)}${fallbackScopeNote}` +
     (filtersActive ? ` Filter scan ${filterScanIncomplete ? "partial" : "complete"}: ${metadataCoverageText(filterCoverage)}` : "");
 
-  const visibleRecommendations = filteredRecommendations
-    .slice(0, MAX_RECOMMENDATIONS)
-    .map((item) => renderRecommendationCard(item, usingFallback ? currentFallbackDisplay() : "ranking",
-      franchiseSelection.notesByAnimeId.get(item.anime.animeId)));
-  recResultsEl.innerHTML = visibleRecommendations.join("");
+  const visibleRecommendations = measureLocal("wasiw:recommendation:cards", () =>
+    filteredRecommendations.slice(0, MAX_RECOMMENDATIONS)
+      .map((item) => renderRecommendationCard(item,
+        usingFallback ? currentFallbackDisplay() : "ranking",
+        franchiseSelection.notesByAnimeId.get(item.anime.animeId))));
+  measureLocal("wasiw:recommendation:dom", () => {
+    recResultsEl.innerHTML = visibleRecommendations.join("");
+  });
 
   const visibleWithMetadata = filteredRecommendations
     .slice(0, MAX_RECOMMENDATIONS)
@@ -4447,61 +4433,56 @@ function renderGraph(
     ? selectAnimeNeighborhood(graphData, neighborhoodFocusId,
       NEIGHBORHOOD_MAX_NODES, NEIGHBORHOOD_MAX_EDGES, minAbsoluteWeight)
     : null;
-  const selectedEdges = focused
+  const selectedEdges = measureLocal("wasiw:network:select", () => focused
     ? { edges: showAnimeAnimeEdges ? focused.edges : [],
       totalEligibleEdgeCount: showAnimeAnimeEdges ? focused.eligiblePairEdges : 0,
       edgeLimitHit: showAnimeAnimeEdges && focused.omittedByBudget > 0 }
     : selectRenderableEdges(graphDataValue, minAbsoluteWeight,
-      showAnimeAnimeEdges, showUsers);
+      showAnimeAnimeEdges, showUsers));
   const activeNodeIds = new Set<string>();
+  measureLocal("wasiw:network:construct", () => {
+    if (focused) activeNodeIds.add(focused.center.id);
 
-  if (focused) activeNodeIds.add(focused.center.id);
-
-  for (const edge of selectedEdges.edges) {
-    activeNodeIds.add(edge.source);
-    activeNodeIds.add(edge.target);
-  }
-
-  for (const node of focused ? focused.nodes : getGraphNodes(graphDataValue)) {
-    if (!showUsers && node.nodeType === "user") {
-      continue;
-    }
-    if (!activeNodeIds.has(node.id)) {
-      continue;
+    for (const edge of selectedEdges.edges) {
+      activeNodeIds.add(edge.source);
+      activeNodeIds.add(edge.target);
     }
 
-    const isUser = node.nodeType === "user";
-    graph.addNode(node.id, {
-      label: node.label,
-      nodeType: node.nodeType,
-      size: isUser ? 5.2 : focused ? node.id === focused.center.id ? 8 : 5 : 2.8,
-      color: isUser ? "#ff8a00" : "#0f8b8d",
-      x: runtime.random(),
-      y: runtime.random(),
-    });
-  }
+    for (const node of focused ? focused.nodes : getGraphNodes(graphDataValue)) {
+      if (!showUsers && node.nodeType === "user") continue;
+      if (!activeNodeIds.has(node.id)) continue;
 
-  for (const edge of selectedEdges.edges) {
-    if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) {
-      continue;
+      const isUser = node.nodeType === "user";
+      graph.addNode(node.id, {
+        label: node.label,
+        nodeType: node.nodeType,
+        size: isUser ? 5.2 : focused ? node.id === focused.center.id ? 8 : 5 : 2.8,
+        color: isUser ? "#ff8a00" : "#0f8b8d",
+        x: runtime.random(),
+        y: runtime.random(),
+      });
     }
 
-    const sign = edge.weight > 0 ? "positive" : edge.weight < 0 ? "negative" : "neutral";
-    const color = sign === "neutral" ? "var(--graph-neutral-edge)"
-      : edge.edgeType === "user-anime"
-        ? sign === "positive" ? "var(--graph-user-positive-edge)" : "var(--graph-user-negative-edge)"
-        : sign === "positive" ? "var(--graph-positive-edge)" : "var(--graph-negative-edge)";
-    graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
-      size: focused ? 1.6 : edge.edgeType === "user-anime" ? 1.4 : 0.7,
-      color,
-      weight: Math.max(Math.abs(edge.weight), 0.01),
-      signedWeight: edge.weight,
-      sign,
-      edgeType: edge.edgeType,
-    });
-  }
+    for (const edge of selectedEdges.edges) {
+      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue;
 
-  applyLayout(graph, focused?.center.id);
+      const sign = edge.weight > 0 ? "positive" : edge.weight < 0 ? "negative" : "neutral";
+      const color = sign === "neutral" ? "var(--graph-neutral-edge)"
+        : edge.edgeType === "user-anime"
+          ? sign === "positive" ? "var(--graph-user-positive-edge)" : "var(--graph-user-negative-edge)"
+          : sign === "positive" ? "var(--graph-positive-edge)" : "var(--graph-negative-edge)";
+      graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
+        size: focused ? 1.6 : edge.edgeType === "user-anime" ? 1.4 : 0.7,
+        color,
+        weight: Math.max(Math.abs(edge.weight), 0.01),
+        signedWeight: edge.weight,
+        sign,
+        edgeType: edge.edgeType,
+      });
+    }
+  });
+
+  measureLocal("wasiw:network:layout", () => applyLayout(graph, focused?.center.id));
   currentGraph = graph;
   visibleGraphNodes = [];
   const focusedEvidence = new Map<string, { weight: number; support?: number }>();
@@ -4532,7 +4513,8 @@ function renderGraph(
 
   const visibleUsers = countNodesByType(graph, "user");
   const visibleAnime = graph.order - visibleUsers;
-  const scope = updateNetworkScope(explorerGraphData ?? graphData);
+  const scope = measureLocal("wasiw:network:scope", () =>
+    updateNetworkScope(explorerGraphData ?? graphData));
   const countSource = focused ? graphData : graphDataValue;
   if (focused) {
     const budgetNote = focused.omittedByBudget > 0
@@ -4568,7 +4550,7 @@ function renderGraph(
     selectedNodeId = null;
     renderInspectPanel(null);
   }
-  renderSvgGraph(graph);
+  measureLocal("wasiw:network:svg", () => renderSvgGraph(graph));
 
   return {
     renderedEdgeCount: graph.size,
@@ -4899,35 +4881,76 @@ function renderSvgGraph(graph: Graph): void {
     });
   }
 
+  const batchEdges = graph.size > BATCHED_SVG_EDGE_THRESHOLD;
+  const edgePaths = new Map<string, {
+    color: string; width: number; sign: string; dashed: boolean;
+    segments: string[];
+  }>();
+  const roundedPathCoordinate = (value: number) => Math.round(value * 10) / 10;
   graph.forEachEdge((_edgeKey, attributes, source, target) => {
     const sourceCoord = coords.get(source);
     const targetCoord = coords.get(target);
     if (!sourceCoord || !targetCoord) {
       return;
     }
-
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", String(scaleGraphCoordinate(sourceCoord.x, minX, spanX, padding, width)));
-    line.setAttribute("y1", String(scaleGraphCoordinate(sourceCoord.y, minY, spanY, padding, height)));
-    line.setAttribute("x2", String(scaleGraphCoordinate(targetCoord.x, minX, spanX, padding, width)));
-    line.setAttribute("y2", String(scaleGraphCoordinate(targetCoord.y, minY, spanY, padding, height)));
-
+    const x1 = scaleGraphCoordinate(sourceCoord.x, minX, spanX, padding, width);
+    const y1 = scaleGraphCoordinate(sourceCoord.y, minY, spanY, padding, height);
+    const x2 = scaleGraphCoordinate(targetCoord.x, minX, spanX, padding, width);
+    const y2 = scaleGraphCoordinate(targetCoord.y, minY, spanY, padding, height);
     const edgeAttrs = attributes as Record<string, unknown>;
     const baseColor =
       typeof edgeAttrs.color === "string" ? edgeAttrs.color : "#6fffe944";
     const baseSize = Number(edgeAttrs.size) || 1;
     const highlighted =
       selected !== null && (source === selected || target === selected);
-    line.setAttribute("stroke", selected && !highlighted ? "var(--graph-dim-edge)" : baseColor);
-    line.setAttribute("stroke-width", String(highlighted ? baseSize * 1.3 : baseSize));
+    const color = selected && !highlighted ? "var(--graph-dim-edge)" : baseColor;
+    const strokeWidth = highlighted ? baseSize * 1.3 : baseSize;
+    const sign = typeof edgeAttrs.sign === "string" ? edgeAttrs.sign : "";
+    const dashed = sign === "neutral";
+    if (batchEdges) {
+      const key = JSON.stringify([color, strokeWidth, sign, dashed]);
+      let group = edgePaths.get(key);
+      if (!group) {
+        group = { color, width: strokeWidth, sign, dashed, segments: [] };
+        edgePaths.set(key, group);
+      }
+      // A tenth of a viewBox unit is below one screen pixel even at phone width.
+      group.segments.push(`M${roundedPathCoordinate(x1)} ${roundedPathCoordinate(y1)}` +
+        `L${roundedPathCoordinate(x2)} ${roundedPathCoordinate(y2)}`);
+      return;
+    }
+
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", String(x1));
+    line.setAttribute("y1", String(y1));
+    line.setAttribute("x2", String(x2));
+    line.setAttribute("y2", String(y2));
+    line.setAttribute("stroke", color);
+    line.setAttribute("stroke-width", String(strokeWidth));
     line.setAttribute("stroke-linecap", "round");
-    const sign = edgeAttrs.sign;
     if (sign === "positive" || sign === "negative" || sign === "neutral") {
       line.setAttribute("data-edge-sign", sign);
-      if (sign === "neutral") line.setAttribute("stroke-dasharray", "3 3");
+      if (dashed) line.setAttribute("stroke-dasharray", "3 3");
     }
     edgeLayer.appendChild(line);
   });
+  if (batchEdges) {
+    edgeLayer.setAttribute("data-render-mode", "batched-paths");
+    for (const group of edgePaths.values()) {
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", group.segments.join(""));
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", group.color);
+      path.setAttribute("stroke-width", String(group.width));
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("data-edge-count", String(group.segments.length));
+      if (group.sign === "positive" || group.sign === "negative" || group.sign === "neutral") {
+        path.setAttribute("data-edge-sign", group.sign);
+      }
+      if (group.dashed) path.setAttribute("stroke-dasharray", "3 3");
+      edgeLayer.appendChild(path);
+    }
+  }
 
   let nodeIndex = 0;
   graph.forEachNode((node, attributes) => {

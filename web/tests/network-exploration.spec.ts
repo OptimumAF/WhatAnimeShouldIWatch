@@ -120,3 +120,80 @@ test("bounded local neighborhood keeps sampled overview, keyboard list, viewport
   expect(button?.height).toBeGreaterThanOrEqual(44);
   expect(providerRequests).toEqual([]);
 });
+
+test("large invented overview draws every signed pair in grouped SVG paths and keeps focus reversible", async ({ page }) => {
+  const original = JSON.parse(readFileSync(new URL(
+    "../public/demo-data/graph.aggregate.compact.json", import.meta.url), "utf8",
+  )) as CompactGraphDataV3;
+  const anime = Array.from({ length: 80 }, (_, index) =>
+    [101 + index, `Invented Batch Title ${index + 1}`] as [number, string]);
+  const pairs: [number, number, number, number][] = [];
+  for (let left = 0; left < anime.length && pairs.length < 600; left += 1) {
+    for (let right = left + 1; right < anime.length && pairs.length < 600; right += 1) {
+      const weight = pairs.length % 3 === 0 ? 1 : pairs.length % 3 === 1 ? -1 : 0;
+      pairs.push([left, right, weight, 1]);
+    }
+  }
+  const withoutId = { ...original, anime, aa: pairs, animeCount: anime.length,
+    nodeCount: anime.length, edgeCount: pairs.length,
+    truncation: { ...original.truncation, inputRatings: 600, selectedRatings: 600,
+      potentialPairVisits: 600, pairVisits: 600, candidatePairs: 600,
+      eligiblePairs: 600, selectedPairs: 600 } };
+  const { graphId: _oldGraphId, ...core } = withoutId;
+  const graph = { ...core, graphId: aggregateRecommendationGraphId(core) };
+  const explorer = buildExplorerGraph(graph, 600, 0);
+  const providerRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/api\.jikan\.moe|graphql\.anilist\.co|myanimelist\.net|r\.jina\.ai/.test(new URL(request.url()).hostname)) {
+      providerRequests.push(request.url());
+    }
+  });
+  await page.route("**/*", (route) => {
+    const host = new URL(route.request().url()).hostname;
+    return host === "127.0.0.1" || host === "localhost" ? route.continue() : route.abort();
+  });
+  await page.route("**/demo-data/graph.aggregate.compact.json", (route) => route.fulfill({ json: graph }));
+  await page.route("**/demo-data/graph-explorer.aggregate.compact.json", (route) =>
+    route.fulfill({ json: explorer }));
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open network explorer page" }).click();
+  await page.locator("#min-weight").evaluate((input: HTMLInputElement) => {
+    input.value = "0";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(page.locator("#network-mode-status")).toContainText("600 edges visible");
+  const edges = page.locator("#graph .graph-edge-layer");
+  await expect(edges).toHaveAttribute("data-render-mode", "batched-paths");
+  await expect(edges.locator("line")).toHaveCount(0);
+  expect(await edges.locator("path").count()).toBeLessThanOrEqual(3);
+  for (const sign of ["positive", "negative", "neutral"]) {
+    await expect(edges.locator(`path[data-edge-sign='${sign}']`)).toHaveCount(1);
+  }
+  const drawnPairs = await edges.locator("path").evaluateAll((paths) =>
+    paths.reduce((sum, path) => sum + Number(path.getAttribute("data-edge-count")), 0));
+  expect(drawnPairs).toBe(600);
+  const pathGeometry = await edges.locator("path").evaluateAll((paths) => paths.map((path) => ({
+    declared: Number(path.getAttribute("data-edge-count")),
+    segments: (path.getAttribute("d")?.match(/M/g) ?? []).length,
+    hasInvalidNumber: /NaN|Infinity/.test(path.getAttribute("d") ?? ""),
+    pointerEvents: getComputedStyle(path).pointerEvents,
+  })));
+  expect(pathGeometry.every((item) => item.declared === item.segments &&
+    !item.hasInvalidNumber && item.pointerEvents === "none")).toBe(true);
+  await expect(edges.locator("path[data-edge-sign='neutral']"))
+    .toHaveAttribute("stroke-dasharray", "3 3");
+  await expect(page.locator("#graph circle")).toHaveCount(80);
+  await page.locator("#graph circle[data-node-id='anime:101']").click();
+  await expect(edges.locator("path[stroke='var(--graph-dim-edge)']")).not.toHaveCount(0);
+
+  await page.locator("#network-search-input").fill("anime:101");
+  await page.locator("#network-search-form button").click();
+  await expect(page.locator("#network-mode-status")).toContainText("Focused on");
+  await expect(edges.locator("line")).toHaveCount(24);
+  await expect(edges.locator("path")).toHaveCount(0);
+  await page.locator("#reset-neighborhood").click();
+  await expect(edges).toHaveAttribute("data-render-mode", "batched-paths");
+  expect(await edges.locator("path").count()).toBeLessThanOrEqual(3);
+  expect(providerRequests).toEqual([]);
+});
