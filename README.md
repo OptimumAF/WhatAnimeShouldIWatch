@@ -303,4 +303,4 @@ GitHub Actions workflow included:
 
 ## 6) Desktop release hold
 
-The old tag-triggered EXE publisher has been removed. M9.4 has a local synthetic bounded-loading check; M9.5–M9.6 still require packaging verification and an outside-repository launch before a new desktop publication route is reviewed. A CI build artifact is an engineering check, not a desktop release.
+The old tag-triggered EXE publisher has been removed. M9.4 has a local synthetic bounded-loading check. M9.5 now creates and verifies a local Windows x64 candidate ZIP with a pinned Rust toolchain and explicit runtime prerequisites; CI uploads no package. M9.6 still requires an outside-repository launch before any desktop publication route is reviewed.

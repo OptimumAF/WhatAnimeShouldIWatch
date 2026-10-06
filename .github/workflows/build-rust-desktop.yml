@@ -1,14 +1,16 @@
-name: Build Rust Desktop EXE
+name: Check Windows desktop package
 
 on:
   pull_request:
     paths:
       - "desktop/**"
+      - "rust-toolchain.toml"
       - ".github/workflows/build-rust-desktop.yml"
   push:
     branches: ["master"]
     paths:
       - "desktop/**"
+      - "rust-toolchain.toml"
       - ".github/workflows/build-rust-desktop.yml"
   workflow_dispatch:
 
@@ -16,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  build-windows-exe:
+  check-windows-package:
     runs-on: windows-latest
 
     steps:
@@ -24,7 +26,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: "1.93.1"
+          components: rustfmt, clippy
+
+      - name: Install Python for package checks
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Cache cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -43,9 +53,15 @@ jobs:
       - name: Build desktop app
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml
 
-      - name: Upload EXE artifact
-        if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
-        with:
-          name: anime-graph-desktop-windows
-          path: desktop/target/release/anime_graph_desktop.exe
+      - name: Build and verify local portable package
+        run: |
+          python desktop/scripts/windows_package.py package
+          python desktop/scripts/windows_package.py check --compare-source
+          python -m unittest discover -s desktop/scripts -p "test_*.py"
+
+      - name: Check packaged runtime prerequisites
+        shell: pwsh
+        run: |
+          $probe = Join-Path $env:RUNNER_TEMP 'anime-graph-desktop-candidate'
+          Expand-Archive -LiteralPath desktop/target/package/anime-graph-desktop-windows-x64.zip -DestinationPath $probe
+          & (Join-Path $probe 'anime-graph-desktop/Check-Prerequisites.ps1')
