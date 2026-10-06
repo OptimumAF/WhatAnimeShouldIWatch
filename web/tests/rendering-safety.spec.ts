@@ -92,6 +92,13 @@ test("graph labels, imported lines, and profile names remain text", async ({ pag
     await route.fulfill({ response, json: catalog });
   });
   await page.goto("/");
+  await expect.poll(() => page.locator("#anime-options option").evaluateAll((options, value) =>
+    options.filter((option) => (option as HTMLOptionElement).value === value).length, unsafeMarkup))
+    .toBe(1);
+  await expect.poll(() => page.locator("#network-node-options option").evaluateAll((options, value) =>
+    options.filter((option) => (option as HTMLOptionElement).value === value).length, unsafeMarkup))
+    .toBe(1);
+  await expect(page.locator("#anime-options img, #network-node-options img")).toHaveCount(0);
   await page.locator("#anime-input").fill("101");
   await page.locator("#add-anime-form button").click();
   await expect(page.locator("#selected-anime .chip-title")).toContainText(unsafeMarkup);

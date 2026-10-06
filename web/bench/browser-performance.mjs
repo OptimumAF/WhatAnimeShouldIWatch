@@ -19,6 +19,7 @@ if (scenarioName !== "fixture" && scenarioName !== "scale") {
   throw new Error("--scenario must be fixture or scale.");
 }
 const traceGraph = process.argv.includes("--trace-graph");
+const traceCold = process.argv.includes("--trace-cold");
 // Diagnostic only: element.click() bypasses native pointer activation and focus work.
 const traceGraphDomClick = process.argv.includes("--trace-graph-dom-click");
 const traceGraphTouch = process.argv.includes("--trace-graph-touch");
@@ -28,15 +29,20 @@ if ((traceGraphDomClick || traceGraphTouch) && !traceGraph) {
 if (traceGraphDomClick && traceGraphTouch) {
   throw new Error("Choose one graph control input diagnostic at a time.");
 }
+if (traceGraph && traceCold) {
+  throw new Error("Choose one trace window at a time.");
+}
 const traceSuffix = traceGraphDomClick ? "-dom-click" : traceGraphTouch ? "-touch" : "";
 const outputPath = join(webRoot, "test-results",
   traceGraph ? `performance-${scenarioName}-trace${traceSuffix}.json`
+    : traceCold ? `performance-${scenarioName}-cold-trace-summary.json`
     : scenarioName === "scale" ? "performance-scale.json" : "performance-baseline.json");
 const runs = readPositiveInteger("--runs", 3);
 const updates = readPositiveInteger("--updates", 8);
 const graphRenders = readPositiveInteger("--graph-renders", 4);
 const graphTracePath = join(webRoot, "test-results",
   `performance-graph-trace${traceSuffix}.json`);
+const coldTracePath = join(webRoot, "test-results", `performance-${scenarioName}-cold-trace.json`);
 const profiles = [
   { name: "desktop", viewport: { width: 1365, height: 768 }, deviceScaleFactor: 1,
     cpuRate: 1, latencyMs: 0, downBytesPerSecond: -1, upBytesPerSecond: -1 },
@@ -112,18 +118,61 @@ function summarizeGraphTrace(events) {
         ? "first-render" : "after-first-render",
     durationMs: round(task.dur / 1000),
     // These trace slices may nest; their durations are not additive.
-    events: events.filter((event) => event.ph === "X" && event !== task &&
+    events: traceTaskEvents(events, task),
+  }));
+}
+
+function traceTaskEvents(events, task, extraNames = []) {
+  return events.filter((event) => event.ph === "X" && event !== task &&
       event.pid === task.pid && event.tid === task.tid &&
       event.ts >= task.ts && event.ts + event.dur <= task.ts + task.dur &&
       event.dur >= 1000 &&
       ["EventDispatch", "FunctionCall", "UpdateLayoutTree", "Layout", "Paint", "PrePaint",
-        "MajorGC", "MinorGC"]
+        "MajorGC", "MinorGC", ...extraNames]
         .includes(event.name)).map((event) => ({
       name: event.name,
       durationMs: round(event.dur / 1000),
       ...(event.name === "EventDispatch" && typeof event.args?.data?.type === "string"
         ? { eventType: event.args.data.type } : {}),
-    })),
+    }));
+}
+
+function summarizeColdTrace(events) {
+  const indexMarker = events.find((event) => event.name === "wasiw:index:graph" &&
+    event.ph === "b");
+  const firstRecommendationEnd = events.find((event) =>
+    event.name === "wasiw:recommendation:update" && event.ph === "e" &&
+    event.pid === indexMarker?.pid && event.tid === indexMarker?.tid);
+  if (!indexMarker || !firstRecommendationEnd) {
+    throw new Error("The cold trace is missing graph-index or first-recommendation markers.");
+  }
+  const phaseNames = ["wasiw:json:catalog", "wasiw:schema:catalog",
+    "wasiw:json:graph", "wasiw:schema:graph", "wasiw:index:graph",
+    "wasiw:init:anime-options", "wasiw:init:network-options",
+    "wasiw:init:other-ui", "wasiw:init:active-view",
+    "wasiw:recommendation:update"];
+  const phases = phaseNames.flatMap((name) => {
+    const begin = events.find((event) => event.name === name && event.ph === "b" &&
+      event.pid === indexMarker.pid && event.tid === indexMarker.tid);
+    const end = events.find((event) => event.name === name && event.ph === "e" &&
+      event.pid === indexMarker.pid && event.tid === indexMarker.tid &&
+      event.ts >= (begin?.ts ?? Infinity));
+    return begin && end ? [{ name, start: begin.ts, end: end.ts }] : [];
+  });
+  const tasks = events.filter((event) => event.ph === "X" && event.name === "RunTask" &&
+    event.pid === indexMarker.pid && event.tid === indexMarker.tid &&
+    event.dur >= 50_000 && event.ts < firstRecommendationEnd.ts)
+    .sort((left, right) => left.ts - right.ts);
+  return tasks.map((task) => ({
+    durationMs: round(task.dur / 1000),
+    phaseOverlaps: phases.filter((phase) =>
+      task.ts < phase.end && task.ts + task.dur > phase.start)
+      .map((phase) => phase.name),
+    // Nested trace slices overlap; durations here must not be added.
+    events: traceTaskEvents(events, task,
+      ["EvaluateScript", "CompileScript", "ParseHTML", "RunMicrotasks",
+        "V8.CompileCode", "V8.Execute"])
+      .sort((left, right) => right.durationMs - left.durationMs).slice(0, 16),
   }));
 }
 
@@ -221,7 +270,8 @@ async function localAssetSizes(paths) {
   return rows.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = false) {
+async function oneRun(browser, baseUrl, profile, proxy,
+  captureGraphTrace = false, captureColdTrace = false) {
   const context = await browser.newContext({
     viewport: profile.viewport,
     deviceScaleFactor: profile.deviceScaleFactor,
@@ -252,6 +302,14 @@ async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = fals
   await session.send("Performance.enable");
   const network = attachNetwork(session, new URL(baseUrl).origin);
   try {
+    const coldTraceEvents = [];
+    if (captureColdTrace) {
+      session.on("Tracing.dataCollected", ({ value }) => coldTraceEvents.push(...value));
+      await session.send("Tracing.start", {
+        categories: "devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline",
+        transferMode: "ReportEvents",
+      });
+    }
     await page.goto(`${baseUrl}?perf=1`, { waitUntil: "load", timeout: 60_000 });
     await page.locator(".demo-banner").waitFor({ timeout: 15_000 }).catch(() => {
       throw new Error("Built app is not the synthetic demo; run npm run bench:browser:fixture.");
@@ -263,6 +321,15 @@ async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = fals
     const firstRecommendation = cold.measures.find((item) => item.name === "wasiw:recommendation:update");
     if (!firstRecommendation) throw new Error("First-view recommendation timing is missing.");
     const coldFirstViewMs = firstRecommendation.startTime + firstRecommendation.duration;
+    let coldTrace = null;
+    if (captureColdTrace) {
+      const complete = new Promise((resolve) => session.once("Tracing.tracingComplete", resolve));
+      await session.send("Tracing.end");
+      await complete;
+      await mkdir(resolve(coldTracePath, ".."), { recursive: true });
+      await writeFile(coldTracePath, JSON.stringify({ traceEvents: coldTraceEvents }));
+      coldTrace = summarizeColdTrace(coldTraceEvents);
+    }
 
     network.setPhase("warm");
     await session.send("Network.setCacheDisabled", { cacheDisabled: false });
@@ -376,6 +443,7 @@ async function oneRun(browser, baseUrl, profile, proxy, captureGraphTrace = fals
         measures: graph.measures,
         network: network.phases.interaction },
       ...(graphTrace ? { graphTrace } : {}),
+      ...(coldTrace ? { coldTrace } : {}),
       assetSizes: await localAssetSizes(resourcePaths),
       blockedExternalRequests: proxy.blockedRequests - blockedBefore,
     };
@@ -527,7 +595,8 @@ try {
     samples[profile.name] = [];
     for (let run = 0; run < runs; run += 1) {
       samples[profile.name].push(await oneRun(browser, baseUrl, profile, proxy,
-        traceGraph && profile.name === "mobile" && run === 0));
+        traceGraph && profile.name === "mobile" && run === 0,
+        traceCold && profile.name === "mobile" && run === 0));
     }
   }
   const assetSizes = samples.desktop[0].assetSizes;
