@@ -150,6 +150,13 @@ test("normal mode pins one verified bundle for graph, model, and explorer", asyn
   await expect(page.locator("#network-explorer-sample")).toContainText("10/18 retained user-anime edges sampled");
   await expect(page.locator("#toggle-users")).toBeEnabled();
   await expect(page.locator("#toggle-users")).not.toBeChecked();
+  await page.locator("#network-search-input").fill("anime:101");
+  await page.locator("#network-search-form button").click();
+  await expect(page.locator("#network-mode-status")).toContainText("recommendation graph");
+  await expect(page.locator("#toggle-users")).toBeDisabled();
+  await page.locator("#reset-neighborhood").click();
+  await expect(page.locator("#network-mode-status")).toContainText("Explorer sample overview");
+  await expect(page.locator("#toggle-users")).toBeEnabled();
   expect(requests.filter((name) => name === "/data/active.json")).toHaveLength(1);
   expect(requests).toContain(`/data/bundles/${manifest.bundleId}/graph.compact.json`);
   expect(requests).toContain(`/data/bundles/${manifest.bundleId}/model-mf-web.compact.json`);

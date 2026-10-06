@@ -44,6 +44,7 @@ import type { FranchiseSelection } from "./franchise-diversity";
 import { ArtifactLoadError, createArtifactLoader } from "./artifact-loader";
 import { measureLocal, measureLocalAsync } from "./local-performance";
 import { describeGraphScope } from "./graph-scope";
+import { selectAnimeNeighborhood } from "./network-neighborhood";
 import { appVersionLabel, dataVersionLabel, diagnosticIssue, modelVersionLabel } from "./diagnostics";
 import type { DiagnosticCode } from "./diagnostics";
 import {
@@ -106,6 +107,10 @@ type CommandMatchReason =
 
 const MAX_RENDERED_ANIME_ANIME_EDGES = 12000;
 const MAX_RENDERED_USER_ANIME_EDGES = 4000;
+const NEIGHBORHOOD_MAX_NODES = 25;
+const NEIGHBORHOOD_MAX_EDGES = 24;
+const GRAPH_VIEW_WIDTH = 1200;
+const GRAPH_VIEW_HEIGHT = 900;
 const NETWORK_NODE_LIST_PAGE_SIZE = 15;
 const INSPECT_MAX_ITEMS = 250;
 const MAX_RECOMMENDATIONS = 40;
@@ -506,9 +511,9 @@ app.innerHTML = `
             <button id="tips-dismiss-network" class="ghost-btn" type="button">Dismiss Tips</button>
           </div>
           <ul class="contextual-tip-list">
-            <li>Start with anime-only edges to reduce graph noise, then add users as needed.</li>
+            <li>Search for an anime to focus on its strongest retained pair evidence; Reset returns to the explorer sample.</li>
             <li>Raise minimum absolute edge weight to highlight stronger pair-preference signals.</li>
-            <li>Click a node to inspect top weighted neighbors and compare context.</li>
+            <li>Click a node or use the node list to inspect it, then focus that anime if useful.</li>
             <li>Keyboard: <strong>Alt+/</strong> jumps to graph search from anywhere.</li>
           </ul>
         </section>
@@ -528,6 +533,15 @@ app.innerHTML = `
           <aside id="network-panel" class="panel">
             <h2>Network Explorer</h2>
             <p class="muted">Inspect the loaded pair evidence and filter visible edges.</p>
+
+            <section class="network-exploration" aria-label="Local graph exploration">
+              <p id="network-mode-status" role="status" aria-live="polite">Explorer sample overview.</p>
+              <p class="muted">Focused view uses at most 25 anime nodes and 24 signed pair edges from the loaded recommendation graph. Strongest means absolute v1 pair preference, with support breaking ties; it is not item similarity.</p>
+              <div class="network-exploration-actions">
+                <button id="focus-neighborhood" type="button" class="ghost-btn" disabled>Focus selected anime</button>
+                <button id="reset-neighborhood" type="button" class="ghost-btn">Reset overview</button>
+              </div>
+            </section>
 
             <details class="accordion network-controls" open>
               <summary>Visibility Controls</summary>
@@ -596,7 +610,12 @@ app.innerHTML = `
             </section>
           </aside>
 
-          <section id="graph-shell" class="graph-shell">
+          <section id="graph-shell" class="graph-shell" tabindex="0" aria-label="Network plot. Arrow keys pan, plus and minus zoom, and zero resets the view.">
+            <div class="graph-viewport-controls" role="group" aria-label="Network viewport controls">
+              <button id="graph-zoom-in" type="button" aria-label="Zoom in network">+</button>
+              <button id="graph-zoom-out" type="button" aria-label="Zoom out network" disabled>−</button>
+              <button id="graph-zoom-reset" type="button" aria-label="Fit network view">Fit</button>
+            </div>
             <div id="graph-loading" class="graph-loading" hidden aria-hidden="true">
               <div class="graph-spinner"></div>
               <p id="graph-loading-message">Rendering network...</p>
@@ -753,6 +772,9 @@ const networkMobileToggleBtn = mustElement<HTMLButtonElement>("#network-mobile-t
 const networkLayoutEl = mustElement<HTMLDivElement>("#network-layout");
 const networkPanelEl = mustElement<HTMLElement>("#network-panel");
 const networkRenderStatusEl = mustElement<HTMLParagraphElement>("#network-render-status");
+const networkModeStatusEl = mustElement<HTMLParagraphElement>("#network-mode-status");
+const focusNeighborhoodBtn = mustElement<HTMLButtonElement>("#focus-neighborhood");
+const resetNeighborhoodBtn = mustElement<HTMLButtonElement>("#reset-neighborhood");
 const networkVersionsEl = mustElement<HTMLParagraphElement>("#network-versions");
 const networkSelectionEl = mustElement<HTMLParagraphElement>("#network-selection");
 const networkExplorerSampleEl = mustElement<HTMLParagraphElement>("#network-explorer-sample");
@@ -764,6 +786,9 @@ const networkNodeListResultsEl = mustElement<HTMLUListElement>("#network-node-li
 const networkNodePrevBtn = mustElement<HTMLButtonElement>("#network-node-prev");
 const networkNodeNextBtn = mustElement<HTMLButtonElement>("#network-node-next");
 const graphShell = mustElement<HTMLElement>("#graph-shell");
+const graphZoomInBtn = mustElement<HTMLButtonElement>("#graph-zoom-in");
+const graphZoomOutBtn = mustElement<HTMLButtonElement>("#graph-zoom-out");
+const graphZoomResetBtn = mustElement<HTMLButtonElement>("#graph-zoom-reset");
 const graphLoadingEl = mustElement<HTMLDivElement>("#graph-loading");
 const graphLoadingMessageEl = mustElement<HTMLParagraphElement>("#graph-loading-message");
 const graphContainer = mustElement<HTMLDivElement>("#graph");
@@ -793,8 +818,11 @@ diagnosticAppEl.textContent = appVersionLabel(__WASIW_APP_VERSION__, __WASIW_SOU
 diagnosticModelEl.textContent = modelVersionLabel(null, null, "unchecked", demoMode);
 
 let selectedNodeId: string | null = null;
+let neighborhoodFocusId: string | null = null;
 let currentGraph: Graph | null = null;
-let visibleGraphNodes: { id: string; label: string; nodeType: string; searchText: string }[] = [];
+let graphViewport = { x: 0, y: 0, width: GRAPH_VIEW_WIDTH, height: GRAPH_VIEW_HEIGHT };
+let visibleGraphNodes: { id: string; label: string; nodeType: string; searchText: string;
+  evidence?: { weight: number; support?: number } }[] = [];
 let networkNodeListPage = 0;
 let explorerGraphData: LoadedGraphData | null = null;
 let explorerGraphDataPromise: Promise<LoadedGraphData> | null = null;
@@ -1584,6 +1612,48 @@ clearSelectionBtn.addEventListener("click", () => {
   }
 });
 
+focusNeighborhoodBtn.addEventListener("click", () => {
+  if (selectedNodeId) enterFocusedNeighborhood(selectedNodeId);
+});
+
+resetNeighborhoodBtn.addEventListener("click", () => {
+  neighborhoodFocusId = null;
+  selectedNodeId = null;
+  networkSearchInput.value = "";
+  networkSearchMessage.textContent = "";
+  networkNodeFilterEl.value = "";
+  networkNodeListPage = 0;
+  minWeightInput.value = "0";
+  toggleAnimeEdges.checked = true;
+  toggleUsers.checked = false;
+  resetGraphViewport();
+  rerenderGraph();
+});
+
+graphZoomInBtn.addEventListener("click", () => zoomGraphViewport(0.8));
+graphZoomOutBtn.addEventListener("click", () => zoomGraphViewport(1.25));
+graphZoomResetBtn.addEventListener("click", resetGraphViewport);
+graphShell.addEventListener("keydown", (event) => {
+  if (event.target !== graphShell) return;
+  const panSteps: Record<string, [number, number]> = {
+    ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+  };
+  if (event.key in panSteps) {
+    const [horizontal, vertical] = panSteps[event.key];
+    panGraphViewport(horizontal * graphViewport.width * 0.12,
+      vertical * graphViewport.height * 0.12);
+  } else if (event.key === "+" || event.key === "=") {
+    zoomGraphViewport(0.8);
+  } else if (event.key === "-") {
+    zoomGraphViewport(1.25);
+  } else if (event.key === "0") {
+    resetGraphViewport();
+  } else {
+    return;
+  }
+  event.preventDefault();
+});
+
 minWeightInput.addEventListener("input", () => {
   minWeightValue.textContent = Number.parseFloat(minWeightInput.value).toFixed(2);
   if (activeView === "network") {
@@ -1621,7 +1691,11 @@ networkSearchForm.addEventListener("submit", (event) => {
     return;
   }
   networkSearchMessage.textContent = `Focused: ${match.label} (${match.id})`;
-  selectNodeAndFocus(match.id);
+  if (match.nodeType === "anime") {
+    enterFocusedNeighborhood(match.id);
+  } else {
+    selectNodeAndFocus(match.id);
+  }
 });
 
 networkNodeFilterEl.addEventListener("input", () => {
@@ -4218,6 +4292,33 @@ function selectNodeAndFocus(nodeId: string): void {
   focusNodeInRenderer(nodeId);
 }
 
+function enterFocusedNeighborhood(nodeId: string): void {
+  let centerId: string;
+  let centerLabel: string;
+  if (isCompactGraphData(graphData)) {
+    const entry = graphData.anime.find(([animeId]) => `anime:${animeId}` === nodeId);
+    if (!entry) return;
+    centerId = `anime:${entry[0]}`;
+    centerLabel = entry[1];
+  } else {
+    const entry = graphData.nodes.find((node) => node.id === nodeId && node.nodeType === "anime");
+    if (!entry) return;
+    centerId = entry.id;
+    centerLabel = entry.label;
+  }
+  neighborhoodFocusId = centerId;
+  selectedNodeId = centerId;
+  toggleUsers.checked = false;
+  toggleAnimeEdges.checked = true;
+  resetGraphViewport();
+  networkSearchMessage.textContent = `Focused neighborhood: ${centerLabel} (${centerId}).`;
+  if (activeView !== "network") {
+    setActiveView("network", false);
+  } else {
+    rerenderGraph();
+  }
+}
+
 function focusNodeInRenderer(nodeId: string): void {
   if (!currentGraph || !currentGraph.hasNode(nodeId)) {
     return;
@@ -4225,6 +4326,10 @@ function focusNodeInRenderer(nodeId: string): void {
   selectedNodeId = nodeId;
   renderInspectPanel(nodeId);
   renderSvgGraph(currentGraph);
+  scrollGraphNodeIntoView(nodeId);
+}
+
+function scrollGraphNodeIntoView(nodeId: string): void {
   const target = graphContainer.querySelector<SVGElement>(
     `[data-node-id="${cssEscapeAttributeValue(nodeId)}"]`,
   );
@@ -4239,7 +4344,7 @@ function rerenderGraph(): void {
   const minWeight = Number.parseFloat(minWeightInput.value);
   minWeightValue.textContent = minWeight.toFixed(2);
   const showAnimeAnimeEdges = toggleAnimeEdges.checked;
-  if (isCompactGraphData(graphData) && graphData.format === "graph-compact-v3") {
+  if (neighborhoodFocusId || (isCompactGraphData(graphData) && graphData.format === "graph-compact-v3")) {
     toggleUsers.checked = false;
   }
   const showUsers = toggleUsers.checked;
@@ -4314,8 +4419,11 @@ function renderVisibleNodeList(): void {
     button.type = "button";
     button.className = "network-node-choice";
     button.dataset.nodeId = node.id;
-    button.textContent = node.label;
-    button.setAttribute("aria-label", `${node.label} (${node.nodeType}, ${node.id})`);
+    const evidence = node.evidence;
+    const evidenceText = evidence
+      ? ` · ${formatWeight(evidence.weight)} pair preference · support ${evidence.support ?? "undeclared"}` : "";
+    button.textContent = node.label + evidenceText;
+    button.setAttribute("aria-label", `${node.label} (${node.nodeType}, ${node.id})${evidenceText}`);
     button.setAttribute("aria-pressed", node.id === selectedNodeId ? "true" : "false");
     item.append(button);
     return item;
@@ -4335,20 +4443,26 @@ function renderGraph(
   showUsers: boolean,
 ): { renderedEdgeCount: number; totalEligibleEdgeCount: number; edgeLimitHit: boolean } {
   const graph = new Graph({ multi: true, type: "undirected" });
-  const selectedEdges = selectRenderableEdges(
-    graphDataValue,
-    minAbsoluteWeight,
-    showAnimeAnimeEdges,
-    showUsers,
-  );
+  const focused = neighborhoodFocusId
+    ? selectAnimeNeighborhood(graphData, neighborhoodFocusId,
+      NEIGHBORHOOD_MAX_NODES, NEIGHBORHOOD_MAX_EDGES, minAbsoluteWeight)
+    : null;
+  const selectedEdges = focused
+    ? { edges: showAnimeAnimeEdges ? focused.edges : [],
+      totalEligibleEdgeCount: showAnimeAnimeEdges ? focused.eligiblePairEdges : 0,
+      edgeLimitHit: showAnimeAnimeEdges && focused.omittedByBudget > 0 }
+    : selectRenderableEdges(graphDataValue, minAbsoluteWeight,
+      showAnimeAnimeEdges, showUsers);
   const activeNodeIds = new Set<string>();
+
+  if (focused) activeNodeIds.add(focused.center.id);
 
   for (const edge of selectedEdges.edges) {
     activeNodeIds.add(edge.source);
     activeNodeIds.add(edge.target);
   }
 
-  for (const node of getGraphNodes(graphDataValue)) {
+  for (const node of focused ? focused.nodes : getGraphNodes(graphDataValue)) {
     if (!showUsers && node.nodeType === "user") {
       continue;
     }
@@ -4360,7 +4474,7 @@ function renderGraph(
     graph.addNode(node.id, {
       label: node.label,
       nodeType: node.nodeType,
-      size: isUser ? 5.2 : 2.8,
+      size: isUser ? 5.2 : focused ? node.id === focused.center.id ? 8 : 5 : 2.8,
       color: isUser ? "#ff8a00" : "#0f8b8d",
       x: runtime.random(),
       y: runtime.random(),
@@ -4373,12 +4487,12 @@ function renderGraph(
     }
 
     const sign = edge.weight > 0 ? "positive" : edge.weight < 0 ? "negative" : "neutral";
-    const color = sign === "neutral" ? "#aab4c088"
+    const color = sign === "neutral" ? "var(--graph-neutral-edge)"
       : edge.edgeType === "user-anime"
-        ? sign === "positive" ? "#f4d35eaa" : "#eaa0d6aa"
-        : sign === "positive" ? "#6fffe988" : "#ff8f7a99";
+        ? sign === "positive" ? "var(--graph-user-positive-edge)" : "var(--graph-user-negative-edge)"
+        : sign === "positive" ? "var(--graph-positive-edge)" : "var(--graph-negative-edge)";
     graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
-      size: edge.edgeType === "user-anime" ? 1.4 : 0.7,
+      size: focused ? 1.6 : edge.edgeType === "user-anime" ? 1.4 : 0.7,
       color,
       weight: Math.max(Math.abs(edge.weight), 0.01),
       signedWeight: edge.weight,
@@ -4387,9 +4501,19 @@ function renderGraph(
     });
   }
 
-  applyLayout(graph);
+  applyLayout(graph, focused?.center.id);
   currentGraph = graph;
   visibleGraphNodes = [];
+  const focusedEvidence = new Map<string, { weight: number; support?: number }>();
+  const focusedOrder = new Map<string, number>();
+  if (focused) {
+    focusedOrder.set(focused.center.id, 0);
+    focused.edges.forEach((edge, index) => {
+      const neighbor = edge.source === focused.center.id ? edge.target : edge.source;
+      focusedEvidence.set(neighbor, { weight: edge.weight, support: edge.support });
+      focusedOrder.set(neighbor, index + 1);
+    });
+  }
   graph.forEachNode((id, attributes) => {
     const label = typeof attributes.label === "string" ? attributes.label : id;
     visibleGraphNodes.push({
@@ -4397,29 +4521,46 @@ function renderGraph(
       label,
       nodeType: attributes.nodeType === "user" ? "user" : "anime",
       searchText: normalizeTitle(`${label} ${id}`),
+      evidence: focusedEvidence.get(id),
     });
   });
   visibleGraphNodes.sort((left, right) =>
+    (focused ? (focusedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+      (focusedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER) : 0) ||
     left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
   renderVisibleNodeList();
-  renderSvgGraph(graph);
 
   const visibleUsers = countNodesByType(graph, "user");
   const visibleAnime = graph.order - visibleUsers;
-  const scope = updateNetworkScope(graphDataValue);
+  const scope = updateNetworkScope(explorerGraphData ?? graphData);
+  const countSource = focused ? graphData : graphDataValue;
+  if (focused) {
+    const budgetNote = focused.omittedByBudget > 0
+      ? ` ${focused.omittedByBudget} matching pair edges omitted by the 25-node/24-edge focus budget.`
+      : "";
+    const noEvidenceNote = focused.eligiblePairEdges === 0
+      ? " No retained pair edge meets this filter; source selection can omit other relationships."
+      : "";
+    networkModeStatusEl.textContent = `Focused on ${focused.center.label} (${focused.center.id}): ` +
+      `${graph.size}/${focused.eligiblePairEdges} retained signed pair edges shown from the recommendation graph.` +
+      budgetNote + noEvidenceNote +
+      (showAnimeAnimeEdges ? "" : " Pair edges are hidden by the visibility control.");
+  } else {
+    networkModeStatusEl.textContent = `Explorer sample overview: ${graph.order} nodes and ${graph.size} edges visible. ` +
+      "Search or select an anime to inspect its bounded recommendation-graph neighborhood.";
+  }
 
   statsEl.innerHTML = [
-    statLine("Generated", new Date(graphDataValue.generatedAt).toLocaleString()),
+    statLine("Generated", new Date(countSource.generatedAt).toLocaleString()),
     statLine(scope.userRowsOmitted ? "User rows" : "Visible users",
-      scope.userRowsOmitted ? "omitted from v3" : `${visibleUsers} / ${graphDataValue.userCount}`),
-    statLine("Visible anime", `${visibleAnime} / ${graphDataValue.animeCount}`),
+      scope.userRowsOmitted ? "omitted from v3" : `${visibleUsers} / ${countSource.userCount}`),
+    statLine("Visible anime", `${visibleAnime} / ${countSource.animeCount}`),
     statLine("Visible nodes", String(graph.order)),
     statLine("Visible edges", String(graph.size)),
   ].join("");
 
   if (selectedNodeId && graph.hasNode(selectedNodeId)) {
     renderInspectPanel(selectedNodeId);
-    focusNodeInRenderer(selectedNodeId);
   } else {
     if (selectedNodeId) {
       networkSearchMessage.textContent = "That node is in the recommendation graph but not in the current explorer sample or filter. Its absence here does not prove no relationship.";
@@ -4427,6 +4568,7 @@ function renderGraph(
     selectedNodeId = null;
     renderInspectPanel(null);
   }
+  renderSvgGraph(graph);
 
   return {
     renderedEdgeCount: graph.size,
@@ -4446,8 +4588,10 @@ function updateNetworkScope(explorer: LoadedGraphData) {
   networkExplorerSampleEl.textContent = scope.explorer;
   networkDrawingLimitsEl.textContent = scope.limits;
   networkScopeCaveatEl.textContent = scope.caveat;
-  toggleUsers.disabled = scope.userRowsOmitted;
-  toggleUsersLabelEl.textContent = scope.userRowsOmitted
+  toggleUsers.disabled = scope.userRowsOmitted || neighborhoodFocusId !== null;
+  toggleUsersLabelEl.textContent = neighborhoodFocusId !== null
+    ? "User edges are available only in the explorer overview"
+    : scope.userRowsOmitted
     ? "User rows omitted from this aggregate-only graph"
     : "Show sampled user nodes + user-anime edges";
   networkSearchInput.placeholder = scope.userRowsOmitted
@@ -4653,19 +4797,56 @@ function mustElement<T extends Element>(selector: string): T {
   return element;
 }
 
-function applyLayout(graph: Graph): void {
+function applyLayout(graph: Graph, centerId?: string): void {
   if (graph.order === 0) {
     return;
   }
 
   try {
-    assignRingLayout(graph);
+    if (centerId && graph.hasNode(centerId)) {
+      assignNeighborhoodLayout(graph, centerId);
+    } else {
+      assignRingLayout(graph);
+    }
   } catch {
     console.warn("Graph layout failed; using fallback ring layout.");
     assignRingLayout(graph);
   }
 
   sanitizeCoordinates(graph);
+}
+
+function setGraphViewport(x: number, y: number, width: number): void {
+  const boundedWidth = Math.max(300, Math.min(GRAPH_VIEW_WIDTH, width));
+  const height = boundedWidth * GRAPH_VIEW_HEIGHT / GRAPH_VIEW_WIDTH;
+  graphViewport = {
+    x: Math.max(0, Math.min(GRAPH_VIEW_WIDTH - boundedWidth, x)),
+    y: Math.max(0, Math.min(GRAPH_VIEW_HEIGHT - height, y)),
+    width: boundedWidth, height,
+  };
+  const svg = graphContainer.querySelector<SVGSVGElement>("svg.graph-svg");
+  if (svg) {
+    svg.setAttribute("viewBox", `${graphViewport.x} ${graphViewport.y} ${graphViewport.width} ${graphViewport.height}`);
+    svg.style.touchAction = graphViewport.width < GRAPH_VIEW_WIDTH ? "none" : "auto";
+  }
+  graphZoomInBtn.disabled = graphViewport.width <= 300;
+  graphZoomOutBtn.disabled = graphViewport.width >= GRAPH_VIEW_WIDTH;
+}
+
+function resetGraphViewport(): void {
+  setGraphViewport(0, 0, GRAPH_VIEW_WIDTH);
+}
+
+function zoomGraphViewport(factor: number): void {
+  const centerX = graphViewport.x + graphViewport.width / 2;
+  const centerY = graphViewport.y + graphViewport.height / 2;
+  const width = Math.max(300, Math.min(GRAPH_VIEW_WIDTH, graphViewport.width * factor));
+  const height = width * GRAPH_VIEW_HEIGHT / GRAPH_VIEW_WIDTH;
+  setGraphViewport(centerX - width / 2, centerY - height / 2, width);
+}
+
+function panGraphViewport(dx: number, dy: number): void {
+  setGraphViewport(graphViewport.x + dx, graphViewport.y + dy, graphViewport.width);
 }
 
 function renderSvgGraph(graph: Graph): void {
@@ -4675,8 +4856,8 @@ function renderSvgGraph(graph: Graph): void {
     return;
   }
 
-  const width = 1200;
-  const height = 900;
+  const width = GRAPH_VIEW_WIDTH;
+  const height = GRAPH_VIEW_HEIGHT;
   const padding = 56;
   const coords = new Map<string, { x: number; y: number }>();
   let minX = Number.POSITIVE_INFINITY;
@@ -4694,10 +4875,11 @@ function renderSvgGraph(graph: Graph): void {
     coords.set(node, { x, y });
   });
 
-  const spanX = Math.max(maxX - minX, 0.001);
-  const spanY = Math.max(maxY - minY, 0.001);
+  const spanX = maxX - minX;
+  const spanY = maxY - minY;
   const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("viewBox", `${graphViewport.x} ${graphViewport.y} ${graphViewport.width} ${graphViewport.height}`);
+  svg.style.touchAction = graphViewport.width < GRAPH_VIEW_WIDTH ? "none" : "auto";
   svg.setAttribute("class", "graph-svg");
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", "Anime recommendation network");
@@ -4736,7 +4918,7 @@ function renderSvgGraph(graph: Graph): void {
     const baseSize = Number(edgeAttrs.size) || 1;
     const highlighted =
       selected !== null && (source === selected || target === selected);
-    line.setAttribute("stroke", selected && !highlighted ? "#30415655" : baseColor);
+    line.setAttribute("stroke", selected && !highlighted ? "var(--graph-dim-edge)" : baseColor);
     line.setAttribute("stroke-width", String(highlighted ? baseSize * 1.3 : baseSize));
     line.setAttribute("stroke-linecap", "round");
     const sign = edgeAttrs.sign;
@@ -4747,6 +4929,7 @@ function renderSvgGraph(graph: Graph): void {
     edgeLayer.appendChild(line);
   });
 
+  let nodeIndex = 0;
   graph.forEachNode((node, attributes) => {
     const coord = coords.get(node);
     if (!coord) {
@@ -4766,7 +4949,7 @@ function renderSvgGraph(graph: Graph): void {
     circle.setAttribute("cx", String(x));
     circle.setAttribute("cy", String(y));
     circle.setAttribute("r", String(isSelected ? baseSize * 1.5 : baseSize));
-    circle.setAttribute("fill", isSelected ? "#ffd166" : dimmed ? "#4f607388" : baseColor);
+    circle.setAttribute("fill", isSelected ? "var(--graph-selected-node)" : dimmed ? "var(--graph-dim-node)" : baseColor);
     circle.setAttribute("data-node-id", node);
     circle.setAttribute("aria-hidden", "true");
     circle.addEventListener("click", () => {
@@ -4777,19 +4960,54 @@ function renderSvgGraph(graph: Graph): void {
     });
     nodeLayer.appendChild(circle);
 
-    if (isSelected || graph.order <= 180) {
+    if (isSelected || (neighborhoodFocusId ? nodeIndex < 13 : graph.order <= 180)) {
       const label = document.createElementNS(SVG_NS, "text");
       label.setAttribute("x", String(x + 8));
       label.setAttribute("y", String(y - 8));
-      label.setAttribute("fill", dimmed ? "#6d7b8c" : "#f5f7fa");
-      label.setAttribute("font-size", isSelected ? "18" : "12");
+      label.setAttribute("fill", dimmed ? "var(--muted)" : "var(--text)");
+      label.setAttribute("font-size", isSelected ? "19" : neighborhoodFocusId ? "15" : "12");
       label.setAttribute("font-family", "IBM Plex Mono, monospace");
       label.textContent = String(nodeAttrs.label ?? node);
       labelLayer.appendChild(label);
     }
+    nodeIndex += 1;
   });
 
+  let drag: { pointerId: number; clientX: number; clientY: number;
+    x: number; y: number; width: number; height: number; moved: boolean } | null = null;
+  let suppressClearClick = false;
+  svg.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 ||
+        (event.pointerType === "touch" && graphViewport.width >= GRAPH_VIEW_WIDTH) ||
+        (event.target instanceof Element && event.target.closest("circle[data-node-id]"))) return;
+    suppressClearClick = false;
+    drag = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY,
+      ...graphViewport, moved: false };
+    svg.setPointerCapture(event.pointerId);
+  });
+  svg.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const pixelX = event.clientX - drag.clientX;
+    const pixelY = event.clientY - drag.clientY;
+    if (Math.abs(pixelX) + Math.abs(pixelY) > 4) drag.moved = true;
+    setGraphViewport(drag.x - pixelX * drag.width / rect.width,
+      drag.y - pixelY * drag.height / rect.height, drag.width);
+  });
+  const finishDrag = (event: PointerEvent) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    suppressClearClick = drag.moved;
+    drag = null;
+    if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+  };
+  svg.addEventListener("pointerup", finishDrag);
+  svg.addEventListener("pointercancel", finishDrag);
   svg.addEventListener("click", (event) => {
+    if (suppressClearClick) {
+      suppressClearClick = false;
+      return;
+    }
     if (event.target === svg || event.target === edgeLayer) {
       selectedNodeId = null;
       networkSearchMessage.textContent = "";
@@ -4810,6 +5028,7 @@ function scaleGraphCoordinate(
   padding: number,
   extent: number,
 ): number {
+  if (span <= 0) return extent / 2;
   return padding + ((value - min) / span) * (extent - padding * 2);
 }
 
@@ -4853,6 +5072,15 @@ function assignRingLayout(graph: Graph): void {
   }
 }
 
+function assignNeighborhoodLayout(graph: Graph, centerId: string): void {
+  graph.mergeNodeAttributes(centerId, { x: 0, y: 0 });
+  const neighbors = graph.neighbors(centerId);
+  neighbors.forEach((node, index) => {
+    const angle = (index / Math.max(neighbors.length, 1)) * Math.PI * 2 - Math.PI / 2;
+    graph.mergeNodeAttributes(node, { x: Math.cos(angle), y: Math.sin(angle) });
+  });
+}
+
 function sanitizeCoordinates(graph: Graph): void {
   let index = 0;
   graph.forEachNode((node, attributes) => {
@@ -4880,6 +5108,7 @@ function hashToUnit(value: string): number {
 
 function renderInspectPanel(nodeId: string | null): void {
   if (!currentGraph || !nodeId || !currentGraph.hasNode(nodeId)) {
+    focusNeighborhoodBtn.disabled = true;
     inspectEmptyEl.hidden = false;
     inspectContentEl.hidden = true;
     inspectMetaEl.textContent = "";
@@ -4892,9 +5121,12 @@ function renderInspectPanel(nodeId: string | null): void {
   const nodeAttrs = currentGraph.getNodeAttributes(nodeId) as Record<string, unknown>;
   const label = typeof nodeAttrs.label === "string" ? nodeAttrs.label : nodeId;
   const nodeType = nodeAttrs.nodeType === "user" ? "user" : ("anime" as NodeType);
+  focusNeighborhoodBtn.disabled = nodeType !== "anime";
 
   const connections = getConnectedItems(currentGraph, nodeId).sort(
-    (left, right) => right.weight - left.weight,
+    (left, right) => neighborhoodFocusId
+      ? Math.abs(right.weight) - Math.abs(left.weight) || right.weight - left.weight
+      : right.weight - left.weight,
   );
 
   inspectEmptyEl.hidden = true;
@@ -4914,15 +5146,16 @@ function renderInspectPanel(nodeId: string | null): void {
   const strongestWeight = connectionCount > 0 ? connections[0].weight : 0;
   const weakestWeight = connectionCount > 0 ? connections[connectionCount - 1].weight : 0;
 
-  inspectCountEl.textContent = `Connected items: ${connectionCount} (sorted by weight desc)`;
+  inspectCountEl.textContent = `Connected items: ${connectionCount} ` +
+    (neighborhoodFocusId ? "(sorted by absolute signed weight desc)" : "(sorted by weight desc)");
   inspectValuesEl.innerHTML = [
     valueRow("Connected users", String(userConnections)),
     valueRow("Connected anime", String(animeConnections)),
     valueRow("Positive edges", String(positiveConnections)),
     valueRow("Negative edges", String(negativeConnections)),
     valueRow("Average weight", formatWeight(avgWeight)),
-    valueRow("Strongest edge", formatWeight(strongestWeight)),
-    valueRow("Weakest edge", formatWeight(weakestWeight)),
+    valueRow(neighborhoodFocusId ? "Largest absolute edge" : "Strongest edge", formatWeight(strongestWeight)),
+    valueRow(neighborhoodFocusId ? "Smallest absolute edge" : "Weakest edge", formatWeight(weakestWeight)),
   ].join("");
 
   const visible = connections.slice(0, INSPECT_MAX_ITEMS);
