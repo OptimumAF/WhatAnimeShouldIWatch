@@ -321,7 +321,7 @@ test("metadata candidate keeps unknown fields explicit and reports bounded cover
   };
   assert.equal(parseCatalogMetadataSnapshot(snapshot, "metadata candidate"), snapshot);
   assert.deepEqual(projectCatalogMetadata(snapshot.anime[0]), {
-    animeId: 101, aliases: ["Galaxy Route"], mediaFormat: "TV", year: 2021,
+    animeId: 101, aliases: ["Copper Comet", "Galaxy Route"], mediaFormat: "TV", year: 2021,
     score: null, genres: ["Adventure"], studios: [], synopsis: "", imageUrl: "",
     season: null, relations: [{ kind: "sequel", animeId: 102, title: "Moonlit Workshop" }],
     episodeCount: 12, runtimeMinutes: 24, contentClassification: null,

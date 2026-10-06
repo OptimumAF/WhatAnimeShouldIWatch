@@ -1,0 +1,15 @@
+{
+  "format": "wikibase-metadata-policy-v1",
+  "languageOrder": ["en", "ja"],
+  "genreLabels": {"Q910002001": "Adventure"},
+  "mediaFormats": {"Q910001001": "TV", "Q910001002": "Movie"},
+  "durationUnits": {
+    "http://www.wikidata.org/entity/Q910003001": 1,
+    "http://www.wikidata.org/entity/Q910003002": 0.016666666666666666
+  },
+  "classification": {
+    "property": "P2756", "datatype": "wikibase-item",
+    "jurisdiction": "Fixtureland", "system": "Invented board",
+    "values": {"Q910004001": "All"}
+  }
+}

@@ -37,11 +37,14 @@ Open `http://127.0.0.1:5173/`. The banner says **SYNTHETIC DEMO DATA**. This mod
 
 The web fonts are bundled with the site, so the demo's first view needs no external font service. Their redistribution notices are in [`web/public/licenses/`](web/public/licenses/).
 
+`npm run metadata:fixture:check` exercises the bounded offline Wikibase statement mapper on invented entity bytes and mapping tables. It checks exact IDs, ranks, qualifiers, unit conversion, conflicts, explicit unknowns, byte provenance, and aggregate field coverage. It performs no source lookup or artifact publication. Real source reads and mapping tables still require the review in [decision 0043](docs/decisions/0043-catalog-source-candidate.md).
+
 Run the fast checks separately:
 
 ```bash
 npm run data:fixture
 npm run data:fixture:check
+npm run metadata:fixture:check
 npm run split:fixture:check
 npm run eval:new-user:fixture
 npm run typecheck
