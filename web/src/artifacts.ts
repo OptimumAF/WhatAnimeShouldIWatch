@@ -180,6 +180,46 @@ export interface ReleaseIdentityCatalog {
   anime: CompactAnimeEntry[];
 }
 
+/** Source-neutral metadata candidate. It is not a release-manifest-v1 asset or a use approval. */
+export interface CatalogMetadataItemV1 {
+  animeId: number;
+  sourceItemId: string;
+  title: string;
+  /** Null means unavailable; an empty array means checked with no values. */
+  aliases: string[] | null;
+  genres: string[] | null;
+  year: number | null;
+  mediaFormat: "TV" | "Movie" | "OVA" | "ONA" | "Special" | null;
+  episodeCount: number | null;
+  runtimeMinutes: number | null;
+  contentClassification: { jurisdiction: string; system: string; value: string } | null;
+  communityScore: number | null;
+  /** Even an empty array does not prove there is no viewing prerequisite. */
+  relations: AnimeRelation[] | null;
+}
+
+export interface CatalogMetadataSnapshotV1 {
+  format: "anime-metadata-catalog-v1";
+  /** Declared provenance; a later packager must verify the digest against approved source bytes. */
+  source: { name: string; snapshotAt: string; snapshotSha256: string };
+  anime: CatalogMetadataItemV1[];
+}
+
+export type CatalogCoverageField = "aliases" | "genres" | "year" | "mediaFormat" |
+  "episodeCount" | "runtimeMinutes" | "contentClassification" | "communityScore" | "relations";
+
+export interface CatalogMetadataCoverage {
+  total: number;
+  missingItems: number;
+  /** Present, non-null values; empty arrays are known but not usable for matching. */
+  known: Record<CatalogCoverageField, number>;
+  /** Nonempty arrays or present scalar values. */
+  usable: Record<CatalogCoverageField, number>;
+  /** Directed evidence is counted, never treated as proof that other prerequisites are absent. */
+  directedRelationItems: number;
+  directedTargetsOutsideUniverse: number;
+}
+
 export interface ReleaseManifestAsset {
   path: string;
   format: string;
@@ -700,6 +740,144 @@ export function parseReleaseIdentityCatalog(value: unknown, label: string): Rele
     previousId = id;
   });
   return value as ReleaseIdentityCatalog;
+}
+
+export function parseCatalogMetadataSnapshot(value: unknown, label: string): CatalogMetadataSnapshotV1 {
+  const root = record(value, label, "root");
+  exactFields(root, ["format", "source", "anime"], label, "root");
+  expectFormat(root, "anime-metadata-catalog-v1", label);
+  const source = record(root.source, label, "source");
+  exactFields(source, ["name", "snapshotAt", "snapshotSha256"], label, "source");
+  if (nonemptyText(source.name, label, "source.name").length > 120) {
+    invalid(label, "source.name", "is too long");
+  }
+  const stamp = nonemptyText(source.snapshotAt, label, "source.snapshotAt");
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(stamp) ||
+      !Number.isFinite(Date.parse(stamp)) || new Date(stamp).toISOString() !== stamp) {
+    invalid(label, "source.snapshotAt", "must be a canonical UTC date-time");
+  }
+  sha256(source.snapshotSha256, label, "source.snapshotSha256");
+  const anime = list(root.anime, label, "anime");
+  if (anime.length === 0 || anime.length > 100_000) {
+    invalid(label, "anime", "must contain 1 to 100000 items");
+  }
+  const sourceIds = new Set<string | number>();
+  let previousId = 0;
+  const bounded = (entry: unknown, location: string, maximum: number) => {
+    const parsed = nonemptyText(entry, label, location);
+    if (parsed.length > maximum) invalid(label, location, `must be at most ${maximum} characters`);
+    return parsed;
+  };
+  anime.forEach((value, i) => {
+    const location = `anime[${i}]`;
+    const item = record(value, label, location);
+    exactFields(item, ["animeId", "sourceItemId", "title", "aliases", "genres", "year",
+      "mediaFormat", "episodeCount", "runtimeMinutes", "contentClassification",
+      "communityScore", "relations"], label, location);
+    const id = safeInteger(item.animeId, label, `${location}.animeId`, 1);
+    if (id <= previousId) invalid(label, `${location}.animeId`, "must be sorted by unique ascending ID");
+    previousId = id;
+    uniqueKey(bounded(item.sourceItemId, `${location}.sourceItemId`, 80), sourceIds,
+      label, `${location}.sourceItemId`);
+    bounded(item.title, `${location}.title`, 200);
+    for (const [field, maximumCount, maximumLength] of [
+      ["aliases", 20, 200], ["genres", 30, 80],
+    ] as const) {
+      if (item[field] === null) continue;
+      const values = list(item[field], label, `${location}.${field}`);
+      if (values.length > maximumCount) invalid(label, `${location}.${field}`, "has too many values");
+      const seen = new Set<string | number>();
+      values.forEach((entry, j) => {
+        const name = bounded(entry, `${location}.${field}[${j}]`, maximumLength).trim().toLowerCase();
+        uniqueKey(name, seen, label, `${location}.${field}[${j}]`);
+      });
+    }
+    if (item.year !== null) {
+      const year = safeInteger(item.year, label, `${location}.year`, 1800);
+      if (year > 3000) invalid(label, `${location}.year`, "must be at most 3000");
+    }
+    if (item.mediaFormat !== null &&
+        !["TV", "Movie", "OVA", "ONA", "Special"].includes(item.mediaFormat as string)) {
+      invalid(label, `${location}.mediaFormat`, "must be a supported format or null");
+    }
+    if (item.episodeCount !== null) {
+      const count = safeInteger(item.episodeCount, label, `${location}.episodeCount`, 1);
+      if (count > 100_000) invalid(label, `${location}.episodeCount`, "must be at most 100000");
+    }
+    if (item.runtimeMinutes !== null) {
+      const runtime = finite(item.runtimeMinutes, label, `${location}.runtimeMinutes`);
+      if (runtime <= 0 || runtime > 10_000) {
+        invalid(label, `${location}.runtimeMinutes`, "must be greater than 0 and at most 10000");
+      }
+    }
+    if (item.contentClassification !== null) {
+      const classification = record(item.contentClassification, label, `${location}.contentClassification`);
+      exactFields(classification, ["jurisdiction", "system", "value"], label,
+        `${location}.contentClassification`);
+      for (const field of ["jurisdiction", "system", "value"] as const) {
+        bounded(classification[field], `${location}.contentClassification.${field}`, 80);
+      }
+    }
+    if (item.communityScore !== null) {
+      const score = finite(item.communityScore, label, `${location}.communityScore`);
+      if (score < 0 || score > 10) invalid(label, `${location}.communityScore`, "must be within 0..10");
+    }
+    if (item.relations !== null) {
+      const relations = list(item.relations, label, `${location}.relations`);
+      if (relations.length > 50) invalid(label, `${location}.relations`, "has too many values");
+      const seen = new Set<string | number>();
+      relations.forEach((value, j) => {
+        const where = `${location}.relations[${j}]`;
+        const relation = record(value, label, where);
+        exactFields(relation, ["kind", "animeId", "title"], label, where);
+        if (!["prequel", "sequel", "alternative-version", "side-story", "spin-off"].includes(
+          relation.kind as string)) invalid(label, `${where}.kind`, "must be a supported relationship");
+        const relatedId = safeInteger(relation.animeId, label, `${where}.animeId`, 1);
+        if (relatedId === id) invalid(label, `${where}.animeId`, "cannot refer to itself");
+        bounded(relation.title, `${where}.title`, 200);
+        uniqueKey(`${relation.kind}:${relatedId}`, seen, label, where);
+      });
+    }
+  });
+  return value as CatalogMetadataSnapshotV1;
+}
+
+export function catalogMetadataCoverage(snapshot: CatalogMetadataSnapshotV1,
+  universe: readonly number[]): CatalogMetadataCoverage {
+  const fields: CatalogCoverageField[] = ["aliases", "genres", "year", "mediaFormat",
+    "episodeCount", "runtimeMinutes", "contentClassification", "communityScore", "relations"];
+  const counts = () => Object.fromEntries(fields.map((field) => [field, 0])) as
+    Record<CatalogCoverageField, number>;
+  const known = counts();
+  const usable = counts();
+  const byId = new Map(snapshot.anime.map((item) => [item.animeId, item]));
+  const universeIds = new Set<number>();
+  for (const id of universe) {
+    if (!Number.isSafeInteger(id) || id < 1 || universeIds.has(id)) {
+      throw new Error("Catalog coverage universe must contain unique positive anime IDs.");
+    }
+    universeIds.add(id);
+  }
+  let missingItems = 0;
+  let directedRelationItems = 0;
+  let directedTargetsOutsideUniverse = 0;
+  for (const id of universe) {
+    const item = byId.get(id);
+    if (!item) { missingItems += 1; continue; }
+    for (const field of fields) {
+      const value = item[field];
+      if (value === null) continue;
+      known[field] += 1;
+      if (!Array.isArray(value) || value.length > 0) usable[field] += 1;
+    }
+    const directed = (item.relations ?? []).filter((relation) =>
+      relation.kind === "prequel" || relation.kind === "sequel");
+    if (directed.length > 0) directedRelationItems += 1;
+    directedTargetsOutsideUniverse += directed.filter((relation) =>
+      !universeIds.has(relation.animeId)).length;
+  }
+  return { total: universe.length, missingItems, known, usable,
+    directedRelationItems, directedTargetsOutsideUniverse };
 }
 
 export function parseReleaseManifest(value: unknown, label: string): ReleaseManifestV1 {

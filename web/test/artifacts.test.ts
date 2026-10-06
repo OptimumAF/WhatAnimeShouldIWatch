@@ -6,6 +6,8 @@ import {
   parseActiveReleaseBundle,
   parseCompactGraph,
   parseCompactModel,
+  catalogMetadataCoverage,
+  parseCatalogMetadataSnapshot,
   parseDemoCatalog,
   parseLegacyGraph,
   parseLegacyModel,
@@ -296,6 +298,65 @@ test("release identity and manifest contracts reject stale fields and mutable ta
     /manifestSha256.*SHA-256/);
   assert.throws(() => parseActiveReleaseBundle({ ...active, extra: true }, "active.json"),
     /root.extra.*unsupported/);
+});
+
+test("metadata candidate keeps unknown fields explicit and reports bounded coverage", () => {
+  const snapshot: any = {
+    format: "anime-metadata-catalog-v1",
+    source: { name: "invented-fixture", snapshotAt: "2026-09-24T00:00:00.000Z",
+      snapshotSha256: "a".repeat(64) },
+    anime: [
+      { animeId: 101, sourceItemId: "invented:101", title: "Copper Comet",
+        aliases: ["Galaxy Route"], genres: ["Adventure"], year: 2021, mediaFormat: "TV",
+        episodeCount: 12, runtimeMinutes: 24, contentClassification: null,
+        communityScore: null, relations: [{ kind: "sequel", animeId: 102, title: "Moonlit Workshop" }] },
+      { animeId: 102, sourceItemId: "invented:102", title: "Moonlit Workshop",
+        aliases: [], genres: null, year: null, mediaFormat: "Movie",
+        episodeCount: null, runtimeMinutes: 95,
+        contentClassification: { jurisdiction: "Fixtureland", system: "Invented board", value: "All" },
+        communityScore: null, relations: null },
+    ],
+  };
+  assert.equal(parseCatalogMetadataSnapshot(snapshot, "metadata candidate"), snapshot);
+  const coverage = catalogMetadataCoverage(snapshot, [101, 102, 103]);
+  assert.equal(coverage.total, 3);
+  assert.equal(coverage.missingItems, 1);
+  assert.equal(coverage.known.aliases, 2);
+  assert.equal(coverage.usable.aliases, 1);
+  assert.equal(coverage.known.genres, 1);
+  assert.equal(coverage.known.contentClassification, 1);
+  assert.equal(coverage.known.communityScore, 0);
+  assert.equal(coverage.usable.relations, 1);
+  assert.equal(coverage.directedRelationItems, 1);
+  assert.equal(coverage.directedTargetsOutsideUniverse, 0);
+  assert.equal(catalogMetadataCoverage(snapshot, [101]).directedTargetsOutsideUniverse, 1);
+  assert.throws(() => catalogMetadataCoverage(snapshot, [101, 101]), /unique positive anime IDs/);
+
+  const cases: [string, (value: any) => void, RegExp][] = [
+    ["hidden user rows", (v) => { v.userRows = []; }, /root.userRows.*unsupported/],
+    ["image field", (v) => { v.anime[0].imageUrl = "https://example.test/cover"; },
+      /anime\[0\].imageUrl.*unsupported/],
+    ["missing unknown", (v) => { delete v.anime[1].genres; }, /anime\[1\].genres.*required/],
+    ["duplicate source identity", (v) => { v.anime[1].sourceItemId = "invented:101"; },
+      /anime\[1\].sourceItemId.*duplicates/],
+    ["ambiguous aliases", (v) => { v.anime[0].aliases.push(" galaxy route "); },
+      /anime\[0\].aliases\[1\].*duplicates/],
+    ["unsupported format", (v) => { v.anime[0].mediaFormat = "Unknown"; },
+      /anime\[0\].mediaFormat.*supported/],
+    ["invalid runtime", (v) => { v.anime[0].runtimeMinutes = -1; },
+      /anime\[0\].runtimeMinutes.*greater than 0/],
+    ["classification structure", (v) => { v.anime[1].contentClassification.extra = "hidden"; },
+      /contentClassification.extra.*unsupported/],
+    ["relation reference", (v) => { v.anime[0].relations[0].animeId = 101; },
+      /relations\[0\].animeId.*itself/],
+    ["source digest", (v) => { v.source.snapshotSha256 = "bad"; },
+      /source.snapshotSha256.*SHA-256/],
+  ];
+  for (const [name, mutate, pattern] of cases) {
+    const changed = copy(snapshot);
+    mutate(changed);
+    assert.throws(() => parseCatalogMetadataSnapshot(changed, "metadata candidate"), pattern, name);
+  }
 });
 
 test("validation errors identify the artifact and field without echoing content", () => {

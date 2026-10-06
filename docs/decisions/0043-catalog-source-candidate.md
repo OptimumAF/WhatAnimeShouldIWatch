@@ -39,3 +39,7 @@ Keep the metadata source identity and snapshot digest distinct from the ratings-
 3. Approve any public catalog package and deployment separately under decisions 0001, 0002, and 0028–0032. A permitted catalog does not clear the graph/model lineage or the existing public release.
 
 Until the first decision is recorded, continue only with invented fixtures, mocked transport, source-neutral contracts, and read-only documentation review. M2.7 and the M2 exit gate remain unchecked.
+
+## Synthetic contract preparation (2026-10-05)
+
+`web/src/artifacts.ts` now parses a separate `anime-metadata-catalog-v1` **candidate** with sorted unique anime IDs, unique source item IDs, bounded titles/aliases/genres/relationships, explicit nulls for unknown fields, jurisdiction-specific classification, and no image or user-row fields. Its source name, UTC time, and SHA-256 are declared provenance only; parsing does not verify an approved source snapshot. A pure coverage function counts known and usable fields, missing IDs, directed relationship evidence, and directed targets outside the examined universe without printing titles or IDs. Invented unit and browser tests exercise valid unknowns and reject hidden fields. This candidate is not loaded by the app, part of `release-manifest-v1`, or a public package. A real snapshot and its bundle integration still require the owner and source/use decisions above.
