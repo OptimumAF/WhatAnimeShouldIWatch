@@ -41,6 +41,8 @@ The web fonts are bundled with the site, so the demo's first view needs no exter
 
 The same command checks the local field-readiness audit with invented candidates and a fixed plan. It counts joint field availability, retained missing-ID denominators, and format/classification scope; a passing local target never authorizes publication. [Decision 0044](docs/decisions/0044-catalog-field-readiness.md) records the proposed date, genre, certificate-qualifier rules and a separately held follow-up scope.
 
+An explicit offline v2 policy now tests the certificate proposal with invented film ratings and references. It accepts only the exact candidate rule, keeps unsupported or conflicting evidence unknown, and leaves certificate values out of catalog and aggregate audit output. V1 still rejects every qualified classification. This technical candidate does not approve real mapping tables, reinterpret the completed pilot, or authorize a new source request.
+
 Run the fast checks separately:
 
 ```bash

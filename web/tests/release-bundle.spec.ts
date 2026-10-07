@@ -136,6 +136,7 @@ async function routeMetadataBundle(page: Page, options: {
   corruptBytes?: boolean; malformedYear?: boolean; unknownId?: boolean;
   classificationMarkup?: boolean; catalogGraphMismatch?: boolean; mappedSource?: boolean;
   missingYear?: boolean; missingGenre?: boolean;
+  certificate?: "valid" | "unsupported";
 } = {}) {
   const authoredMetadata = {
     format: "anime-metadata-catalog-v1",
@@ -159,11 +160,18 @@ async function routeMetadataBundle(page: Page, options: {
     title: "星の航路", aliases: [], genres: ["Adventure"], year: 2022,
     mediaFormat: "TV", episodeCount: 12, runtimeMinutes: 24,
     contentClassification: null, communityScore: null, relations: null });
-  const metadata = options.mappedSource ? (() => {
+  const metadata = options.mappedSource || options.certificate ? (() => {
     const raw = JSON.parse(readFileSync(new URL("../../fixtures/synthetic-wikibase-entities.json", import.meta.url), "utf8"));
     raw.entities.Q910000101.labels.en.value = "Invented Copper Sky";
+    if (options.certificate) {
+      raw.entities.Q910000102.claims.P2756[0].qualifiers = {
+        P2676: [{ snaktype: "value", property: "P2676", datatype: "string",
+          datavalue: { type: "string", value: "invented-certificate-<not-public>" } }],
+        ...(options.certificate === "unsupported" ? { P518: [] } : {}),
+      };
+    }
     return mapWikibaseMetadata(Buffer.from(JSON.stringify(raw)), [101, 102, 103, 104],
-      JSON.parse(readFileSync(new URL("../../fixtures/synthetic-wikibase-policy.json", import.meta.url), "utf8")) as WikibaseMappingPolicy,
+      JSON.parse(readFileSync(new URL(`../../fixtures/${options.certificate ? "synthetic-wikibase-certificate-policy.json" : "synthetic-wikibase-policy.json"}`, import.meta.url), "utf8")) as WikibaseMappingPolicy,
       { name: "invented-wikibase-fixture", snapshotAt: "2026-10-06T00:00:00.000Z" }).snapshot!;
   })() : authoredMetadata;
   const metadataBytes = Buffer.from(`${JSON.stringify(metadata, null, 2)}\n`);
@@ -296,6 +304,23 @@ test("mapped invented Wikibase statements reach browser filters with unknown com
   await expect(page.locator("#rec-results .rec-item")).toHaveCount(0);
   expect(requests.some((name) => name.startsWith("jikan:"))).toBe(false);
 });
+
+for (const certificate of ["valid", "unsupported"] as const) {
+  test(`invented certificate rule ${certificate} reaches the card without exposing its reference`, async ({ page }) => {
+    const { requests } = await routeMetadataBundle(page, { certificate });
+    await page.goto(normalAppUrl);
+    await page.locator("#anime-input").fill("Invented Copper Sky");
+    await page.locator("#add-preference").selectOption("liked");
+    await page.locator("#add-anime-form button").click();
+    const card = page.locator(".rec-item").filter({ hasText: "Moonlit Workshop" });
+    await expect(card).toContainText("95 min");
+    if (certificate === "valid") await expect(card).toContainText("Invented board All (Fixtureland)");
+    else await expect(card).not.toContainText("Invented board");
+    await expect(page.locator("body")).not.toContainText("invented-certificate");
+    await expect(card.locator(".rec-community-score")).toHaveCount(0);
+    expect(requests.some((name) => name.startsWith("jikan:"))).toBe(false);
+  });
+}
 
 for (const missing of ["year", "genre"] as const) {
   test(`combined filters exclude a bundled title with unknown ${missing} and recover when cleared`, async ({ page }) => {
