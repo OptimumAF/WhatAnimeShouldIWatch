@@ -8,6 +8,7 @@ import {
   parseCompactGraph,
   parseCompactModel,
   catalogMetadataCoverage,
+  catalogJointMetadataCoverage,
   parseCatalogMetadataSnapshot,
   parseDemoCatalog,
   parseLegacyGraph,
@@ -338,6 +339,15 @@ test("metadata candidate keeps unknown fields explicit and reports bounded cover
   assert.equal(coverage.usable.relations, 1);
   assert.equal(coverage.directedRelationItems, 1);
   assert.equal(coverage.directedTargetsOutsideUniverse, 0);
+  assert.deepEqual(catalogJointMetadataCoverage(snapshot, [101, 102, 103], ["genres", "year", "mediaFormat"]),
+    { total: 3, missingItems: 1, knownTogether: 1, usableTogether: 1 });
+  assert.deepEqual(catalogJointMetadataCoverage(snapshot, [101, 102, 103], ["aliases"]),
+    { total: 3, missingItems: 1, knownTogether: 2, usableTogether: 1 });
+  assert.throws(() => catalogJointMetadataCoverage(snapshot, [101], []), /unique supported fields/);
+  assert.throws(() => catalogJointMetadataCoverage(snapshot, [101], ["year", "year"]), /unique supported fields/);
+  assert.throws(() => catalogJointMetadataCoverage(snapshot, [101], ["hidden" as any]), /unique supported fields/);
+  const badJoint = copy(snapshot); delete badJoint.anime[0].genres;
+  assert.throws(() => catalogJointMetadataCoverage(badJoint, [101], ["genres"]), /anime\[0\].genres.*required/);
   assert.equal(catalogMetadataCoverage(snapshot, [101]).directedTargetsOutsideUniverse, 1);
   assert.throws(() => catalogMetadataCoverage(snapshot, [101, 101]), /unique positive anime IDs/);
 

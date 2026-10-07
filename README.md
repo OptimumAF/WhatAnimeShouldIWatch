@@ -39,6 +39,8 @@ The web fonts are bundled with the site, so the demo's first view needs no exter
 
 `npm run metadata:fixture:check` exercises the bounded offline Wikibase statement mapper and acquisition adapter with invented bytes and mocked transport. It checks exact IDs, ranks, qualifiers, units, conflicts, unknowns, provenance, coverage, scope/retry/byte limits, and the closed-study refusal. It performs no real lookup or publication. The delegated 2026-10-07 local pilot is completed and its exact approval record is closed; it is not a standing collection or public-catalog permission. See [decision 0043](docs/decisions/0043-catalog-source-candidate.md) for aggregate findings and the remaining review.
 
+The same command checks the local field-readiness audit with invented candidates and a fixed plan. It counts joint field availability, retained missing-ID denominators, and format/classification scope; a passing local target never authorizes publication. [Decision 0044](docs/decisions/0044-catalog-field-readiness.md) records the proposed date, genre, certificate-qualifier rules and a separately held follow-up scope.
+
 Run the fast checks separately:
 
 ```bash

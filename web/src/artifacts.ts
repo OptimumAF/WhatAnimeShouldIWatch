@@ -225,6 +225,14 @@ export interface CatalogMetadataCoverage {
   directedTargetsOutsideUniverse: number;
 }
 
+/** Field availability on the same declared IDs; this does not prove filter matches or rights. */
+export interface CatalogJointMetadataCoverage {
+  total: number;
+  missingItems: number;
+  knownTogether: number;
+  usableTogether: number;
+}
+
 export interface ReleaseManifestAsset {
   path: string;
   format: string;
@@ -895,6 +903,28 @@ export function catalogMetadataCoverage(snapshot: CatalogMetadataSnapshotV1,
   }
   return { total: universe.length, missingItems, known, usable,
     directedRelationItems, directedTargetsOutsideUniverse };
+}
+
+export function catalogJointMetadataCoverage(snapshot: CatalogMetadataSnapshotV1,
+  universe: readonly number[], fields: readonly CatalogCoverageField[]): CatalogJointMetadataCoverage {
+  parseCatalogMetadataSnapshot(snapshot, "joint metadata coverage");
+  const supported: CatalogCoverageField[] = ["aliases", "genres", "year", "mediaFormat",
+    "episodeCount", "runtimeMinutes", "contentClassification", "communityScore", "relations"];
+  if (!fields.length || new Set(fields).size !== fields.length || fields.some((field) => !supported.includes(field))) {
+    throw new Error("Catalog joint coverage fields must be unique supported fields.");
+  }
+  const { total, missingItems } = catalogMetadataCoverage(snapshot, universe);
+  const byId = new Map(snapshot.anime.map((item) => [item.animeId, item]));
+  let knownTogether = 0, usableTogether = 0;
+  for (const id of universe) {
+    const item = byId.get(id);
+    if (!item || fields.some((field) => item[field] === null)) continue;
+    knownTogether += 1;
+    if (fields.every((field) => !Array.isArray(item[field]) || (item[field] as unknown[]).length > 0)) {
+      usableTogether += 1;
+    }
+  }
+  return { total, missingItems, knownTogether, usableTogether };
 }
 
 export function parseReleaseManifest(value: unknown, label: string): ReleaseManifestV1 {
