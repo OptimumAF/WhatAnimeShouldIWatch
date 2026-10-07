@@ -1,0 +1,10 @@
+{
+  "format": "catalog-readiness-plan-v1",
+  "purpose": "local-source-feasibility-only",
+  "universeIds": [101, 102, 103, 104],
+  "profiles": [
+    {"key": "core", "animeIds": [101, 102, 103, 104], "fields": ["genres", "year", "mediaFormat"], "minimumUsableBasisPoints": 9500, "expectedMediaFormat": null, "classificationScope": null},
+    {"key": "tv-details", "animeIds": [101, 103, 104], "fields": ["mediaFormat", "episodeCount", "runtimeMinutes"], "minimumUsableBasisPoints": 9000, "expectedMediaFormat": "TV", "classificationScope": null},
+    {"key": "movie-classification", "animeIds": [102], "fields": ["mediaFormat", "contentClassification"], "minimumUsableBasisPoints": 9000, "expectedMediaFormat": "Movie", "classificationScope": {"jurisdiction": "Fixtureland", "system": "Invented board"}}
+  ]
+}

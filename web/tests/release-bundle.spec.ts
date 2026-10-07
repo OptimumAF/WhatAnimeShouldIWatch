@@ -135,6 +135,7 @@ async function routeAggregateBundle(page: Page, options: { withModel?: boolean }
 async function routeMetadataBundle(page: Page, options: {
   corruptBytes?: boolean; malformedYear?: boolean; unknownId?: boolean;
   classificationMarkup?: boolean; catalogGraphMismatch?: boolean; mappedSource?: boolean;
+  missingYear?: boolean; missingGenre?: boolean;
 } = {}) {
   const authoredMetadata = {
     format: "anime-metadata-catalog-v1",
@@ -146,14 +147,18 @@ async function routeMetadataBundle(page: Page, options: {
         mediaFormat: "TV", episodeCount: 12, runtimeMinutes: 24,
         contentClassification: null, communityScore: null, relations: null },
       { animeId: options.unknownId ? 999 : 102, sourceItemId: "invented:102",
-        title: "Moonlit Workshop", aliases: [], genres: ["Adventure"],
-        year: options.malformedYear ? "unknown" : 2022, mediaFormat: "Movie",
+        title: "Moonlit Workshop", aliases: [], genres: options.missingGenre ? null : ["Adventure"],
+        year: options.malformedYear ? "unknown" : options.missingYear ? null : 2022, mediaFormat: "Movie",
         episodeCount: 1, runtimeMinutes: 95,
         contentClassification: { jurisdiction: "Fixtureland", system: "Invented board",
           value: options.classificationMarkup ? "<img src=x onerror=alert(1)>" : "All" },
         communityScore: 8.1, relations: null },
     ],
   };
+  if (options.missingGenre) authoredMetadata.anime.push({ animeId: 105, sourceItemId: "invented:105",
+    title: "星の航路", aliases: [], genres: ["Adventure"], year: 2022,
+    mediaFormat: "TV", episodeCount: 12, runtimeMinutes: 24,
+    contentClassification: null, communityScore: null, relations: null });
   const metadata = options.mappedSource ? (() => {
     const raw = JSON.parse(readFileSync(new URL("../../fixtures/synthetic-wikibase-entities.json", import.meta.url), "utf8"));
     raw.entities.Q910000101.labels.en.value = "Invented Copper Sky";
@@ -291,6 +296,35 @@ test("mapped invented Wikibase statements reach browser filters with unknown com
   await expect(page.locator("#rec-results .rec-item")).toHaveCount(0);
   expect(requests.some((name) => name.startsWith("jikan:"))).toBe(false);
 });
+
+for (const missing of ["year", "genre"] as const) {
+  test(`combined filters exclude a bundled title with unknown ${missing} and recover when cleared`, async ({ page }) => {
+    const { requests } = await routeMetadataBundle(page, { missingYear: missing === "year", missingGenre: missing === "genre" });
+    await page.goto(normalAppUrl);
+    await page.locator("#anime-input").fill("Copper Comet");
+    await page.locator("#add-preference").selectOption("liked");
+    await page.locator("#add-anime-form button").click();
+    const card = page.locator(".rec-item").filter({ hasText: "Moonlit Workshop" });
+    await expect(card).toBeVisible();
+    if (missing === "year") await page.locator("#filter-genre").selectOption("adventure");
+    else {
+      await page.locator("#filter-year-min").fill("2022");
+      await page.locator("#filter-year-min").press("Tab");
+    }
+    await expect(card).toBeVisible();
+    if (missing === "year") {
+      await page.locator("#filter-year-min").fill("2022");
+      await page.locator("#filter-year-min").press("Tab");
+    } else await page.locator("#filter-genre").selectOption("adventure");
+    await expect(card).toHaveCount(0);
+    if (missing === "year") {
+      await page.locator("#filter-year-min").fill("");
+      await page.locator("#filter-year-min").press("Tab");
+    } else await page.locator("#filter-genre").selectOption("");
+    await expect(card).toBeVisible();
+    expect(requests.some((name) => name.startsWith("jikan:"))).toBe(false);
+  });
+}
 
 test("browser reads the exact synthetic v2 directory activated by the local installer", async ({ page }) => {
   const root = mkdtempSync(path.join(tmpdir(), "invented-browser-v2-install-"));

@@ -1,0 +1,49 @@
+# 0044 — Catalog field rules and joint coverage before another source study
+
+**Status:** Selected local audit design, 2026-10-07. Date/qualifier mapping extensions and the follow-up source scope below are review proposals. No new collection, public catalog, model, release, or deployment permission. M2.7 remains incomplete.
+
+## Evidence and decision
+
+Decision [0043](0043-catalog-source-candidate.md) found usable P577 years for only 3 of 100 declared IDs, no complete mapped genre lists under its 20-definition cap, and unresolved classification qualifiers. It also found 24 missing identities. The closed pilot cannot establish wider source coverage, and its cleanup remains blocked despite exact owner authorization. Do not reopen that approval or retain its bytes past the recorded deadline.
+
+Keep the current mapper's v1 behavior. Establish the next field rules explicitly and measure **joint** availability on a predeclared universe before a broader source/use decision. A catalog with 95% genres and 95% years can have only 90% with both. Selecting only mapped titles or assigning strata after observing missing values would hide failures.
+
+## Date and qualifier design for a future version
+
+The official [P577 definition](https://www.wikidata.org/wiki/Property:P577) concerns first publication/release. [P580](https://www.wikidata.org/wiki/Property:P580) is a broader start time, also used as a statement-validity qualifier. It cannot be substituted for every missing release date. [Wikibase qualifiers](https://www.mediawiki.org/wiki/Wikibase/DataModel#Statements) add information about a statement; their property and value must be interpreted before use. Documentation was checked on 2026-10-07; no additional anime entities were requested.
+
+| Field | Proposed rule | Evidence required before source-derived use |
+|---|---|---|
+| Year | Preserve unqualified, valid Gregorian P577 year agreement across best-rank statements. A TV-only P580 fallback may be considered **only when P577 is absent**, with a reviewed TV-series/season identity and whole-work first-airing meaning. Conflicting, invalid, unknown, or qualified P577 must not trigger fallback. Where both properties are present, conflicting years remain unknown. Never choose earliest/latest to conceal distinct release scopes. | A versioned policy names the primary/fallback properties, exact TV type table, precision, scope and conflict rules. Invented tests cover missing versus unusable primary, disagreement, qualifiers, seasons versus franchises, rank/order, and invalid dates. Retain per-item selected-property provenance privately. No P580 fallback is implemented by this slice. |
+| Date qualifiers | Place, language, part, edition, broadcaster, and time qualifiers require explicit meaning and a declared product date scope. No blanket ignore list. | Actual qualifier inventory and a reviewed exact matcher, with ambiguous, malformed and unrecognized contexts unresolved. A future version must preserve v1 behavior and report exclusions separately from absent claims. |
+| Genres | Every selected nondeprecated best-rank genre value must have an exact reviewed ID mapping. Keep unknown for incomplete or qualified lists; do not use a partial list as complete or infer a genre from titles/ancestry. A definition label is a review input, not an automatic taxonomy mapping. | Complete bounded referenced-definition inventory, table version/hash, preserved canonical source label, and explicit collisions or many-to-one decisions. Exceeding a follow-up definition budget fails before more reads or mapping; it does not silently drop the remaining definitions. |
+| Classification | Keep jurisdiction/system/value explicit. The documented [EIRIN film-rating property P2756](https://www.wikidata.org/wiki/Property:P2756) expects [certificate-ID qualifier P2676](https://www.wikidata.org/wiki/Property:P2676), whose datatype is **string**. A narrowly configured future rule may validate one bounded nonempty string certificate as a rating reference. It must reject every other qualifier, multiple/unknown/malformed certificates, conflicting ratings, unmapped values, and non-film scope. The certificate is not a rating value and must not enter the public metadata. | Synthetic positive and rejection cases, a strict policy version, actual source scope review, exact rating-item mappings and film identity. The pilot's nine classified entities are not reclassified by this documentation. Current v1 still leaves every qualified classification unknown. A film board cannot provide a TV-wide classification or universal safety claim. |
+
+This distinguishes a certificate reference from a contextual restriction through an explicit future rule. It does not authorize ignoring observed qualifiers or imply that the pilot used only that qualifier. No external rating-board site, formatter link, MAL, AniList, or Jikan is a gap-filling route.
+
+## Local feasibility targets
+
+These are declared **engineering source-selection targets**, not a relaxation or completion of M2.7's permitted publication criteria. They require review against the eventual catalog scope; a small biased study cannot validate representativeness or source accuracy.
+
+| Check | Target and denominator |
+|---|---|
+| Identity/title | 100% of the predeclared universe emitted as strict, unique catalog items. Missing IDs remain in the denominator. A missing item is not an empty-but-known field. |
+| Core fields | At least 95% with usable **genres + year + media format together**, across every predeclared ID. The local audit refuses a lower core floor or a narrower core membership. |
+| Episodic details | At least 90% with **format + episode count + runtime together** for each separately predeclared TV/OVA/ONA/Special stratum that exists in the study. Do not infer episodic runtime from a movie or from episode count. |
+| Classification | At least 90% with **format + classification together** in each predeclared applicable film jurisdiction/system stratum. Wrong scope fails. Report TV/other unknown coverage separately; this film target does not establish catalog-wide classification completeness. |
+| Aliases and relationships | Report known versus nonempty aliases, exact-match collisions, explicit directed edges, one-sided evidence, and outside-universe targets. Extra aliases and relationships may legitimately be absent; absence never proves no prerequisite. Canonical title remains required. |
+| Community score and images | Deliberately unknown/excluded under the current source proposal. Required score filters exclude unknowns. No image bytes or links are acquired by this design. |
+
+`pipeline/src/catalog-readiness.ts` audits actual strict metadata bytes against a bounded exact plan. A plan contains the full sorted universe, fixed profile codes, independent stratum membership, fields, integer basis-point floors, and explicit format/classification scope. Each report binds metadata bytes and plan bytes separately. The source digest remains **declared**: this audit cannot verify separate source bytes, source rights, upstream quality, mapping lineage, or approval.
+
+Counts use every declared ID, never a top-K or a successful-output-only slice. Empty arrays count as known but unusable. Per-profile field availability is reported alongside format/system/jurisdiction mismatch counts; any mismatch fails that target. Required counts round up with integer count arithmetic. `declaredTargetsMet` means only the supplied local plan was satisfied; `publicationAuthorized` is always false. The audit is not wired to installers, packaging, approval registries, publication, Pages, or browser ranking. Future owner review must check stratum completeness and representativeness; a syntactically valid plan cannot prove them.
+
+The invented four-ID plan deliberately fails on the existing incomplete mapper fixture. An authored complete counterpart passes. A 100-ID regression has 95% separate genre/year coverage and only 90% joint coverage, and fails the 95% joint target. Browser regressions verify that an unknown required genre/year still excludes the title, and clearing that requirement restores it without a provider request. This tests engineering behavior, not real source quality.
+
+## Bounded follow-up proposal — not approved
+
+After resolving prior cleanup, review a **new** exact one-study record rather than editing the consumed record. Suggested feasibility scope: public numeric IDs **101–200**, independent of personal history; the same official exact-ID query and entity APIs; at most 100 anime plus 100 unique referenced definition items; complete selected-definition inventory or failure; maximum 40 attempts, 4 MiB/body, 16 MiB total, serialized two-second spacing, existing retry/time bounds, and at most seven days in a new named private directory. This range is also biased. A catalog-wide decision additionally requires a separately justified, predeclared representative scope; neither range is such a sample.
+
+Only a reviewed new record may add P580 to the selected main claims and retain qualifiers needed for its exact rules. Preserve the old pilot's receipt and counts in aggregate history. Do not reinterpret its original selected source bytes as containing an unrequested property. Do not extend the current acquisition adapter or fetch definitions under its closed approval to test this proposal. Freeze mappings and stratum membership before interpreting target success; record corrections against the same bounded bytes separately.
+
+**Next implementation task:** a fixture-only, versioned classification certificate rule with the positive and rejection matrix above, preserving the existing v1 mapper. Date fallback remains subsequent and depends on its exact scope/provenance design. Real follow-up acquisition still requires cleanup resolution and a new scope/use decision. Public catalog packaging and publication remain separate later gates.
