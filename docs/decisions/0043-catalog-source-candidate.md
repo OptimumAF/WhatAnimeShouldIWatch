@@ -1,6 +1,6 @@
 # 0043 — Wikidata structured-data catalog candidate
 
-**Status:** Proposed M2.7 source/use route, 2026-10-05. No source collection, cache, publication, provider-use approval, or release is authorized by this proposal.
+**Status:** Bounded local feasibility pilot approved and completed under the owner's delegated decision on 2026-10-07; its executable approval is closed. Catalog/public-use selection remains proposed. This does not authorize production collection, training, publication, or deployment.
 
 ## Why this candidate
 
@@ -38,7 +38,19 @@ Keep the metadata source identity and snapshot digest distinct from the ratings-
 2. After coverage and statement-quality review, decide whether Wikidata alone can support M2.7's filters and relationship behavior, which fields may enter a public catalog, the minimum usable coverage, and the correction/removal process. If it cannot, choose another source with separately reviewed collection and redistribution rights.
 3. Approve any public catalog package and deployment separately under decisions 0001, 0002, and 0028–0032. A permitted catalog does not clear the graph/model lineage or the existing public release.
 
-Until the first decision is recorded, continue only with invented fixtures, mocked transport, source-neutral contracts and browser integration, and read-only documentation review. M2.7 and the M2 exit gate remain unchecked.
+The first decision is now recorded below. Continue routine development with invented fixtures and mocked transport; real reads are limited to the exact approved pilot. M2.7 and the M2 exit gate remain unchecked.
+
+## Delegated owner decision — local feasibility only (2026-10-07)
+
+The owner, Avery, instructed: “Do whatever you deems is best, approve or revist it” in response to the pending feasibility decision. Exercising that delegation, approve one bounded local study under `docs/approvals/wikidata-feasibility.json`. This records the owner's delegation and the assistant's chosen limits, not a claim that the owner separately reviewed a release or every mapping value.
+
+- **Purpose and IDs:** Test source identity, statement quality, field availability, and the existing mapper for public numeric anime IDs **1 through 100**. Selection is a fixed numeric range, independent of anyone's history or the Crunchyroll page. It is biased toward early IDs and cannot establish representative or full-catalog coverage.
+- **Access:** Exact nondeprecated P4086 lookups through the official Wikidata Query Service, followed by bounded official Wikidata entity JSON reads. At most 100 matching anime entities, plus at most 20 distinct genre/format/unit/classification definition entities already referenced by their consumed claims. Select definitions in unit, format, genre, then classification priority, with numeric ID ties; disclose omitted definitions and keep their values unmapped. No graph traversal or gap filling. Exceeding the anime, response, or request bounds fails the study rather than silently truncating. Identifying user agent, serialized requests, minimum two-second spacing, bounded bytes/time, maximum 40 attempts, bounded retry/backoff, no cookies/credentials, and no cross-origin redirects.
+- **Retained fields:** English/Japanese labels and aliases; P4086, P31, P136, P577, P1113, P2047, P155/P156, and P2756 statements, with qualifiers/rank needed to preserve unknowns. Strip references, sitelinks, images, descriptions, and unrelated claims before retaining the selected source projection. Keep transport-byte hashes distinct from that projection's actual-byte digest. Auxiliary reads retain only labels needed to review exact mappings; no MAL formatter link or other provider is contacted.
+- **Retention and correction:** Store selected source bytes, private mapping tables, audit, and receipts outside the repository, web, and release directories. Maximum seven days, expiring no later than 2026-10-14T23:59:59Z; no recurring job or retained central cache. Remove the study inputs after analysis when no longer needed. A correction reruns mapping against the same bounded snapshot; an identity or source issue is quarantined, never repaired from a held provider. Record source/version/hash and the CC0 basis locally; report only aggregate findings in progress documentation.
+- **Boundary:** No images, accounts, user histories, ratings, models, web assets, public catalog/package, release, or deployment. The training/publication/deployment registries and repository approval variables stay empty/unset. The second decision still requires actual field-quality evidence and a suitable catalog scope; publication remains a separate owner/source-use review.
+
+The official [Wikidata licensing](https://www.wikidata.org/wiki/Wikidata:Licensing), [access](https://www.wikidata.org/wiki/Help:Linked_Data_Interface), [query limits](https://www.mediawiki.org/wiki/Wikidata_Query_Service/User_Manual), and [user-agent policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy/en) were rechecked on 2026-10-07. Structured data's CC0 basis supports this bounded local investigation; it does not establish coverage or clear the ratings graph/model lineage.
 
 ## Synthetic contract preparation (2026-10-05)
 
@@ -73,3 +85,23 @@ Identity uses every nondeprecated P4086 claim, regardless of preferred rank. Qua
 The reviewed policy must explicitly name genre/format IDs, exact duration units and minutes conversion, language priority, and a separate classification property/table with jurisdiction and system. Episodes require an exact unitless integer, and uncertain quantities remain unknown. Release year requires a valid Gregorian year/month/day precision; source snapshot time never supplies it. Community scores remain null. Only unambiguous directed P155/P156 targets within accepted identities produce prequel/sequel links; no inverse or shared-series prerequisite is inferred. Source canonical labels are projected as known browser aliases when the graph identity label differs, with ambiguous exact matches requiring a visible choice.
 
 The aggregate audit binds actual source bytes, canonical policy, and sorted universe separately. It records identity omissions, per-field unknown reasons, ambiguous title-key count, one-sided directed edges, and existing known/usable coverage across the entire universe. Identity counters are per examined entity except duplicate mappings, which count contested selected IDs. Field issue counters are per emitted item except relations, which examine two directions per item. Missing IDs are counted by universe coverage; no titles or entity IDs appear in the report. Invented hand-counted results are engineering evidence only. A permitted real table, bounded snapshot, source/field-quality review, publication design, and separate owner approval are still required; M2.7 remains unchecked.
+
+## Actual local pilot findings (2026-10-07)
+
+The approved public numeric range used ten exact-ID query batches, four anime-entity batches, and one definition batch: **15 attempts, 3,635,504 response bytes, 78 matching entities**. Two identities were unresolved, leaving 76 candidate items and 24 missing IDs across the 100-ID universe. The retained selected-statement projection digest was `3f6559278ce7ad01a84263a49a9f662050107126d771a6a0879d443912981fc4`; it is distinct from each transport-body digest and any ratings dataset. Reads were sequential, not an atomic Wikidata snapshot; available entity revision IDs were recorded privately.
+
+| Field | Entities with a nondeprecated source statement (of 78) | Usable mapped IDs (of 100) | Limitation |
+|---|---:|---:|---|
+| Aliases | Not a claim property | 60 | 76 checked alias arrays; empty is known but not a searchable additional alias. |
+| Media format | 78 | 76 | Reviewed selected film, TV-series/season and OVA types; unresolved identities are excluded. |
+| Genres | 66 | 0 | The 20-definition budget left 50 referenced definitions unreviewed. Partial genre lists were not represented as complete. This is a mapping/definition-budget limitation, not evidence that all source genres are absent. |
+| P577 release year | 10 | 3 | 67 accepted items had no selected P577 statement; six had qualified dates. No fetch-time year was substituted, and no unreviewed start-time rule was added. |
+| Episode count | 64 | 63 | Missing and qualified counts remain unknown. |
+| Runtime | 27 | 25 | Only the reviewed exact minute unit was used. |
+| EIRIN classification | 9 | 0 | Observed statements had qualifiers; no universal rating or unreviewed scope rule was inferred. |
+| Directed relation evidence | P155: 9 / P156: 12 | 9 | Unmapped targets remain absent; one directed edge was one-sided. No inverse or viewing safety was inferred. |
+| Community score | No selected source | 0 | Deliberately unknown. |
+
+The local decision is to **retain Wikidata as a partial candidate, not approve a complete catalog or publication**. The fixed low-ID range is biased, and several missing fields may need a reviewed alternative property/scope rule. A wider result cannot be inferred from this pilot. Next design the date/qualifier and genre/classification rules, establish usable-coverage requirements for the intended catalog, and review a bounded follow-up scope before more source reads. Do not fill gaps from MAL, AniList or Jikan. M2.7 and the M2 exit gate remain open.
+
+The separate feasibility record now has `state: completed`; another CLI run is refused before transport or writes. Early removal of the twelve private study files was rejected by automatic approval review, including a safer explicit-file attempt. The owner then explicitly answered “Authorize that exact cleanup”; the retried literal-file deletion was still rejected with only “blocked by policy” supplied. Read-only inventory confirms all twelve files remain outside the checkout at `C:\Users\Avery\Documents\ChatGPT\Anime-private\wikidata-pilot-2026-10-07`, with the original deadline **2026-10-14T21:43:53.284Z** (October 14, 2:43 PM Pacific). Manual removal is required while tool execution remains blocked; no cleanup success is claimed. Only aggregate findings and code enter this change; source bytes, real mapping tables, definitions and candidates remain private.

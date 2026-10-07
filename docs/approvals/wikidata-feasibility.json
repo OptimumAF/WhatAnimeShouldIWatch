@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "studyId": "wikidata-pilot-2026-10-07",
+  "approved": true,
+  "state": "completed",
+  "owner": "Avery",
+  "authority": "Owner delegated approval/revision in this task on 2026-10-07",
+  "decisionRef": "docs/decisions/0043-catalog-source-candidate.md",
+  "approvedAt": "2026-10-07",
+  "expiresAt": "2026-10-14T23:59:59Z",
+  "selection": "public-numeric-anime-ids-1-through-100",
+  "use": "one-local-feasibility-study-only",
+  "maxAnimeEntities": 100,
+  "maxDefinitionEntities": 20,
+  "maxAttempts": 40,
+  "maxRetentionDays": 7,
+  "publicArtifacts": false,
+  "training": false,
+  "deployment": false
+}
