@@ -139,7 +139,8 @@ function checkJsonKeys(json: string): void {
   };
   visit(0);
 }
-function readEntities(source: Uint8Array, policy: WikibaseMappingPolicy): Entity[] {
+/** Shared bounded JSON decoding preserves duplicate-key refusals before projection. */
+export function parseWikibaseJson(source: Uint8Array): unknown {
   if (source.byteLength === 0 || source.byteLength > WIKIBASE_MAPPING_LIMITS.sourceBytes) {
     fail("source", "exceeds the bounded byte limit or is empty");
   }
@@ -148,6 +149,10 @@ function readEntities(source: Uint8Array, policy: WikibaseMappingPolicy): Entity
   try { json = new TextDecoder("utf-8", { fatal: true }).decode(source); parsed = JSON.parse(json); }
   catch { fail("source", "must be UTF-8 JSON"); }
   checkJsonKeys(json);
+  return parsed;
+}
+function readEntities(source: Uint8Array, policy: WikibaseMappingPolicy): Entity[] {
+  const parsed = parseWikibaseJson(source);
   const root = object(parsed, "source");
   const entities = object(root.entities, "source.entities");
   const entries = Object.entries(entities);

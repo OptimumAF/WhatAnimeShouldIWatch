@@ -205,7 +205,7 @@ export interface CatalogMetadataItemV1 {
 
 export interface CatalogMetadataSnapshotV1 {
   format: "anime-metadata-catalog-v1";
-  /** Declared provenance; a later packager must verify the digest against approved source bytes. */
+  /** Declared provenance; digest binds exact approved retained input bytes, not inferred transport bytes or source rights. */
   source: { name: string; snapshotAt: string; snapshotSha256: string };
   anime: CatalogMetadataItemV1[];
 }
