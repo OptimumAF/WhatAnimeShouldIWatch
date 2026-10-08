@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { FOLLOWUP_SCOPE_SHA256, type FollowupGatePorts, type FollowupReservation } from "./wikidata-followup-gates.js";
 
 const script = fileURLToPath(new URL("./windows-followup-private.ps1", import.meta.url));
-const stages = new Set(["initialization", "path", "directory-pin", "directory-attributes", "directory-resolution", "private-access",
+const stages = new Set(["initialization", "path-syntax", "path-normalization", "path-component", "derived-path", "ancestor-enumeration",
+  "directory-pin", "directory-attributes", "directory-resolution", "private-access",
   "reservation-preflight", "reservation-record", "reservation-create", "reservation-access", "reservation-flush"]);
 const failure = (stdout?: string) => {
   let stage = "";

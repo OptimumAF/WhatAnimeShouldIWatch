@@ -21,6 +21,8 @@ function setup(t: TestContext, broad = false, unprotected = false) {
   t.diagnostic(`Invented fixture temporary-path alias: ${temporary.toLowerCase() !== os.tmpdir().toLowerCase()}`);
   const root = fs.realpathSync(fs.mkdtempSync(path.join(temporary, "invented-followup-ports-")));
   const repo = path.join(root, "Anime"), parent = path.join(root, "Anime-private");
+  t.diagnostic(`Invented fixture path facts: ${JSON.stringify({ driveRoot: /^[A-Za-z]:\\/.test(repo),
+    bounded: repo.length <= 240, forbiddenSyntax: /[:*?"<>|]/.test(repo.slice(2)), extendedPrefix: repo.startsWith("\\\\?\\") })}`);
   fs.mkdirSync(repo); fs.mkdirSync(parent);
   t.after(() => {
     const actual = fs.realpathSync(root), temporary = fs.realpathSync(os.tmpdir());
@@ -93,7 +95,7 @@ test("Windows atomic reservation permits one concurrent winner and preserves cor
 test("Windows fresh reservation probe detects intervening paths and junction ancestors", { skip: !windows }, async (t) => {
   const context = setup(t), inspect = context.ports.inspect;
   await assert.rejects(createWindowsFollowupPorts(context.repo + "\\.").inspect(),
-    (error: any) => /Windows private.*\(path\)/.test(error.message) && !error.message.includes(context.root));
+    (error: any) => /Windows private.*\(path-normalization\)/.test(error.message) && !error.message.includes(context.root));
   assert.equal(fs.existsSync(context.marker), false);
   context.ports.inspect = async () => { const facts = await inspect(); fs.mkdirSync(context.target); return facts; };
   await assert.rejects(reserveFollowupStudy(approval(), context.ports), /preflight/);

@@ -23,20 +23,24 @@ public static class FollowupDirectoryPins {
     public static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, StringBuilder path, uint size, uint flags);
 }
 '@
-    $stage = 'path'
+    $stage = 'path-syntax'
     $studyId = 'wikidata-followup-101-200-v1'
     if ($RepositoryRoot -notmatch '^[A-Za-z]:\\' -or $RepositoryRoot.Length -gt 240 -or
-        $RepositoryRoot.Substring(2) -match '[:*?"<>|]' -or
-        [IO.Path]::GetFullPath($RepositoryRoot) -cne $RepositoryRoot) { throw 'Path refused' }
+        $RepositoryRoot.Substring(2) -match '[:*?"<>|]') { throw 'Path refused' }
+    $stage = 'path-normalization'
+    if ([IO.Path]::GetFullPath($RepositoryRoot) -cne $RepositoryRoot) { throw 'Path refused' }
+    $stage = 'path-component'
     foreach ($component in $RepositoryRoot.Substring(3).Split('\')) {
         if (-not $component -or $component.EndsWith('.') -or $component.EndsWith(' ') -or
             $component -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)') { throw 'Path refused' }
     }
+    $stage = 'derived-path'
     $privateParent = [IO.Path]::Combine([IO.Path]::GetDirectoryName($RepositoryRoot), 'Anime-private')
     $target = [IO.Path]::Combine($privateParent, $studyId)
     $prior = [IO.Path]::Combine($privateParent, 'wikidata-pilot-2026-10-07')
     $reservation = [IO.Path]::Combine($privateParent, $studyId + '.reserved.json')
     if ($target.Length -gt 240 -or $reservation.Length -gt 240 -or $ScopeSha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Path or scope refused' }
+    $stage = 'ancestor-enumeration'
     $paths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($leaf in @($RepositoryRoot, $privateParent)) {
         $cursor = $leaf
