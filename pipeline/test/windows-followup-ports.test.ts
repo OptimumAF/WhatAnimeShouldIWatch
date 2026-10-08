@@ -4,8 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import { createWindowsFollowupPorts } from "../src/windows-followup-ports.js";
+import { createWindowsFollowupPorts, createWindowsFollowupOutputPort } from "../src/windows-followup-ports.js";
 import { FOLLOWUP_STUDY_ID, FOLLOWUP_SCOPE_SHA256, reserveFollowupStudy } from "../src/wikidata-followup-gates.js";
+import { prepareFollowupOutput, saveFollowupOutput } from "../src/wikidata-followup-output.js";
+import { inventedFollowupResult } from "./invented-followup-result.js";
 
 const windows = process.platform === "win32";
 const executable = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -51,6 +53,65 @@ Set-Acl -LiteralPath $env:WASIW_FIXTURE_ACL_PATH -AclObject $acl`;
 
 test("non-Windows factory fails closed without probing or reserving", { skip: windows }, () => {
   assert.throws(() => createWindowsFollowupPorts("invented"), /Windows private/);
+  assert.throws(() => createWindowsFollowupOutputPort("invented"), /Windows private/);
+});
+
+test("Windows private output locks consumption, flushes exact protected files and completes last without overwrites", { skip: !windows }, async (t) => {
+  const context = setup(t), fixture = await inventedFollowupResult(context.ports);
+  const payload = prepareFollowupOutput(fixture.approval, fixture.result, fixture.now()), marker = fs.readFileSync(context.marker);
+  const port = createWindowsFollowupOutputPort(context.repo);
+  const results = await Promise.allSettled([
+    saveFollowupOutput(fixture.approval, fixture.result, fixture.now, port),
+    saveFollowupOutput(fixture.approval, fixture.result, fixture.now, createWindowsFollowupOutputPort(context.repo)),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1,
+    results.flatMap((result) => result.status === "rejected" ? [String(result.reason?.message)] : []).join("; "));
+  assert.deepEqual(fs.readdirSync(context.target).sort(), payload.files.map((file) => file.name).sort());
+  for (const file of payload.files) assert.deepEqual(fs.readFileSync(path.join(context.target, file.name)), Buffer.from(file.base64, "base64"));
+  const access = JSON.parse(execFileSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$paths = @($env:WASIW_FIXTURE_OUTPUT_PATH) + @(Get-ChildItem -LiteralPath $env:WASIW_FIXTURE_OUTPUT_PATH -File | ForEach-Object { $_.FullName })
+$valid = $true
+foreach ($location in $paths) {
+  $acl = Get-Acl -LiteralPath $location
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or -not $acl.AreAccessRulesProtected -or
+      $rules.Count -ne 1 -or $rules[0].IdentityReference.Value -ne $sid.Value -or
+      $rules[0].FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl) { $valid = $false }
+}
+@{ protectedCurrentOwnerOnly = $valid; count = $paths.Count } | ConvertTo-Json -Compress`], {
+    env: { ...process.env, PSModulePath: path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"),
+      WASIW_FIXTURE_OUTPUT_PATH: context.target }, windowsHide: true, timeout: 30000, encoding: "utf8",
+  }));
+  assert.deepEqual(access, { protectedCurrentOwnerOnly: true, count: 6 });
+  await assert.rejects(saveFollowupOutput(fixture.approval, fixture.result, fixture.now, port), /output/);
+  assert.deepEqual(fs.readFileSync(context.marker), marker);
+  for (const file of payload.files) assert.deepEqual(fs.readFileSync(path.join(context.target, file.name)), Buffer.from(file.base64, "base64"));
+  await assert.rejects(reserveFollowupStudy(fixture.approval, createWindowsFollowupPorts(context.repo)), /preflight/);
+});
+
+test("Windows output refuses mismatched/changed payloads, absent markers and existing partial output", { skip: !windows }, async (t) => {
+  const context = setup(t), fixture = await inventedFollowupResult(context.ports);
+  const payload = prepareFollowupOutput(fixture.approval, fixture.result, fixture.now()), marker = fs.readFileSync(context.marker);
+  const port = createWindowsFollowupOutputPort(context.repo);
+  for (const change of [
+    (value: any) => { value.reservation.approvalSha256 = "0".repeat(64); },
+    (value: any) => { value.files[0].base64 = Buffer.from("invented changed bytes").toString("base64"); },
+    (value: any) => { value.files[0].name = "../escape.json"; },
+    (value: any) => { value.toJSON = () => { throw new Error("invented private serialization error"); }; },
+  ]) {
+    const changed = structuredClone(payload); change(changed);
+    await assert.rejects(port.save(changed), (error: any) => /Windows private/.test(error.message) && !error.message.includes(context.root));
+    assert.equal(fs.existsSync(context.target), false); assert.deepEqual(fs.readFileSync(context.marker), marker);
+  }
+  const absent = setup(t);
+  await assert.rejects(createWindowsFollowupOutputPort(absent.repo).save(payload), /Windows private/);
+  assert.equal(fs.existsSync(absent.target), false);
+  fs.mkdirSync(context.target); fs.writeFileSync(path.join(context.target, "source-projection.json"), "invented interrupted bytes");
+  await assert.rejects(port.save(payload), /Windows private/);
+  assert.equal(fs.readFileSync(path.join(context.target, "source-projection.json"), "utf8"), "invented interrupted bytes");
+  assert.equal(fs.existsSync(path.join(context.target, "completed.json")), false);
+  assert.deepEqual(fs.readFileSync(context.marker), marker);
 });
 test("Windows OS facts and flushed exclusive reservation survive new process and output removal", { skip: !windows }, async (t) => {
   const context = setup(t), facts: any = await context.ports.inspect();
