@@ -83,6 +83,17 @@ $owner = (Get-Acl -LiteralPath $probe).GetOwner([Security.Principal.SecurityIden
     try { return await context.ports.reserveAtomic(value); }
     catch (error) { t.diagnostic((error as Error).message); throw error; } // The port emits only fixed redacted stages.
   } });
+  const markerFacts = JSON.parse(execFileSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = Get-Acl -LiteralPath $env:WASIW_FIXTURE_MARKER_PATH
+$rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+@{ currentOwner = ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -eq $sid.Value)
+protected = $acl.AreAccessRulesProtected; ownerOnly = ($rules.Count -eq 1 -and $rules[0].IdentityReference.Value -eq $sid.Value)
+ownerFull = ($rules.Count -eq 1 -and $rules[0].FileSystemRights -eq [Security.AccessControl.FileSystemRights]::FullControl) } | ConvertTo-Json -Compress`], {
+    env: { ...process.env, PSModulePath: path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"),
+      WASIW_FIXTURE_MARKER_PATH: context.marker }, windowsHide: true, timeout: 30000, encoding: "utf8",
+  }));
+  assert.deepEqual(markerFacts, { currentOwner: true, protected: true, ownerOnly: true, ownerFull: true });
   assert.deepEqual(JSON.parse(fs.readFileSync(context.marker, "utf8")), record);
   assert.equal(fs.existsSync(context.target), false); // The port creates no study output directory.
   fs.mkdirSync(context.target); fs.rmdirSync(context.target); // Removing only invented empty output leaves consumption intact.

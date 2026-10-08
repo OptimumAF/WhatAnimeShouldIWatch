@@ -7,7 +7,7 @@ import { FOLLOWUP_SCOPE_SHA256, type FollowupGatePorts, type FollowupReservation
 const script = fileURLToPath(new URL("./windows-followup-private.ps1", import.meta.url));
 const stages = new Set(["initialization", "path-syntax", "path-normalization", "path-component", "derived-path", "ancestor-enumeration",
   "directory-pin", "directory-attributes", "directory-resolution", "private-access",
-  "reservation-preflight", "reservation-record", "reservation-create", "reservation-access", "reservation-flush"]);
+  "reservation-preflight", "reservation-record", "reservation-security", "reservation-create", "reservation-access", "reservation-flush"]);
 const failure = (stdout?: string) => {
   let stage = "";
   try {

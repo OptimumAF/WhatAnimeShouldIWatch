@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ScopeSha256,
     [string]$RecordBase64
 )
-# No network, deletion, ACL mutation, directory creation or pilot-content reads.
+# No network, deletion, existing ACL mutation, directory creation or pilot-content reads.
 $ErrorActionPreference = 'Stop'
 $handles = [System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
 $stream = $null
@@ -70,7 +70,7 @@ public static class FollowupDirectoryPins {
     function Test-PrivateAcl([string]$location, [bool]$isDirectory) {
         $acl = Get-Acl -LiteralPath $location
         if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $ownerSid.Value -or
-            ($isDirectory -and -not $acl.AreAccessRulesProtected)) { return $false }
+            -not $acl.AreAccessRulesProtected) { return $false }
         $full = [Security.AccessControl.FileSystemRights]::FullControl
         $inherited = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
         $ownerFull = $false
@@ -114,9 +114,18 @@ public static class FollowupDirectoryPins {
     $started = [DateTimeOffset]::ParseExact($record.startedAt, 'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture, $dateStyle)
     $expires = [DateTimeOffset]::ParseExact($record.expiresAt, 'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture, $dateStyle)
     if ($started -gt [DateTimeOffset]::UtcNow -or $expires -le [DateTimeOffset]::UtcNow -or $expires -le $started -or ($expires - $started).TotalDays -gt 7) { throw 'Record refused' }
+    # Elevated Windows tokens can default new-file ownership to Administrators. Supply
+    # the strict current-owner security descriptor atomically, never repair an existing ACL.
+    $stage = 'reservation-security'
+    $security = [Security.AccessControl.FileSecurity]::new()
+    $security.SetOwner($ownerSid)
+    $security.SetAccessRuleProtection($true, $false)
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($ownerSid,
+        [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+    $rights = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::ReadPermissions
     $stage = 'reservation-create'
-    try { $stream = [IO.FileStream]::new($reservation, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write,
-        [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough) }
+    try { $stream = [IO.FileStream]::new($reservation, [IO.FileMode]::CreateNew, $rights,
+        [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough, $security) }
     catch [IO.IOException] {
         if (Test-AnyEntry $reservation) { [Console]::Out.WriteLine('{"reserved":false}'); exit 0 }
         throw
