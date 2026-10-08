@@ -1,0 +1,67 @@
+# 0046 — Exact follow-up scope and acquisition gates
+
+**Status:** Unapproved owner-review proposal, 2026-10-07. This document is not an approval record or an executable acquisition route. M2.7 and the M2 exit gate remain incomplete.
+
+## Evidence and scope
+
+The completed [0043 pilot](0043-catalog-source-candidate.md) omitted 50 referenced definitions under its declared cap and did not retain P580. Its `state: completed` record must remain closed. The current adapter is hard-coded to IDs 1–100, nine properties and twenty definitions; changing its constants would not establish permission for another acquisition. Decisions [0044](0044-catalog-field-readiness.md) and [0045](0045-tv-date-scope-and-provenance.md) supply synthetic field rules and audit contracts, not real mapping approval.
+
+Review one new private feasibility study with the following exact scope. It measures whether a better bounded projection can support those rules; it cannot establish a complete or representative catalog.
+
+| Item | Proposed bound |
+|---|---|
+| Study identity | `wikidata-followup-101-200-v1`; a distinct owner record, never the consumed pilot record |
+| Selection | All public numeric anime IDs 101–200, inclusive; fixed before requests and independent of personal history |
+| Access | Read-only GET requests to `https://query.wikidata.org/sparql` for exact P4086 IDs, then `https://www.wikidata.org/w/api.php` for exact returned item IDs and the required definition inventory |
+| Lookup inventory | Ten fixed batches of ten numeric IDs; request at most 201 rows and fail on more than 200, unexpected IDs or noncanonical item URIs; anime reads use exact batches of at most twenty |
+| Anime | At most 100 unique items; duplicate/conflicting external identities remain quarantined and missing IDs remain in the 100-ID denominator |
+| Definitions | At most 100 unique required definition items, including qualifier contexts defined below; complete inventory or failure, never truncation |
+| Transport | At most 40 attempts including retries; 4 MiB of exposed response-body bytes per attempt, 16 MiB total; serial requests at least two seconds apart; 30-second whole-request timeout |
+| Retry | At most one retry per logical request for HTTP 429/503 or Action API `maxlag`; respect Retry-After, default five seconds, minimum two seconds, refuse waits above sixty seconds; every attempt and read body consumes the budget |
+| Retained main claims | Exactly P4086, P31, P136, P577, **P580**, P1113, P2047, P155, P156, P2756 |
+| Terms | Anime labels/aliases in English and Japanese; referenced definition labels in English only; no descriptions or reference payloads |
+| Retention | New directory `C:\Users\Avery\Documents\ChatGPT\Anime-private\wikidata-followup-101-200-v1`; expiry is the earlier of acquisition start plus seven days and the owner's absolute approval expiry |
+| Output | Private selected projection, definitions, receipts, mapping/scope/readiness records and failure/completion marker; public reporting contains aggregate counts only |
+| Other uses | Training, cached product use, browser/release assets, publication and deployment remain unauthorized |
+
+The range remains biased. This proposal neither establishes a representative validation cohort nor proves data quality; any acquisition requires the separate approval below. Community scores remain unknown; images, external-ID link navigation, other providers, dumps and relation-target expansion are excluded from this scope.
+
+## Complete definition accounting
+
+Compute the complete required inventory from the bounded selected projection **before any definition request**. Examine all nondeprecated claims, including normal claims alongside preferred ones. Deduplicate canonical item IDs and retain aggregate counts by role:
+
+- Main item values for P31, P136 and P2756.
+- Canonical item-valued units in P2047 quantities and calendars in P577/P580 dates.
+- Every item value, item-valued unit and calendar in qualifiers attached to any retained nondeprecated main claim. Qualifier presence must remain visible even when its property or value cannot be interpreted.
+
+Main P155/P156 anime targets are relationship targets, not definition expansion. Resolve only targets already in the acquired universe; count outside targets without fetching their labels or claims. Property entities, references, sitelinks, hierarchy/ancestry traversal and further definition claims are not requested. Definition labels are review inputs, never automatic genre, format or classification mappings.
+
+Fail before definition reads if the required unique inventory exceeds 100, contains a malformed entity reference, or cannot be completely computed within the projection bounds. Fetch exact label-only batches of at most twenty items, with exact returned inventory checks. An item already acquired as an anime may supply its retained English label without another request; it still counts in the definition-role inventory. Report required, reused, fetched, missing-label and unresolved-mapping counts separately. A missing label is an unresolved value, not an omitted request or a complete mapping. Use canonical numeric-ID ordering without lossy number conversion.
+
+Retain only the exact bounded structured snaks required by the existing offline rules, preserving unknown values and qualifier evidence. Maintain the existing maximum of 100 claims per selected property, 100 qualifier properties per claim and 100 snaks per qualifier property, plus the body/total byte limits. Unexpected nested fields and source references do not enter the retained projection. No item-level payload or real mapping table enters logs or Git.
+
+## Execution prerequisites
+
+Each prerequisite must pass before a real request:
+
+1. **Prior cleanup:** independently verify the old pilot directory is absent without reading its contents. Cleanup authorization is not cleanup evidence. On 2026-10-07 a fresh owner-authorized literal-file retry was again rejected before execution by automatic approval review with only “blocked by policy”; all twelve files remain. Manual removal is due October 14, 2026 at 2:43 PM Pacific. Do not bypass the rejection or acquire while this prerequisite is unresolved.
+2. **Separate owner source/use decision:** record explicit approval of this exact scope, selection, properties, definition roles, retention, access and aggregate-only reporting. Bind the reviewed decision/scope revision, approval authority/time and absolute expiry. An affirmative cleanup reply, the completed pilot, delegated review of that pilot, or this proposal cannot supply the new permission.
+3. **Separate tested adapter:** keep the historical adapter unchanged. A new gate must reject absent/false/wrong-scope/expired/completed approvals before transport or study writes. A committed unapproved proposal is never an enabled default, routine npm acquisition command, workflow approval or production job.
+4. **Private path and one-use controls:** verify resolved parent/target remain outside the checkout, reject symlinks/reparse points and existing targets, and verify effective Windows private access rather than treating POSIX mode bits as an ACL. After all preflight gates pass, atomically reserve the exact study before the first request. Keep its durable consumption record separate from the output directory so removing outputs cannot reopen it. Started, failed or interrupted studies remain consumed; a fresh directory cannot reactivate the same study. Failure outputs expire on the same deadline. Recheck approval expiry and aborts before each request and after waits.
+5. **Bounded official transport:** identify the client and repository contact, request compression where supported, use Action API `maxlag=5`, reject redirects and credentials, stream-count bodies including retry/error responses and bound the complete operation through body consumption. Cancel on exhaustion or abort. Exposed decoded/body bytes are not claimed as compressed wire bytes. Never retain error payloads or print URLs/provider exceptions.
+
+Wikidata recommends serialized requests, an identifying agent, compression and maxlag for Action API access. [Official data-access guidance](https://www.wikidata.org/wiki/Wikidata:Data_access). Noninteractive Action API clients should set maxlag, and a descriptive agent should identify its contact. [API etiquette](https://www.mediawiki.org/wiki/API:Etiquette), [Wikimedia user-agent policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy). These documents were checked on 2026-10-07; no anime entity/API request was made for this review. Access guidance does not approve this product's retained or public use.
+
+## Mapping and readiness boundary
+
+Permission to acquire a private projection would not automatically approve a real date/classification exception or turn the fixture-only wrapper into a source-derived mapper. Review actual meaning, exact real ID tables and whole-work series/season declarations privately before any such application. Preserve existing v1/v2 behavior; do not disguise real data with an invented source marker.
+
+Freeze the mapping/date/scope policies and independent explicit readiness strata before interpreting target success. Record separate source, policy, universe and output byte hashes; changes require a separately labeled correction against the same bounded bytes. Numeric ID ranges alone do not establish episodic or jurisdiction-specific film strata. If independently declared membership is unavailable, report that readiness target as unassessed rather than deriving its denominator from successful fields or claiming an empty-stratum pass.
+
+Use the full 100-ID denominator for identity and joint genre/year/format checks, with decision 0044's 100% identity and 95% joint core engineering targets. Applicable predeclared episodic and film-classification strata retain their 90% joint targets and scope checks. Missing items, unresolved dates, incomplete genres and incompatible classification cannot disappear. Report aliases/collisions, relation coverage, qualifiers/conflicts, absent versus unusable claims and private revision identity separately. Multiple requests are not an atomic upstream snapshot. Always leave publication unauthorized.
+
+## Required mocked evidence and next task
+
+Implement and review the **new preflight and complete-inventory gate with invented data and fake transport/storage/clock first**. Tests must prove that closed/wrong/expired approvals and unresolved cleanup make zero requests and zero study writes; started/failed/interrupted records cannot rerun; path/ACL and budget failures stop safely; exactly 100 definitions succeeds without omissions while 101 fails before definition reads; qualifier units/calendars, overlapping roles and order-independent inventory are counted; maxlag/429/503 retries, stalled bodies, cancellation, redacted failures and expiry remain bounded.
+
+Current `metadata:fixture:check` exercises the existing closed pilot refusal and synthetic mapper/date/readiness paths. It does **not** verify these proposed new gates. No new adapter, record, ACL check or real mapping is implemented by this documentation slice. After mocked gates pass, obtain the separate owner scope record and verified cleanup before a one-use acquisition; then privately review mapping/strata and report aggregate feasibility. Public catalog packaging and source/use approvals remain separate later tasks.
