@@ -353,6 +353,8 @@ test("metadata candidate keeps unknown fields explicit and reports bounded cover
 
   const cases: [string, (value: any) => void, RegExp][] = [
     ["hidden user rows", (v) => { v.userRows = []; }, /root.userRows.*unsupported/],
+    ["private mapper audit is not a catalog field", (v) => { v.privateAudit = { yearBasis: "invented-private" }; },
+      /root.privateAudit.*unsupported/],
     ["image field", (v) => { v.anime[0].imageUrl = "https://example.test/cover"; },
       /anime\[0\].imageUrl.*unsupported/],
     ["missing unknown", (v) => { delete v.anime[1].genres; }, /anime\[1\].genres.*required/],

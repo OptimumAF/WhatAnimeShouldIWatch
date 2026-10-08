@@ -45,6 +45,8 @@ An explicit offline v2 policy now tests the certificate proposal with invented f
 
 The metadata fixture command also tests [decision 0045](docs/decisions/0045-tv-date-scope-and-provenance.md)'s private TV date audit. Byte-bound series/season declarations, exact type scope, date precision and all live primary/fallback evidence are checked with invented data. Its per-ID provenance remains private and it does not change catalog years; current v1/v2 mapping and browser filters continue to ignore P580. A successful local audit is not approval of first-airing meaning, source use or publication.
 
+An explicit synthetic-only wrapper now exercises scoped years in strict catalog bytes and mocked browser bundles. It returns its hash-bound private audit separately, recomputes final coverage, leaves ambiguous TV/unknown-format years null, and preserves known non-TV publication years. It has no transport, writer, installer or publication entry point; v1/v2 behavior stays unchanged. Fixture markers and passing checks do not approve real mappings or source use.
+
 Run the fast checks separately:
 
 ```bash
