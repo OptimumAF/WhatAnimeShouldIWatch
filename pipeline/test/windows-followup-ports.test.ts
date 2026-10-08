@@ -17,15 +17,15 @@ const approval = () => ({ format: "wikidata-followup-approval-v1", studyId: FOLL
 function setup(t: TestContext, broad = false, unprotected = false) {
   // TEMP may use an 8.3 alias on a hosted Windows runner. The production port deliberately
   // rejects aliases, so prepare our invented workspace using the canonical path.
-  const temporary = fs.realpathSync(os.tmpdir());
+  const temporary = fs.realpathSync.native(os.tmpdir());
   t.diagnostic(`Invented fixture temporary-path alias: ${temporary.toLowerCase() !== os.tmpdir().toLowerCase()}`);
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(temporary, "invented-followup-ports-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(temporary, "invented-followup-ports-")));
   const repo = path.join(root, "Anime"), parent = path.join(root, "Anime-private");
   t.diagnostic(`Invented fixture path facts: ${JSON.stringify({ driveRoot: /^[A-Za-z]:\\/.test(repo),
     bounded: repo.length <= 240, forbiddenSyntax: /[:*?"<>|]/.test(repo.slice(2)), extendedPrefix: repo.startsWith("\\\\?\\") })}`);
   fs.mkdirSync(repo); fs.mkdirSync(parent);
   t.after(() => {
-    const actual = fs.realpathSync(root), temporary = fs.realpathSync(os.tmpdir());
+    const actual = fs.realpathSync.native(root), temporary = fs.realpathSync.native(os.tmpdir());
     if (!actual.startsWith(temporary + path.sep) || !path.basename(actual).startsWith("invented-followup-ports-")) throw new Error("Refuse cleanup outside invented temporary root");
     fs.rmSync(actual, { recursive: true, force: true });
   });
@@ -54,6 +54,20 @@ test("non-Windows factory fails closed without probing or reserving", { skip: wi
 });
 test("Windows OS facts and flushed exclusive reservation survive new process and output removal", { skip: !windows }, async (t) => {
   const context = setup(t), facts: any = await context.ports.inspect();
+  const short = execFileSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+    "(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:WASIW_FIXTURE_SHORT_PATH).ShortPath"], {
+    env: { ...process.env, PSModulePath: path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"),
+      WASIW_FIXTURE_SHORT_PATH: context.root }, windowsHide: true, timeout: 30000, encoding: "utf8",
+  }).trim();
+  const shortAlias = short.toLowerCase() !== context.root.toLowerCase();
+  t.diagnostic(`Invented fixture 8.3 alias available: ${shortAlias}`);
+  if (shortAlias) {
+    assert.ok(fs.realpathSync(short).toLowerCase() !== context.root.toLowerCase(), "JS resolver preserves the invented short alias");
+    assert.ok(fs.realpathSync.native(short).toLowerCase() === context.root.toLowerCase(), "Native resolver expands the invented short alias");
+    await assert.rejects(createWindowsFollowupPorts(path.join(short, "Anime")).inspect(),
+      (error: any) => /Windows private.*\(path-normalization\)/.test(error.message) && !error.message.includes(short));
+    assert.equal(fs.existsSync(context.marker), false);
+  }
   assert.equal(facts.access, "verified-owner-only"); assert.equal(facts.priorPilotExists, false);
   const record = await reserveFollowupStudy(approval(), context.ports);
   assert.deepEqual(JSON.parse(fs.readFileSync(context.marker, "utf8")), record);
