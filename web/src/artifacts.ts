@@ -197,6 +197,7 @@ export interface CatalogMetadataItemV1 {
   mediaFormat: "TV" | "Movie" | "OVA" | "ONA" | "Special" | null;
   episodeCount: number | null;
   runtimeMinutes: number | null;
+  /** Catalog fields contain only the mapped classification, never producer certificate references. */
   contentClassification: { jurisdiction: string; system: string; value: string } | null;
   communityScore: number | null;
   /** Even an empty array does not prove there is no viewing prerequisite. */

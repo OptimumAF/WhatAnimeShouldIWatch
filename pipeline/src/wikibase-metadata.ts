@@ -6,18 +6,30 @@ import {
 } from "../../web/src/artifacts.js";
 
 type MediaFormat = NonNullable<CatalogMetadataItemV1["mediaFormat"]>;
-export interface WikibaseMappingPolicy {
-  format: "wikibase-metadata-policy-v1";
+interface WikibaseMappingBase {
   languageOrder: string[];
   genreLabels: Record<string, string>;
   mediaFormats: Record<string, MediaFormat>;
   /** Exact unit URI to minutes multiplier; no implicit duration unit. */
   durationUnits: Record<string, number>;
-  classification: {
-    property: string; datatype: "wikibase-item" | "string";
-    jurisdiction: string; system: string; values: Record<string, string>;
-  } | null;
 }
+interface ClassificationMapping {
+  property: string; datatype: "wikibase-item" | "string";
+  jurisdiction: string; system: string; values: Record<string, string>;
+}
+export interface WikibaseMappingPolicyV1 extends WikibaseMappingBase {
+  format: "wikibase-metadata-policy-v1";
+  classification: ClassificationMapping | null;
+}
+/** Synthetic candidate rule; source-derived use still requires separate scope/mapping review. */
+export interface WikibaseMappingPolicyV2 extends WikibaseMappingBase {
+  format: "wikibase-metadata-policy-v2";
+  classification: (ClassificationMapping & {
+    certificateReference: { property: "P2676"; datatype: "string"; maximumLength: 80 };
+    allowedMediaFormats: ["Movie"];
+  }) | null;
+}
+export type WikibaseMappingPolicy = WikibaseMappingPolicyV1 | WikibaseMappingPolicyV2;
 type ObjectValue = Record<string, unknown>;
 type Issue = "missing" | "qualified" | "unknown" | "unmapped" | "invalid" | "conflict";
 type Resolution<T> = { value: T; issue?: undefined } | { value: null; issue: Issue };
@@ -73,7 +85,9 @@ function stringMap(value: unknown, field: string, keyPattern: RegExp, maximum: n
 function validatePolicy(policy: WikibaseMappingPolicy): void {
   const root = object(policy, "policy");
   exact(root, ["format", "languageOrder", "genreLabels", "mediaFormats", "durationUnits", "classification"], "policy");
-  if (root.format !== "wikibase-metadata-policy-v1") fail("policy.format", "is unsupported");
+  if (!["wikibase-metadata-policy-v1", "wikibase-metadata-policy-v2"].includes(root.format as string)) {
+    fail("policy.format", "is unsupported");
+  }
   const languages = array(root.languageOrder, "policy.languageOrder", 4);
   if (!languages.length || new Set(languages).size !== languages.length || languages.some((entry) =>
     typeof entry !== "string" || entry.length > 40 || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(entry))) {
@@ -94,7 +108,8 @@ function validatePolicy(policy: WikibaseMappingPolicy): void {
   });
   if (root.classification !== null) {
     const rating = object(root.classification, "policy.classification");
-    exact(rating, ["property", "datatype", "jurisdiction", "system", "values"], "policy.classification");
+    exact(rating, ["property", "datatype", "jurisdiction", "system", "values",
+      ...(root.format === "wikibase-metadata-policy-v2" ? ["certificateReference", "allowedMediaFormats"] : [])], "policy.classification");
     if (typeof rating.property !== "string" || rating.property.length > 40 || !propertyPattern.test(rating.property) ||
         ["P4086", "P136", "P31", "P577", "P1113", "P2047", "P155", "P156"].includes(rating.property)) {
       fail("policy.classification.property", "must be a separate property");
@@ -104,10 +119,21 @@ function validatePolicy(policy: WikibaseMappingPolicy): void {
     text(rating.system, "policy.classification.system", 80);
     stringMap(rating.values, "policy.classification.values",
       rating.datatype === "wikibase-item" ? itemPattern : /^.{1,80}$/, 80);
+    if (root.format === "wikibase-metadata-policy-v2") {
+      const reference = object(rating.certificateReference, "policy.classification.certificateReference");
+      exact(reference, ["property", "datatype", "maximumLength"], "policy.classification.certificateReference");
+      if (rating.property !== "P2756" || rating.datatype !== "wikibase-item" ||
+          reference.property !== "P2676" || reference.datatype !== "string" || reference.maximumLength !== 80 ||
+          !Array.isArray(rating.allowedMediaFormats) || rating.allowedMediaFormats.length !== 1 ||
+          rating.allowedMediaFormats[0] !== "Movie") {
+        fail("policy.classification", "requires the exact film certificate candidate rule");
+      }
+    }
   }
 }
 
-interface Statement { mainsnak: ObjectValue; rank: "normal" | "preferred" | "deprecated"; qualified: boolean }
+interface Statement { mainsnak: ObjectValue; rank: "normal" | "preferred" | "deprecated";
+  qualified: boolean; qualifiers: ObjectValue }
 interface Entity { id: string; labels: ObjectValue; aliases: ObjectValue | null;
   claims: Map<string, Statement[]> }
 /** JSON.parse alone loses duplicate object keys before identity validation can see them. */
@@ -194,7 +220,8 @@ function readEntities(source: Uint8Array, policy: WikibaseMappingPolicy): Entity
           fail(field, "has an invalid statement, rank, or main snak");
         }
         const qualifiers = statement.qualifiers === undefined ? {} : object(statement.qualifiers, `${field}.qualifiers`);
-        return { mainsnak: snak, rank: statement.rank as Statement["rank"], qualified: Object.keys(qualifiers).length > 0 };
+        return { mainsnak: snak, rank: statement.rank as Statement["rank"], qualifiers,
+          qualified: Object.keys(qualifiers).length > 0 };
       }));
     }
     return { id: key, labels, aliases, claims };
@@ -244,6 +271,69 @@ function mappedItem<T>(snak: ObjectValue, mapping: Record<string, T>): Resolutio
   const item = itemValue(snak);
   if (item.issue) return item;
   return Object.hasOwn(mapping, item.value) ? { value: mapping[item.value] } : { value: null, issue: "unmapped" };
+}
+function classificationValue(snak: ObjectValue, mapping: ClassificationMapping): Resolution<string> {
+  const key = mapping.datatype === "wikibase-item" ? itemValue(snak) : dataValue(snak, "string", "string");
+  if (key.issue) return key;
+  return typeof key.value === "string" && Object.hasOwn(mapping.values, key.value)
+    ? { value: mapping.values[key.value] } : { value: null, issue: "unmapped" };
+}
+const certificateReasons = ["nonFilmOrUnknownFormat", "unsupportedQualifier", "multipleCertificates",
+  "missingCertificate", "invalidCertificate", "ratingRejected"] as const;
+type CertificateReason = typeof certificateReasons[number];
+interface CertificateAudit {
+  evaluatedItems: number; acceptedItems: number; rejections: Record<CertificateReason, number>;
+}
+function certificateReference(statement: Statement, maximum: number):
+  { value: string; reason?: undefined } | { value: null; reason: CertificateReason } {
+  const qualifiers = statement.qualifiers;
+  if (Object.keys(qualifiers).some((property) => property !== "P2676")) {
+    return { value: null, reason: "unsupportedQualifier" };
+  }
+  const references = qualifiers.P2676;
+  if (references === undefined || (Array.isArray(references) && !references.length)) {
+    return { value: null, reason: "missingCertificate" };
+  }
+  if (!Array.isArray(references)) return { value: null, reason: "invalidCertificate" };
+  if (references.length !== 1) return { value: null, reason: "multipleCertificates" };
+  const raw = references[0];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { value: null, reason: "invalidCertificate" };
+  const snak = raw as ObjectValue;
+  if (Object.keys(snak).some((key) => !["snaktype", "property", "datatype", "datavalue", "hash"].includes(key)) ||
+      snak.snaktype !== "value" || snak.property !== "P2676" || snak.datatype !== "string" ||
+      (snak.hash !== undefined && (typeof snak.hash !== "string" || !/^[a-f0-9]{40}$/.test(snak.hash)))) {
+    return { value: null, reason: "invalidCertificate" };
+  }
+  const data = snak.datavalue;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return { value: null, reason: "invalidCertificate" };
+  const { type, value } = data as ObjectValue;
+  if (Object.keys(data).length !== 2 || type !== "string" || typeof value !== "string" ||
+      !value.length || value.length > maximum || value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value)) {
+    return { value: null, reason: "invalidCertificate" };
+  }
+  return { value };
+}
+function certificateClassification(statements: Statement[], mapping: NonNullable<WikibaseMappingPolicyV2["classification"]>,
+  mediaFormat: Resolution<MediaFormat>, audit: CertificateAudit): Resolution<string> {
+  if (!statements.length) return { value: null, issue: "missing" };
+  audit.evaluatedItems += 1;
+  const reject = (reason: CertificateReason, issue: Issue): Resolution<string> => {
+    audit.rejections[reason] += 1;
+    return { value: null, issue };
+  };
+  if (mediaFormat.issue || mediaFormat.value !== "Movie") return reject("nonFilmOrUnknownFormat", "unmapped");
+  const references = statements.map((entry) => certificateReference(entry, mapping.certificateReference.maximumLength));
+  // Fixed precedence makes mixed refusals independent of statement order.
+  const reason = certificateReasons.find((code) => references.some((entry) => entry.reason === code));
+  if (reason) return reject(reason, reason === "missingCertificate" ? "missing" :
+    reason === "unsupportedQualifier" ? "qualified" : reason === "multipleCertificates" ? "conflict" : "invalid");
+  if (new Set(references.map((entry) => entry.value)).size !== 1) return reject("multipleCertificates", "conflict");
+  // Only this property, after exact certificate and film checks, is exempt from v1's qualifier refusal.
+  const rating = scalar(values(statements.map((entry) => ({ ...entry, qualified: false })),
+    (snak) => classificationValue(snak, mapping)));
+  if (rating.issue) return reject("ratingRejected", rating.issue);
+  audit.acceptedItems += 1;
+  return rating;
 }
 function decimal(value: unknown): number | null {
   if (typeof value !== "string" || value.length > 40 || !/^[+-]\d+(?:\.\d+)?$/.test(value)) return null;
@@ -354,6 +444,8 @@ export function mapWikibaseMetadata(sourceBytes: Uint8Array, universe: readonly 
   }
   const fieldIssues = Object.fromEntries(fields.map((field) => [field,
     Object.fromEntries(issues.map((issue) => [issue, 0]))])) as Record<CatalogCoverageField, Record<Issue, number>>;
+  const classificationCertificate: CertificateAudit = { evaluatedItems: 0, acceptedItems: 0,
+    rejections: Object.fromEntries(certificateReasons.map((reason) => [reason, 0])) as Record<CertificateReason, number> };
   const record = <T>(field: CatalogCoverageField, resolution: Resolution<T>): T | null => {
     if (resolution.issue) fieldIssues[field][resolution.issue] += 1;
     return resolution.value;
@@ -361,14 +453,13 @@ export function mapWikibaseMetadata(sourceBytes: Uint8Array, universe: readonly 
   const anime: CatalogMetadataItemV1[] = [...accepted.values()].sort((left, right) => left.animeId - right.animeId).map(({ animeId, entity, title }) => {
     const read = <T>(property: string, decode: (snak: ObjectValue) => Resolution<T>) => values(bestStatements(entity, property), decode);
     const genres = read("P136", (snak) => mappedItem(snak, policy.genreLabels));
+    const mediaFormat = scalar(read("P31", (snak) => mappedItem(snak, policy.mediaFormats)));
     const classification = policy.classification;
-    const rating = classification ? scalar(read(classification.property, (snak): Resolution<string> => {
-      const key = classification.datatype === "wikibase-item" ? itemValue(snak)
-        : dataValue(snak, "string", "string");
-      if (key.issue) return key;
-      return typeof key.value === "string" && Object.hasOwn(classification.values, key.value)
-        ? { value: classification.values[key.value] } : { value: null, issue: "unmapped" };
-    })) : { value: null, issue: "missing" } as Resolution<string>;
+    const rating = policy.format === "wikibase-metadata-policy-v2" && policy.classification
+      ? certificateClassification(bestStatements(entity, policy.classification.property), policy.classification,
+        mediaFormat, classificationCertificate)
+      : classification ? scalar(read(classification.property, (snak) => classificationValue(snak, classification)))
+        : { value: null, issue: "missing" } as Resolution<string>;
     const relations: NonNullable<CatalogMetadataItemV1["relations"]> = [];
     const relationIssues: Issue[] = [];
     for (const [property, kind] of [["P155", "prequel"], ["P156", "sequel"]] as const) {
@@ -384,7 +475,7 @@ export function mapWikibaseMetadata(sourceBytes: Uint8Array, universe: readonly 
       aliases: record("aliases", aliasesOf(entity, policy, title)),
       genres: record("genres", genres.issue ? genres : { value: [...new Set(genres.value)].sort() }),
       year: record("year", scalar(read("P577", releaseYear))),
-      mediaFormat: record("mediaFormat", scalar(read("P31", (snak) => mappedItem(snak, policy.mediaFormats)))),
+      mediaFormat: record("mediaFormat", mediaFormat),
       episodeCount: record("episodeCount", scalar(read("P1113", (snak) => quantity(snak, { "1": 1 }, true, 100000)))),
       runtimeMinutes: record("runtimeMinutes", scalar(read("P2047", (snak) => quantity(snak, policy.durationUnits, false, 10000)))),
       contentClassification: record("contentClassification", rating.issue ? rating : { value: {
@@ -407,7 +498,9 @@ export function mapWikibaseMetadata(sourceBytes: Uint8Array, universe: readonly 
   const oneSidedDirectedEdges = anime.reduce((count, item) => count + (item.relations ?? []).filter((relation) =>
     !(byId.get(relation.animeId)?.relations ?? []).some((inverse) => inverse.animeId === item.animeId &&
       inverse.kind === (relation.kind === "prequel" ? "sequel" : "prequel"))).length, 0);
-  return { snapshot, report: { format: "wikibase-metadata-audit-v1" as const,
+  return { snapshot, report: { format: policy.format === "wikibase-metadata-policy-v1"
+    ? "wikibase-metadata-audit-v1" as const : "wikibase-metadata-audit-v2" as const,
+    ...(policy.format === "wikibase-metadata-policy-v2" ? { classificationCertificate } : {}),
     sourceSnapshotSha256: candidate.source.snapshotSha256, policySha256: digest(canonical(policy)),
     universeSha256: digest(canonical([...universe].sort((a, b) => a - b))),
     sourceEntities: entities.length, emittedItems: anime.length, identity, fieldIssues,

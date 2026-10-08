@@ -366,6 +366,8 @@ test("metadata candidate keeps unknown fields explicit and reports bounded cover
       /anime\[0\].runtimeMinutes.*greater than 0/],
     ["classification structure", (v) => { v.anime[1].contentClassification.extra = "hidden"; },
       /contentClassification.extra.*unsupported/],
+    ["certificate is not public metadata", (v) => { v.anime[1].contentClassification.certificate = "invented-private-reference"; },
+      /contentClassification.certificate.*unsupported/],
     ["relation reference", (v) => { v.anime[0].relations[0].animeId = 101; },
       /relations\[0\].animeId.*itself/],
     ["source digest", (v) => { v.source.snapshotSha256 = "bad"; },
