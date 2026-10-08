@@ -5,7 +5,17 @@ import { fileURLToPath } from "node:url";
 import { FOLLOWUP_SCOPE_SHA256, type FollowupGatePorts, type FollowupReservation } from "./wikidata-followup-gates.js";
 
 const script = fileURLToPath(new URL("./windows-followup-private.ps1", import.meta.url));
-const failure = () => new Error("Wikidata follow-up preflight: Windows private inspection or reservation failed.");
+const stages = new Set(["initialization", "path", "directory-pin", "directory-attributes", "directory-resolution", "private-access",
+  "reservation-preflight", "reservation-record", "reservation-create", "reservation-access", "reservation-flush"]);
+const failure = (stdout?: string) => {
+  let stage = "";
+  try {
+    const value = JSON.parse(stdout ?? "");
+    if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 2 &&
+        value.code === "windows-private-preflight-failed" && typeof value.stage === "string" && stages.has(value.stage)) stage = ` (${value.stage})`;
+  } catch { /* Arbitrary helper output remains redacted. */ }
+  return new Error(`Wikidata follow-up preflight: Windows private inspection or reservation failed${stage}.`);
+};
 function fail(): never { throw failure(); }
 export function createWindowsFollowupPorts(repoRoot: string, now: () => number = Date.now): FollowupGatePorts {
   if (process.platform !== "win32") fail();
@@ -16,7 +26,7 @@ export function createWindowsFollowupPorts(repoRoot: string, now: () => number =
     if (record) args.push("-RecordBase64", Buffer.from(JSON.stringify(record)).toString("base64"));
     const env = { ...process.env, PSModulePath: path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules") };
     execFile(executable, args, { env, windowsHide: true, timeout: 30000, maxBuffer: 16384 }, (error, stdout) => {
-      if (error) { reject(failure()); return; }
+      if (error) { reject(failure(stdout)); return; }
       try { resolve(JSON.parse(stdout)); } catch { reject(failure()); }
     });
   });

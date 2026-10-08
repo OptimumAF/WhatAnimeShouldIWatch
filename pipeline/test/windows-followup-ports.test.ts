@@ -15,7 +15,11 @@ const approval = () => ({ format: "wikidata-followup-approval-v1", studyId: FOLL
   approvedAt: new Date(Date.now() - 60000).toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(),
   use: "one-local-feasibility-study-only", publicArtifacts: false, training: false, deployment: false, productCache: false });
 function setup(t: TestContext, broad = false, unprotected = false) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "invented-followup-ports-"));
+  // TEMP may use an 8.3 alias on a hosted Windows runner. The production port deliberately
+  // rejects aliases, so prepare our invented workspace using the canonical path.
+  const temporary = fs.realpathSync(os.tmpdir());
+  t.diagnostic(`Invented fixture temporary-path alias: ${temporary.toLowerCase() !== os.tmpdir().toLowerCase()}`);
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(temporary, "invented-followup-ports-")));
   const repo = path.join(root, "Anime"), parent = path.join(root, "Anime-private");
   fs.mkdirSync(repo); fs.mkdirSync(parent);
   t.after(() => {
@@ -77,7 +81,8 @@ test("Windows atomic reservation permits one concurrent winner and preserves cor
     reserveFollowupStudy(approval(), createWindowsFollowupPorts(context.repo)),
     reserveFollowupStudy(approval(), createWindowsFollowupPorts(context.repo)),
   ]);
-  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1,
+    results.flatMap((result) => result.status === "rejected" ? [String(result.reason?.message)] : []).join("; "));
   const before = fs.readFileSync(context.marker);
   await assert.rejects(reserveFollowupStudy(approval(), context.ports), /preflight/);
   assert.deepEqual(fs.readFileSync(context.marker), before);
@@ -87,6 +92,9 @@ test("Windows atomic reservation permits one concurrent winner and preserves cor
 });
 test("Windows fresh reservation probe detects intervening paths and junction ancestors", { skip: !windows }, async (t) => {
   const context = setup(t), inspect = context.ports.inspect;
+  await assert.rejects(createWindowsFollowupPorts(context.repo + "\\.").inspect(),
+    (error: any) => /Windows private.*\(path\)/.test(error.message) && !error.message.includes(context.root));
+  assert.equal(fs.existsSync(context.marker), false);
   context.ports.inspect = async () => { const facts = await inspect(); fs.mkdirSync(context.target); return facts; };
   await assert.rejects(reserveFollowupStudy(approval(), context.ports), /preflight/);
   assert.equal(fs.existsSync(context.marker), false);

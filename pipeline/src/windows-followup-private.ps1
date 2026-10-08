@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $handles = [System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
 $stream = $null
+$stage = 'initialization'
 try {
     Add-Type -TypeDefinition @'
 using System;
@@ -22,6 +23,7 @@ public static class FollowupDirectoryPins {
     public static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, StringBuilder path, uint size, uint flags);
 }
 '@
+    $stage = 'path'
     $studyId = 'wikidata-followup-101-200-v1'
     if ($RepositoryRoot -notmatch '^[A-Za-z]:\\' -or $RepositoryRoot.Length -gt 240 -or
         $RepositoryRoot.Substring(2) -match '[:*?"<>|]' -or
@@ -46,16 +48,20 @@ public static class FollowupDirectoryPins {
     # Open without FILE_SHARE_DELETE and with OPEN_REPARSE_POINT before checking each child.
     # Pins stay open through reserve/flush; same-owner/administrator sabotage is outside this policy.
     foreach ($directory in @($paths | Sort-Object Length, { $_ })) {
+        $stage = 'directory-pin'
         $handle = [FollowupDirectoryPins]::CreateFileW($directory, 0x80, 3, [IntPtr]::Zero, 3, 0x02200000, [IntPtr]::Zero)
         if ($handle.IsInvalid) { $handle.Dispose(); throw 'Directory pin refused' }
         $handles.Add($handle)
+        $stage = 'directory-attributes'
         $attributes = [IO.File]::GetAttributes($directory)
         if (-not ($attributes -band [IO.FileAttributes]::Directory) -or ($attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Directory refused' }
         $buffer = [Text.StringBuilder]::new(1024)
+        $stage = 'directory-resolution'
         $size = [FollowupDirectoryPins]::GetFinalPathNameByHandleW($handle, $buffer, 1024, 0)
         if ($size -eq 0 -or $size -ge 1024 -or -not $buffer.ToString().StartsWith('\\?\') -or
             $buffer.ToString().Substring(4) -ine $directory) { throw 'Resolved path refused' }
     }
+    $stage = 'private-access'
     $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     function Test-PrivateAcl([string]$location, [bool]$isDirectory) {
         $acl = Get-Acl -LiteralPath $location
@@ -84,9 +90,11 @@ public static class FollowupDirectoryPins {
         access = 'unknown' }
     if (Test-PrivateAcl $privateParent $true) { $facts.access = 'verified-owner-only' }
     if ($Action -eq 'Inspect') { [Console]::Out.WriteLine(($facts | ConvertTo-Json -Compress)); exit 0 }
+    $stage = 'reservation-preflight'
     # A fresh pinned inspection closes the gap between the parent's initial inspection and reservation.
     if ($facts.access -ne 'verified-owner-only' -or $facts.priorPilotExists -or $facts.targetExists) { throw 'Reservation refused' }
     if ($facts.reservationExists) { [Console]::Out.WriteLine('{"reserved":false}'); exit 0 }
+    $stage = 'reservation-record'
     if (-not $RecordBase64 -or $RecordBase64.Length -gt 6000) { throw 'Record refused' }
     $bytes = [Convert]::FromBase64String($RecordBase64)
     if ($bytes.Length -gt 4096) { throw 'Record refused' }
@@ -102,6 +110,7 @@ public static class FollowupDirectoryPins {
     $started = [DateTimeOffset]::ParseExact($record.startedAt, 'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture, $dateStyle)
     $expires = [DateTimeOffset]::ParseExact($record.expiresAt, 'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture, $dateStyle)
     if ($started -gt [DateTimeOffset]::UtcNow -or $expires -le [DateTimeOffset]::UtcNow -or $expires -le $started -or ($expires - $started).TotalDays -gt 7) { throw 'Record refused' }
+    $stage = 'reservation-create'
     try { $stream = [IO.FileStream]::new($reservation, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write,
         [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough) }
     catch [IO.IOException] {
@@ -109,12 +118,15 @@ public static class FollowupDirectoryPins {
         throw
     }
     # Any failure after exclusive creation leaves this marker present and therefore consumed.
+    $stage = 'reservation-access'
     if (-not (Test-PrivateAcl $reservation $false)) { throw 'Reservation access refused' }
+    $stage = 'reservation-flush'
     $stream.Write($bytes, 0, $bytes.Length)
     $stream.Flush($true)
     [Console]::Out.WriteLine('{"reserved":true}')
 } catch {
-    [Console]::Out.WriteLine('{"code":"windows-private-preflight-failed"}')
+    # Only a local fixed stage code crosses the boundary; never exception messages or paths.
+    [Console]::Out.WriteLine(('{"code":"windows-private-preflight-failed","stage":"' + $stage + '"}'))
     exit 1
 } finally {
     if ($stream) { $stream.Dispose() }
