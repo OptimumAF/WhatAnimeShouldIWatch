@@ -46,6 +46,8 @@ After resolving prior cleanup, review a **new** exact one-study record rather th
 
 Only a reviewed new record may add P580 to the selected main claims and retain qualifiers needed for its exact rules. Preserve the old pilot's receipt and counts in aggregate history. Do not reinterpret its original selected source bytes as containing an unrequested property. Do not extend the current acquisition adapter or fetch definitions under its closed approval to test this proposal. Freeze mappings and stratum membership before interpreting target success; record corrections against the same bounded bytes separately.
 
+**Scope review successor (2026-10-07):** [Decision 0046](0046-bounded-followup-study-gates.md) defines the exact proposed properties, complete main/qualifier/unit/calendar definition roles, new one-use approval and private path, cleanup prerequisite and bounded official transport. It is unapproved and adds no runnable route. Next implement its preflight and inventory gates with invented data; real source execution and semantic mapping require separate review.
+
 ## Synthetic certificate candidate — 2026-10-07
 
 The offline mapper now accepts an explicit `wikibase-metadata-policy-v2` candidate alongside unchanged v1. This implements the proposed rule for invented tests; **applying the exception to source-derived data remains a review proposal**. No real identity, jurisdiction, rating table, certificate interpretation, collection or public-use approval is added. The completed pilot is not reprocessed.
