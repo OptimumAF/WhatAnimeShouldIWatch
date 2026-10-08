@@ -43,6 +43,8 @@ The same command checks the local field-readiness audit with invented candidates
 
 An explicit offline v2 policy now tests the certificate proposal with invented film ratings and references. It accepts only the exact candidate rule, keeps unsupported or conflicting evidence unknown, and leaves certificate values out of catalog and aggregate audit output. V1 still rejects every qualified classification. This technical candidate does not approve real mapping tables, reinterpret the completed pilot, or authorize a new source request.
 
+The metadata fixture command also tests [decision 0045](docs/decisions/0045-tv-date-scope-and-provenance.md)'s private TV date audit. Byte-bound series/season declarations, exact type scope, date precision and all live primary/fallback evidence are checked with invented data. Its per-ID provenance remains private and it does not change catalog years; current v1/v2 mapping and browser filters continue to ignore P580. A successful local audit is not approval of first-airing meaning, source use or publication.
+
 Run the fast checks separately:
 
 ```bash

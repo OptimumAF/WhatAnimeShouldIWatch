@@ -368,6 +368,8 @@ test("metadata candidate keeps unknown fields explicit and reports bounded cover
       /contentClassification.extra.*unsupported/],
     ["certificate is not public metadata", (v) => { v.anime[1].contentClassification.certificate = "invented-private-reference"; },
       /contentClassification.certificate.*unsupported/],
+    ["private date provenance is not metadata", (v) => { v.anime[0].yearProvenance = { selectedProperty: "P580" }; },
+      /anime\[0\].yearProvenance.*unsupported/],
     ["relation reference", (v) => { v.anime[0].relations[0].animeId = 101; },
       /relations\[0\].animeId.*itself/],
     ["source digest", (v) => { v.source.snapshotSha256 = "bad"; },
