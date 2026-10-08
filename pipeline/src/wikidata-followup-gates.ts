@@ -5,7 +5,13 @@ import { parseWikibaseJson } from "./wikibase-metadata.js";
 
 type RecordValue = Record<string, unknown>;
 export const FOLLOWUP_STUDY_ID = "wikidata-followup-101-200-v1";
-const properties = ["P4086", "P31", "P136", "P577", "P580", "P1113", "P2047", "P155", "P156", "P2756"];
+export const FOLLOWUP_IDS: readonly number[] = Object.freeze(Array.from({ length: 100 }, (_, index) => index + 101));
+export const FOLLOWUP_PROPERTIES = Object.freeze(["P4086", "P31", "P136", "P577", "P580", "P1113", "P2047", "P155", "P156", "P2756"]);
+export const FOLLOWUP_LIMITS = Object.freeze({ animeEntities: 100, definitions: 100, attempts: 40,
+  bodyBytes: 4 * 1024 * 1024, totalBytes: 16 * 1024 * 1024, lookupBatch: 10, lookupRows: 200,
+  entityBatch: 20, definitionBatch: 20, minSpacingMs: 2000, timeoutMs: 30000, maxRetryMs: 60000,
+  retries: 1, maxlag: 5, retentionDays: 7 });
+const properties = FOLLOWUP_PROPERTIES;
 const roles = ["mainFormat", "mainGenre", "mainClassification", "mainUnit", "mainCalendar",
   "qualifierItem", "qualifierUnit", "qualifierCalendar"] as const;
 type Role = typeof roles[number];
@@ -20,11 +26,9 @@ function canonical(value: unknown): string {
 }
 // Binding covers the reviewed scope, not source identity, actual permissions or a future adapter implementation.
 export const FOLLOWUP_SCOPE_SHA256 = hash(canonical({ studyId: FOLLOWUP_STUDY_ID,
-  ids: Array.from({ length: 100 }, (_, index) => index + 101), properties, roles,
+  ids: FOLLOWUP_IDS, properties, roles,
   endpoints: ["https://query.wikidata.org/sparql", "https://www.wikidata.org/w/api.php"],
-  animeEntities: 100, definitions: 100, attempts: 40, bodyBytes: 4 * 1024 * 1024, totalBytes: 16 * 1024 * 1024,
-  lookupBatch: 10, lookupRows: 200, entityBatch: 20, definitionBatch: 20, minSpacingMs: 2000,
-  timeoutMs: 30000, maxRetryMs: 60000, retries: 1, maxlag: 5, retentionDays: 7,
+  ...FOLLOWUP_LIMITS,
   animeLanguages: ["en", "ja"], definitionLanguages: ["en"], relationExpansion: false,
   publicArtifacts: false, training: false, deployment: false, productCache: false }));
 function fail(field: string, reason = "unsupported, missing or mismatched evidence"): never {
@@ -63,6 +67,12 @@ function approvedWindow(value: unknown, now: number): { expiresAt: number } {
 export interface FollowupReservation {
   format: "wikidata-followup-reservation-v1"; studyId: string; scopeSha256: string; approvalSha256: string;
   state: "started"; startedAt: string; expiresAt: string; publicArtifacts: false;
+}
+/** Pure recheck for the separate transport; a declared record/hash is not proof of owner permission. */
+export function verifyFollowupApproval(value: unknown, now: number, expectedSha256?: string) {
+  const window = approvedWindow(value, now), approvalSha256 = hash(canonical(value));
+  if (expectedSha256 !== undefined && approvalSha256 !== expectedSha256) fail("approval", "changed during transport");
+  return { ...window, approvalSha256 };
 }
 /** Facts must come from an independent OS probe. Mocked facts cannot verify actual ACLs or paths. */
 export interface FollowupGatePorts {
