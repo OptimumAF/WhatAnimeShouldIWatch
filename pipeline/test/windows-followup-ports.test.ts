@@ -69,7 +69,20 @@ test("Windows OS facts and flushed exclusive reservation survive new process and
     assert.equal(fs.existsSync(context.marker), false);
   }
   assert.equal(facts.access, "verified-owner-only"); assert.equal(facts.priorPilotExists, false);
-  const record = await reserveFollowupStudy(approval(), context.ports);
+  const probeFacts = execFileSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$probe = [IO.Path]::Combine($env:WASIW_FIXTURE_OWNER_PATH, 'invented-owner-probe.txt')
+[IO.File]::WriteAllText($probe, 'invented')
+$owner = (Get-Acl -LiteralPath $probe).GetOwner([Security.Principal.SecurityIdentifier]).Value
+@{ currentOwner = ($owner -eq $sid.Value); trustedAdministratorOwner = ($owner -eq 'S-1-5-32-544') } | ConvertTo-Json -Compress`], {
+    env: { ...process.env, PSModulePath: path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"),
+      WASIW_FIXTURE_OWNER_PATH: context.parent }, windowsHide: true, timeout: 30000, encoding: "utf8",
+  }).trim();
+  t.diagnostic(`Invented default file ownership: ${probeFacts}`);
+  const record = await reserveFollowupStudy(approval(), { ...context.ports, reserveAtomic: async (value) => {
+    try { return await context.ports.reserveAtomic(value); }
+    catch (error) { t.diagnostic((error as Error).message); throw error; } // The port emits only fixed redacted stages.
+  } });
   assert.deepEqual(JSON.parse(fs.readFileSync(context.marker, "utf8")), record);
   assert.equal(fs.existsSync(context.target), false); // The port creates no study output directory.
   fs.mkdirSync(context.target); fs.rmdirSync(context.target); // Removing only invented empty output leaves consumption intact.
