@@ -7,7 +7,8 @@ import { test, type TestContext } from "node:test";
 import { createWindowsFollowupPorts, createWindowsFollowupOutputPort } from "../src/windows-followup-ports.js";
 import { FOLLOWUP_STUDY_ID, FOLLOWUP_SCOPE_SHA256, reserveFollowupStudy } from "../src/wikidata-followup-gates.js";
 import { prepareFollowupOutput, saveFollowupOutput } from "../src/wikidata-followup-output.js";
-import { inventedFollowupResult } from "./invented-followup-result.js";
+import { inventedFollowupResult, inventedFollowupPorts } from "./invented-followup-result.js";
+import { executeFollowupStudy } from "../src/wikidata-followup-execution.js";
 
 const windows = process.platform === "win32";
 const executable = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -112,6 +113,18 @@ test("Windows output refuses mismatched/changed payloads, absent markers and exi
   assert.equal(fs.readFileSync(path.join(context.target, "source-projection.json"), "utf8"), "invented interrupted bytes");
   assert.equal(fs.existsSync(path.join(context.target, "completed.json")), false);
   assert.deepEqual(fs.readFileSync(context.marker), marker);
+});
+
+test("Windows composed invented execution uses the owner boundary before actual one-use private output", { skip: !windows }, async (t) => {
+  const context = setup(t), fixture = inventedFollowupPorts(context.ports); let ownerChecks = 0;
+  const result = await executeFollowupStudy(fixture.approval, { transport: fixture.ports,
+    verifyOwnerApproval: async () => { ownerChecks++; assert.equal(fs.existsSync(context.marker), false); return true; },
+    output: createWindowsFollowupOutputPort(context.repo) });
+  assert.equal(ownerChecks, 1); assert.equal(result.state, "completed"); assert.equal(result.outputStatus, "verified");
+  assert.deepEqual(fs.readdirSync(context.target).sort(), ["completed.json", "definition-labels.json", "inventory.json", "receipt.json", "source-projection.json"]);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(context.target, "completed.json"), "utf8")).publicArtifacts, false);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(createWindowsFollowupOutputPort(context.repo).save({} as any, controller.signal), /Windows private/);
 });
 test("Windows OS facts and flushed exclusive reservation survive new process and output removal", { skip: !windows }, async (t) => {
   const context = setup(t), facts: any = await context.ports.inspect();

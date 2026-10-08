@@ -23,7 +23,8 @@ function fail(): never { throw failure(); }
 function windowsRunner(repoRoot: string) {
   if (process.platform !== "win32") fail();
   const executable = path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  return (action: "Inspect" | "Reserve" | "Save", record?: FollowupReservation, payload?: FollowupOutputPayload): Promise<unknown> => new Promise((resolve, reject) => {
+  return (action: "Inspect" | "Reserve" | "Save", record?: FollowupReservation, payload?: FollowupOutputPayload, signal?: AbortSignal): Promise<unknown> => new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(failure()); return; }
     let input: string, recordBase64: string | undefined;
     try {
       input = payload ? JSON.stringify(payload) : "";
@@ -35,7 +36,7 @@ function windowsRunner(repoRoot: string) {
       "-RepositoryRoot", repoRoot, "-ScopeSha256", FOLLOWUP_SCOPE_SHA256];
     if (recordBase64) args.push("-RecordBase64", recordBase64);
     const env = { ...process.env, PSModulePath: path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules") };
-    const child = execFile(executable, args, { env, windowsHide: true, timeout: 30000, maxBuffer: 16384 }, (error, stdout) => {
+    const child = execFile(executable, args, { env, windowsHide: true, timeout: 30000, maxBuffer: 16384, signal }, (error, stdout) => {
       if (error) { reject(failure(stdout)); return; }
       try { resolve(JSON.parse(stdout)); } catch { reject(failure()); }
     });
@@ -55,9 +56,9 @@ export function createWindowsFollowupPorts(repoRoot: string, now: () => number =
 /** Caller must first recompute the private payload with saveFollowupOutput; no real invocation is approved by this factory. */
 export function createWindowsFollowupOutputPort(repoRoot: string): FollowupOutputPort {
   const run = windowsRunner(repoRoot);
-  return { save: async (payload) => {
+  return { save: async (payload, signal) => {
     let record: FollowupReservation;
     try { record = payload.reservation; } catch { fail(); }
-    return run("Save", record, payload);
+    return run("Save", record, payload, signal);
   } };
 }

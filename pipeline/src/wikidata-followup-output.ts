@@ -107,13 +107,15 @@ export function prepareFollowupOutput(approval: unknown, value: unknown, now: nu
       files: files.map((file) => ({ name: file.name, bytes: file.data.length, sha256: hash(file.data), base64: file.data.toString("base64") })) };
   } catch { fail(); }
 }
-export interface FollowupOutputPort { save(payload: FollowupOutputPayload): Promise<unknown> }
+export interface FollowupOutputPort { save(payload: FollowupOutputPayload, signal?: AbortSignal): Promise<unknown> }
 /** Explicit writer only; a failed or partial write stays consumed, with no cleanup or retry. */
-export async function saveFollowupOutput(approval: unknown, result: unknown, now: () => number, port: FollowupOutputPort) {
+export async function saveFollowupOutput(approval: unknown, result: unknown, now: () => number, port: FollowupOutputPort, signal?: AbortSignal) {
+  if (signal?.aborted) fail();
   let payload: FollowupOutputPayload;
   try { payload = prepareFollowupOutput(approval, result, now()); } catch { fail(); }
   let saved: unknown;
-  try { saved = await port.save(payload); } catch { fail(); }
+  try { saved = await port.save(payload, signal); } catch { fail(); }
+  if (signal?.aborted) fail();
   equal(saved, { saved: true });
   try {
     verifyFollowupApproval(approval, now(), payload.reservation.approvalSha256);
