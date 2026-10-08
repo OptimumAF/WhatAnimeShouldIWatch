@@ -193,7 +193,7 @@ export interface CatalogMetadataItemV1 {
   /** Null means unavailable; an empty array means checked with no values. */
   aliases: string[] | null;
   genres: string[] | null;
-  /** A producer-mapped year or unknown; private date-scope/provenance rows are not catalog fields. */
+  /** A producer-mapped year or unknown. Synthetic scoped mapping keeps its lineage in a separate private audit. */
   year: number | null;
   mediaFormat: "TV" | "Movie" | "OVA" | "ONA" | "Special" | null;
   episodeCount: number | null;

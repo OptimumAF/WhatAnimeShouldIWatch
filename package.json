@@ -23,7 +23,7 @@
     "sync:web": "npm run sync:web --workspace pipeline",
     "data:fixture": "npm run generate:fixture --workspace pipeline",
     "data:fixture:check": "npm run verify:fixture --workspace pipeline",
-    "metadata:fixture:check": "node --import tsx --test pipeline/test/wikibase-metadata.test.ts pipeline/test/wikibase-certificate.test.ts pipeline/test/tv-date-candidate.test.ts pipeline/test/wikidata-feasibility.test.ts pipeline/test/catalog-readiness.test.ts",
+    "metadata:fixture:check": "node --import tsx --test pipeline/test/wikibase-metadata.test.ts pipeline/test/wikibase-certificate.test.ts pipeline/test/tv-date-candidate.test.ts pipeline/test/scoped-metadata-candidate.test.ts pipeline/test/wikidata-feasibility.test.ts pipeline/test/catalog-readiness.test.ts",
     "desktop:fixture": "npm run data:fixture && node --import tsx desktop/fixtures/generate.mts",
     "desktop:fixture:check": "npm run data:fixture:check && node --import tsx desktop/fixtures/generate.mts --check",
     "desktop:stress:fixture": "node --import tsx desktop/fixtures/generate-stress.mts",
