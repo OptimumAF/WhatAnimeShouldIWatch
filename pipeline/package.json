@@ -20,7 +20,7 @@
     "sync:web": "tsx src/sync-web.ts",
     "generate:fixture": "tsx src/generate-fixture.ts",
     "verify:fixture": "tsx src/generate-fixture.ts --check",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=2 test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

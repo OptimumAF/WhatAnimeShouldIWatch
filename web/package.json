@@ -7,7 +7,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "typecheck:eval": "tsc --project tsconfig.eval.json",
-    "test:unit": "node --import tsx --test test/*.test.ts",
+    "test:unit": "node --import tsx --test --test-concurrency=2 test/*.test.ts",
     "test:e2e": "playwright test",
     "test:pages": "playwright test --config playwright-pages.config.ts",
     "eval:user-vector:fixture": "tsx bench/user-vector-eval.ts",
