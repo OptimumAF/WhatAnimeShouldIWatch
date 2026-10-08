@@ -1,0 +1,7 @@
+{
+  "format": "tv-first-airing-policy-v1",
+  "primaryProperty": "P577",
+  "fallbackProperty": "P580",
+  "dateScope": "whole-work-first-airing",
+  "typeScopes": {"Q910001001": "series", "Q910001003": "season"}
+}

@@ -137,6 +137,7 @@ async function routeMetadataBundle(page: Page, options: {
   classificationMarkup?: boolean; catalogGraphMismatch?: boolean; mappedSource?: boolean;
   missingYear?: boolean; missingGenre?: boolean;
   certificate?: "valid" | "unsupported";
+  tvDateProbe?: "missing-primary" | "conflict";
 } = {}) {
   const authoredMetadata = {
     format: "anime-metadata-catalog-v1",
@@ -160,9 +161,18 @@ async function routeMetadataBundle(page: Page, options: {
     title: "星の航路", aliases: [], genres: ["Adventure"], year: 2022,
     mediaFormat: "TV", episodeCount: 12, runtimeMinutes: 24,
     contentClassification: null, communityScore: null, relations: null });
-  const metadata = options.mappedSource || options.certificate ? (() => {
+  const metadata = options.mappedSource || options.certificate || options.tvDateProbe ? (() => {
     const raw = JSON.parse(readFileSync(new URL("../../fixtures/synthetic-wikibase-entities.json", import.meta.url), "utf8"));
     raw.entities.Q910000101.labels.en.value = "Invented Copper Sky";
+    if (options.tvDateProbe) {
+      const claims = raw.entities.Q910000102.claims;
+      claims.P31[0].mainsnak.datavalue.value.id = "Q910001001";
+      const start = structuredClone(claims.P577[0]);
+      start.mainsnak.property = "P580";
+      start.mainsnak.datavalue.value.time = "+2024-06-01T00:00:00Z";
+      claims.P580 = [start];
+      if (options.tvDateProbe === "missing-primary") delete claims.P577;
+    }
     if (options.certificate) {
       raw.entities.Q910000102.claims.P2756[0].qualifiers = {
         P2676: [{ snaktype: "value", property: "P2676", datatype: "string",
@@ -318,6 +328,25 @@ for (const certificate of ["valid", "unsupported"] as const) {
     else await expect(card).not.toContainText("Invented board");
     await expect(page.locator("body")).not.toContainText("invented-certificate");
     await expect(card.locator(".rec-community-score")).toHaveCount(0);
+    expect(requests.some((name) => name.startsWith("jikan:"))).toBe(false);
+  });
+}
+
+for (const tvDateProbe of ["missing-primary", "conflict"] as const) {
+  test(`private date design does not change v1 ${tvDateProbe} year filtering`, async ({ page }) => {
+    const { requests } = await routeMetadataBundle(page, { tvDateProbe });
+    await page.goto(normalAppUrl);
+    await page.locator("#anime-input").fill("Invented Copper Sky");
+    await page.locator("#add-preference").selectOption("liked");
+    await page.locator("#add-anime-form button").click();
+    const card = page.locator(".rec-item").filter({ hasText: "Moonlit Workshop" });
+    await expect(card).toBeVisible();
+    await page.locator("#filter-year-min").fill("2023");
+    await page.locator("#filter-year-min").press("Tab");
+    await expect(card).toHaveCount(0); // P580 2024 never substitutes for null or P577 2022.
+    await page.locator("#filter-year-min").fill(tvDateProbe === "conflict" ? "2022" : "");
+    await page.locator("#filter-year-min").press("Tab");
+    await expect(card).toBeVisible();
     expect(requests.some((name) => name.startsWith("jikan:"))).toBe(false);
   });
 }
